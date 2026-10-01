@@ -21,7 +21,8 @@ the live mainnet Meteora binaries, in CI.
    budget exhaustion and reset, order cap, pause.
 8. **Settlement**: permissionless settle only for fully filled bins; cancel and burn are
    atomic; records survive until the DLMM order closes; retries on `LiquidityLocked`;
-   unsolicited tokens burned; accounting by balance deltas.
+   unsolicited tokens burned; accounting by balance deltas. Open: on a partially filled bin
+   the fee share is booked as refunded principal until bin-level fill state is read.
 9. **Registration** is write-once; squatted pairs rejected; preset-pair fallback accepted;
    the own position must be the right pool and role.
 10. **Resources and ordering**: full CPI traces and compute for every instruction, launch

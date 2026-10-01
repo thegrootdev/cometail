@@ -1696,6 +1696,291 @@
       "args": []
     },
     {
+      "name": "route",
+      "discriminator": [
+        229,
+        23,
+        203,
+        151,
+        122,
+        227,
+        173,
+        42
+      ],
+      "accounts": [
+        {
+          "name": "protocol",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.st_mint",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "protocol"
+          ]
+        },
+        {
+          "name": "lb_pair",
+          "writable": true
+        },
+        {
+          "name": "reserve",
+          "writable": true
+        },
+        {
+          "name": "wsol_mint",
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
+          "name": "limit_order",
+          "docs": [
+            "Fresh keypair: the DLMM order account."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "order_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "limit_order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "income_wsol",
+          "writable": true
+        },
+        {
+          "name": "dlmm_program",
+          "address": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+        },
+        {
+          "name": "dlmm_event_authority"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "bins",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "BinOrder"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "settle",
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "protocol",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.st_mint",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signer",
+          "signer": true
+        },
+        {
+          "name": "lb_pair",
+          "writable": true
+        },
+        {
+          "name": "reserve_x",
+          "writable": true
+        },
+        {
+          "name": "reserve_y",
+          "writable": true
+        },
+        {
+          "name": "limit_order",
+          "writable": true
+        },
+        {
+          "name": "order_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  100,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "limit_order"
+              }
+            ]
+          }
+        },
+        {
+          "name": "income_wsol",
+          "writable": true
+        },
+        {
+          "name": "st_ata",
+          "writable": true
+        },
+        {
+          "name": "st_mint",
+          "writable": true
+        },
+        {
+          "name": "wsol_mint",
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
+          "name": "memo_program"
+        },
+        {
+          "name": "dlmm_program",
+          "address": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+        },
+        {
+          "name": "dlmm_event_authority"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "bins",
+          "type": {
+            "vec": "i32"
+          }
+        }
+      ]
+    },
+    {
       "name": "update_protocol",
       "discriminator": [
         206,
@@ -1932,6 +2217,19 @@
   ],
   "accounts": [
     {
+      "name": "OrderRecord",
+      "discriminator": [
+        143,
+        44,
+        79,
+        139,
+        27,
+        191,
+        114,
+        204
+      ]
+    },
+    {
       "name": "Protocol",
       "discriminator": [
         45,
@@ -2048,6 +2346,32 @@
         53,
         110,
         4
+      ]
+    },
+    {
+      "name": "Routed",
+      "discriminator": [
+        233,
+        127,
+        164,
+        155,
+        2,
+        137,
+        247,
+        240
+      ]
+    },
+    {
+      "name": "Settled",
+      "discriminator": [
+        232,
+        210,
+        40,
+        17,
+        142,
+        124,
+        145,
+        238
       ]
     },
     {
@@ -2298,6 +2622,22 @@
           },
           {
             "name": "padding_1",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BinOrder",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "id",
+            "type": "i32"
+          },
+          {
+            "name": "amount",
             "type": "u64"
           }
         ]
@@ -2897,6 +3237,38 @@
           {
             "name": "_padding",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrderRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "limit_order",
+            "type": "pubkey"
+          },
+          {
+            "name": "placed_ts",
+            "type": "i64"
+          },
+          {
+            "name": "gross_spent",
+            "type": "u64"
+          },
+          {
+            "name": "bin_count",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }
@@ -3812,6 +4184,30 @@
       }
     },
     {
+      "name": "Routed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "limit_order",
+            "type": "pubkey"
+          },
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "bins",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "RoutingPolicy",
       "type": {
         "kind": "struct",
@@ -3867,6 +4263,38 @@
           {
             "name": "outstanding_orders",
             "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Settled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "limit_order",
+            "type": "pubkey"
+          },
+          {
+            "name": "refunded",
+            "type": "u64"
+          },
+          {
+            "name": "fees",
+            "type": "u64"
+          },
+          {
+            "name": "burned",
+            "type": "u64"
+          },
+          {
+            "name": "closed",
+            "type": "bool"
           }
         ]
       }

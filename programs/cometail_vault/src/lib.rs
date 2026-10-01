@@ -86,4 +86,12 @@ pub mod cometail_vault {
     pub fn harvest_one_time(ctx: Context<HarvestOneTime>) -> Result<()> {
         instructions::harvest_one_time(ctx)
     }
+
+    pub fn route<'info>(ctx: Context<'info, Route<'info>>, bins: Vec<BinOrder>) -> Result<()> {
+        instructions::route(ctx, bins)
+    }
+
+    pub fn settle<'info>(ctx: Context<'info, Settle<'info>>, bins: Vec<i32>) -> Result<()> {
+        instructions::settle(ctx, bins)
+    }
 }

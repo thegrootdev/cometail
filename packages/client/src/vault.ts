@@ -2,7 +2,7 @@
 import { AnchorProvider, BN, Idl, Program, Wallet } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT } from "@solana/spl-token";
-import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, deriveProtocol, deriveVault, SEEDS } from "./index";
+import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, DLMM_PROGRAM_ID, deriveProtocol, deriveVault, SEEDS } from "./index";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 export const VAULT_IDL = require("../idl/cometail_vault.json") as Idl;
@@ -175,4 +175,36 @@ export class VaultClientStep5 extends VaultClientStep4 {
   async harvestOneTime(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dbcPool: PublicKey; dbcConfig: PublicKey; quoteVault: PublicKey }): Promise<TransactionInstruction> {
     return this.program.methods.harvestOneTime().accountsPartial({ common: this.common(a), dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, dbcPoolAuthority: DBC_POOL_AUTHORITY, quoteVault: a.quoteVault, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY } as any).instruction();
   }
+}
+
+// ---- step 6: route and settle ----
+export const DLMM_EVENT_AUTHORITY = PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], DLMM_PROGRAM_ID)[0];
+export const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+export function dlmmBinArray(pair: PublicKey, binId: number): PublicKey {
+  const b = Buffer.alloc(8); b.writeBigInt64LE(BigInt(Math.floor(binId / 70)));
+  return PublicKey.findProgramAddressSync([Buffer.from("bin_array"), pair.toBuffer(), b], DLMM_PROGRAM_ID)[0];
+}
+export function binArrayMetas(pair: PublicKey, binIds: number[]) {
+  return Array.from(new Set(binIds.map((id) => dlmmBinArray(pair, id).toBase58()))).map((k) => ({ pubkey: new PublicKey(k), isSigner: false, isWritable: true }));
+}
+
+export class VaultClientStep6 extends VaultClientStep5 {
+  /** Returns the instruction and the fresh order keypair that must sign. */
+  async route(a: { vault: PublicKey; keeper: PublicKey; lbPair: PublicKey; reserve: PublicKey; incomeWsol: PublicKey; bins: { id: number; amount: BN }[] }) {
+    const limitOrder = Keypair.generate();
+    const ix = await this.program.methods.route(a.bins).accountsPartial({
+      protocol: this.protocol, vault: a.vault, keeper: a.keeper, lbPair: a.lbPair, reserve: a.reserve, wsolMint: NATIVE_MINT, limitOrder: limitOrder.publicKey,
+      orderRecord: deriveOrderRecord(a.vault, limitOrder.publicKey), incomeWsol: a.incomeWsol, dlmmProgram: DLMM_PROGRAM_ID, dlmmEventAuthority: DLMM_EVENT_AUTHORITY,
+      tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    }).remainingAccounts(binArrayMetas(a.lbPair, a.bins.map((b) => b.id))).instruction();
+    return { ix, limitOrder };
+  }
+  async settle(a: { vault: PublicKey; signer: PublicKey; lbPair: PublicKey; reserveX: PublicKey; reserveY: PublicKey; limitOrder: PublicKey; incomeWsol: PublicKey; stAta: PublicKey; stMint: PublicKey; bins: number[] }): Promise<TransactionInstruction> {
+    return this.program.methods.settle(a.bins).accountsPartial({
+      protocol: this.protocol, vault: a.vault, signer: a.signer, lbPair: a.lbPair, reserveX: a.reserveX, reserveY: a.reserveY, limitOrder: a.limitOrder,
+      orderRecord: deriveOrderRecord(a.vault, a.limitOrder), incomeWsol: a.incomeWsol, stAta: a.stAta, stMint: a.stMint, wsolMint: NATIVE_MINT,
+      memoProgram: MEMO_PROGRAM_ID, dlmmProgram: DLMM_PROGRAM_ID, dlmmEventAuthority: DLMM_EVENT_AUTHORITY, tokenProgram: TOKEN_PROGRAM_ID,
+    }).remainingAccounts(binArrayMetas(a.lbPair, a.bins)).instruction();
+  }
+  decodeOrderRecord(data: Buffer): any { return this.program.coder.accounts.decode("orderRecord", data); }
 }
