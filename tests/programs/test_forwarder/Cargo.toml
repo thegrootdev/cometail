@@ -1,0 +1,13 @@
+[package]
+name = "test_forwarder"
+version = "0.1.0"
+edition = "2021"
+description = "Test-only program: re-invokes an instruction with a program-derived signer, so the harness can exercise Meteora paths with a PDA before the vault instructions exist. Never deployed."
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "2"
+
+[workspace]
