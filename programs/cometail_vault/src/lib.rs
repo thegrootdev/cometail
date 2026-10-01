@@ -37,4 +37,24 @@ pub mod cometail_vault {
     pub fn create_vault(ctx: Context<CreateVault>, st_mint: Pubkey, policy: RoutingPolicy) -> Result<()> {
         instructions::create_vault(ctx, st_mint, policy)
     }
+
+    pub fn deposit_position(ctx: Context<DepositPosition>) -> Result<()> {
+        instructions::deposit_position(ctx)
+    }
+
+    pub fn deposit_dbc_rights(ctx: Context<DepositDbcRights>) -> Result<()> {
+        instructions::deposit_dbc_rights(ctx)
+    }
+
+    pub fn register_stream_position(ctx: Context<RegisterStreamPosition>) -> Result<()> {
+        instructions::register_stream_position(ctx)
+    }
+
+    pub fn deposit_position_split(ctx: Context<DepositPositionSplit>, permanent_locked_pct: u8, fee_a_pct: u8, fee_b_pct: u8) -> Result<()> {
+        instructions::deposit_position_split(ctx, permanent_locked_pct, fee_a_pct, fee_b_pct)
+    }
+
+    pub fn withdraw_stream(ctx: Context<WithdrawStream>) -> Result<()> {
+        instructions::withdraw_stream(ctx)
+    }
 }

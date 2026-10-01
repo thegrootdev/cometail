@@ -20,3 +20,5 @@ export function deriveProtocol(programId: PublicKey): [PublicKey, number] {
 export function deriveVault(programId: PublicKey, stMint: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([SEEDS.vault, stMint.toBuffer()], programId);
 }
+
+export * from "./vault";
