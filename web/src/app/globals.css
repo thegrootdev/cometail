@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/* Brand tokens. Night is the only background; glass lives on cards and panels only. */
+:root {
+  --ion: #5bc8ff;
+  --dust: #f5c451;
+  --night: #06070b;
+  --starlight: #e8ecf4;
+  --glass: rgba(232, 236, 244, 0.06);
+  --glass-border: rgba(232, 236, 244, 0.12);
+}
+
+@theme inline {
+  --color-ion: var(--ion);
+  --color-dust: var(--dust);
+  --color-night: var(--night);
+  --color-starlight: var(--starlight);
+}
+
+html { color-scheme: dark; }
+body {
+  background: var(--night);
+  color: var(--starlight);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}

@@ -1,0 +1,21 @@
+# keys never leave this machine
+keys/*
+!keys/README.md
+*.json.key
+.env
+.env.*
+
+# build output
+target/
+node_modules/
+.next/
+out/
+dist/
+.turbo/
+test-ledger/
+*.log
+
+# editor
+.DS_Store
+.idea/
+.vscode/

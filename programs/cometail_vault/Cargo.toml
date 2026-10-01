@@ -1,0 +1,25 @@
+[package]
+name = "cometail_vault"
+version = "0.1.0"
+description = "COMETAIL vault: custody Meteora fee streams, launch their stream tokens, and turn income into DLMM bids"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "cometail_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "1.2.0", features = ["init-if-needed"] }
+anchor-spl = "1.2.0"
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

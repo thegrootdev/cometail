@@ -1,0 +1,17 @@
+{
+  "name": "cometail",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Launch a comet. Sell the tail. A Meteora DBC launchpad plus cash-flow vaults that turn fee streams into tradable stream tokens.",
+  "packageManager": "pnpm@12.8.1",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build:program": "anchor build --arch v0",
+    "test:program": "pnpm --filter @cometail/tests test",
+    "dev:web": "pnpm --filter @cometail/web dev",
+    "build:web": "pnpm --filter @cometail/web build",
+    "worker": "pnpm --filter @cometail/worker start"
+  }
+}
