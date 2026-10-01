@@ -69,3 +69,45 @@ export function findPositionOwnedBy(svm: LiteSVM, positions: PublicKey[], owner:
   }
   return null;
 }
+
+/** Add liquidity to a position (owner signs). `liquidityDelta` in raw liquidity units. */
+export async function addLiquidityIx(svm: LiteSVM, a: { pool: PublicKey; position: PublicKey; owner: PublicKey; tokenAAccount: PublicKey; tokenBAccount: PublicKey; liquidityDelta: BN; maxA?: BN; maxB?: BN }) {
+  const p = getPool(svm, a.pool); const pos = getPosition(svm, a.position);
+  return dammProgram.methods.addLiquidity({ liquidityDelta: a.liquidityDelta, tokenAAmountThreshold: a.maxA ?? new BN("18446744073709551615"), tokenBAmountThreshold: a.maxB ?? new BN("18446744073709551615") }).accountsPartial({
+    pool: a.pool, position: a.position, tokenAAccount: a.tokenAAccount, tokenBAccount: a.tokenBAccount, tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault,
+    tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint, positionNftAccount: derivePositionNftAccount(pos.nftMint), signer: a.owner, tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID,
+  }).instruction();
+}
+
+export async function permanentLockIx(svm: LiteSVM, a: { pool: PublicKey; position: PublicKey; owner: PublicKey; liquidity: BN }) {
+  const pos = getPosition(svm, a.position);
+  return dammProgram.methods.permanentLockPosition(a.liquidity).accountsPartial({ pool: a.pool, position: a.position, positionNftAccount: derivePositionNftAccount(pos.nftMint), signer: a.owner }).instruction();
+}
+
+export const DAMM_EVENT_AUTHORITY = PublicKey.findProgramAddressSync([Buffer.from("__event_authority")], dammProgram.programId)[0];
+export function deriveCustomizablePool(mintA: PublicKey, mintB: PublicKey): PublicKey {
+  const [lo, hi] = mintA.toBuffer().compare(mintB.toBuffer()) < 0 ? [mintA, mintB] : [mintB, mintA];
+  return PublicKey.findProgramAddressSync([Buffer.from("cpool"), hi.toBuffer(), lo.toBuffer()], dammProgram.programId)[0];
+}
+export function deriveDammTokenVault(pool: PublicKey, mint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("token_vault"), mint.toBuffer(), pool.toBuffer()], dammProgram.programId)[0];
+}
+
+/** A customizable DAMM v2 pool (any mints, any programs) with its first position owned by `creator`. */
+export async function initCustomizablePoolIx(a: { creator: PublicKey; payer: PublicKey; nftMint: Keypair; tokenAMint: PublicKey; tokenBMint: PublicKey; tokenAProgram: PublicKey; tokenBProgram: PublicKey; payerTokenA: PublicKey; payerTokenB: PublicKey; liquidity: BN; sqrtPrice: BN; collectFeeMode: number; compoundingFeeBps?: number }) {
+  const pool = deriveCustomizablePool(a.tokenAMint, a.tokenBMint);
+  const position = derivePositionAddress(a.nftMint.publicKey);
+  const nftAccount = derivePositionNftAccount(a.nftMint.publicKey);
+  const sched = dammProgram.coder.types.encode("borshFeeTimeScheduler", { cliffFeeNumerator: new BN(10_000_000), numberOfPeriod: 0, periodFrequency: new BN(0), reductionFactor: new BN(0), baseFeeMode: 0 });
+  const compounding = a.collectFeeMode === 2;
+  const ix = await dammProgram.methods.initializeCustomizablePool({
+    poolFees: { baseFee: { data: Array.from(sched) }, compoundingFeeBps: compounding ? (a.compoundingFeeBps ?? 5000) : 0, padding: 0, dynamicFee: null },
+    sqrtMinPrice: compounding ? new BN(0) : new BN("4295048016"), sqrtMaxPrice: compounding ? new BN("340282366920938463463374607431768211455") : new BN("79226673521066979257578248091"),
+    hasAlphaVault: false, liquidity: a.liquidity, sqrtPrice: a.sqrtPrice, activationType: 1, collectFeeMode: a.collectFeeMode, activationPoint: null,
+  }).accountsPartial({
+    creator: a.creator, positionNftMint: a.nftMint.publicKey, positionNftAccount: nftAccount, payer: a.payer, poolAuthority: DAMM_POOL_AUTHORITY, pool, position,
+    tokenAMint: a.tokenAMint, tokenBMint: a.tokenBMint, tokenAVault: deriveDammTokenVault(pool, a.tokenAMint), tokenBVault: deriveDammTokenVault(pool, a.tokenBMint),
+    payerTokenA: a.payerTokenA, payerTokenB: a.payerTokenB, tokenAProgram: a.tokenAProgram, tokenBProgram: a.tokenBProgram, token2022Program: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+  }).instruction();
+  return { ix, pool, position, nftAccount };
+}

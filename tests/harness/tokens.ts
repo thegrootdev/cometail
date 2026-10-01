@@ -53,3 +53,19 @@ export function tokenOwner(svm: LiteSVM, tokenAccount: PublicKey): PublicKey {
   return AccountLayout.decode(Buffer.from(svm.getAccount(tokenAccount)!.data)).owner;
 }
 export { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, LAMPORTS_PER_SOL };
+
+/** A Token-2022 mint, optionally with a freeze authority. */
+export function createMint2022(svm: LiteSVM, payer: Keypair, decimals: number, freezeAuthority: PublicKey | null = null): PublicKey {
+  const mint = Keypair.generate();
+  const lamports = Number(svm.minimumBalanceForRentExemption(BigInt(MINT_SIZE)));
+  send(svm, [
+    SystemProgram.createAccount({ fromPubkey: payer.publicKey, newAccountPubkey: mint.publicKey, lamports, space: MINT_SIZE, programId: TOKEN_2022_PROGRAM_ID }),
+    createInitializeMint2Instruction(mint.publicKey, decimals, payer.publicKey, freezeAuthority, TOKEN_2022_PROGRAM_ID),
+  ], [payer, mint]);
+  return mint.publicKey;
+}
+export function mintTo2022(svm: LiteSVM, payer: Keypair, mint: PublicKey, owner: PublicKey, amount: BN | number) {
+  const dest = ensureAta(svm, payer, mint, owner, TOKEN_2022_PROGRAM_ID);
+  send(svm, [createMintToInstruction(mint, dest, payer.publicKey, BigInt(amount.toString()), [], TOKEN_2022_PROGRAM_ID)], [payer]);
+  return dest;
+}
