@@ -7,10 +7,13 @@ use crate::errors::VaultError;
 use crate::state::*;
 
 #[derive(Accounts)]
-#[instruction(st_mint: Pubkey)]
 pub struct CreateVault<'info> {
-    #[account(init, payer = depositor, space = 8 + Vault::INIT_SPACE, seeds = [SEED_VAULT, st_mint.as_ref()], bump)]
+    #[account(init, payer = depositor, space = 8 + Vault::INIT_SPACE, seeds = [SEED_VAULT, st_mint.key().as_ref()], bump)]
     pub vault: Account<'info, Vault>,
+    /// The future stream-token mint. It signs here (still uninitialized) so that only the
+    /// holder of the keypair can take this vault address; DBC initializes it at `launch`.
+    #[account(constraint = st_mint.data_is_empty() && st_mint.lamports() == 0 @ VaultError::WrongMint)]
+    pub st_mint: Signer<'info>,
     #[account(mut)]
     pub depositor: Signer<'info>,
     #[account(address = WSOL_MINT)]
@@ -29,7 +32,7 @@ pub struct CreateVault<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn create_vault(ctx: Context<CreateVault>, st_mint: Pubkey, policy: RoutingPolicy) -> Result<()> {
+pub fn create_vault(ctx: Context<CreateVault>, policy: RoutingPolicy) -> Result<()> {
     require!(policy.period_seconds > 0, VaultError::InvalidPolicy);
     require!(policy.max_bins_per_order >= 1 && policy.max_bins_per_order <= MAX_BINS_PER_ORDER, VaultError::InvalidPolicy);
     require!(policy.max_outstanding_orders >= 1, VaultError::InvalidPolicy);
@@ -39,6 +42,7 @@ pub fn create_vault(ctx: Context<CreateVault>, st_mint: Pubkey, policy: RoutingP
     v.depositor = ctx.accounts.depositor.key();
     v.depositor_wsol = ctx.accounts.depositor_wsol.key();
     v.status = VaultStatus::Open;
+    let st_mint = ctx.accounts.st_mint.key();
     v.st_mint = st_mint;
     v.st_ata = anchor_spl::associated_token::get_associated_token_address(&v.key(), &st_mint);
     v.income_wsol = ctx.accounts.income_wsol.key();

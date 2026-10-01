@@ -70,7 +70,8 @@ describe("dlmm: limit-order bids owned by a PDA", () => {
     const clock = h.svm.getClock(); clock.slot = clock.slot + BigInt(2); clock.unixTimestamp = clock.unixTimestamp + BigInt(2); h.svm.setClock(clock);
     send(h.svm, [forward(cancel, h.vault), forward(close, h.vault)], [h.keeper], { cu: 400_000, label: "dlmm.cancel_close" });
     expect(balance(h.svm, h.vaultSt).sub(s0).gtn(0)).true;
-    expect(balance(h.svm, h.vaultWsol).sub(w1).gtn(0)).true; // fee share in WSOL (OnlyY, ST is X)
+    // WSOL comes back as unfilled principal plus the order-fee share; the exact split is gate 8's job
+    expect(balance(h.svm, h.vaultWsol).sub(w1).gtn(0)).true;
     const closed = h.svm.getAccount(order.publicKey);
     expect(!closed || Number(closed.lamports) === 0).true; // a closed account lingers with zero lamports in LiteSVM
   });
@@ -85,6 +86,7 @@ describe("dlmm: limit-order bids owned by a PDA", () => {
     legacyTx.feePayer = h.keeper.publicKey; legacyTx.recentBlockhash = h.svm.latestBlockhash();
     const legacyBytes = legacyTx.serializeMessage().length + 1 + 64 * 2;
     console.log(`      50-bin place: legacy ${legacyBytes} bytes`);
+    expect(legacyBytes).greaterThan(1232);
     // lookup table holding every static key, injected as an account
     const keys = Array.from(new Set(ix.keys.filter((k) => !k.isSigner).map((k) => k.pubkey.toBase58()))).map((k) => new PublicKey(k));
     const tableKey = Keypair.generate().publicKey;

@@ -36,11 +36,19 @@
                 ]
               },
               {
-                "kind": "arg",
+                "kind": "account",
                 "path": "st_mint"
               }
             ]
           }
+        },
+        {
+          "name": "st_mint",
+          "docs": [
+            "The future stream-token mint. It signs here (still uninitialized) so that only the",
+            "holder of the keypair can take this vault address; DBC initializes it at `launch`."
+          ],
+          "signer": true
         },
         {
           "name": "depositor",
@@ -259,10 +267,6 @@
         }
       ],
       "args": [
-        {
-          "name": "st_mint",
-          "type": "pubkey"
-        },
         {
           "name": "policy",
           "type": {
@@ -739,18 +743,33 @@
         {
           "name": "admin",
           "docs": [
-            "The protocol owner's wallet. Signs once, here, from the owner's own machine."
+            "The program's upgrade authority. Only it can claim the singleton: the first-caller",
+            "takeover between deployment and initialization is closed by binding the admin to the",
+            "executable's own ProgramData."
           ],
           "signer": true
+        },
+        {
+          "name": "program",
+          "address": "5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg"
+        },
+        {
+          "name": "program_data"
         },
         {
           "name": "keeper"
         },
         {
-          "name": "treasury",
-          "docs": [
-            "The owner's WSOL token account: receives the protocol share of external stream income."
-          ]
+          "name": "treasury"
+        },
+        {
+          "name": "config_25"
+        },
+        {
+          "name": "config_50"
+        },
+        {
+          "name": "config_75"
         },
         {
           "name": "payer",
@@ -762,17 +781,7 @@
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": [
-        {
-          "name": "stream_configs",
-          "type": {
-            "array": [
-              "pubkey",
-              3
-            ]
-          }
-        }
-      ]
+      "args": []
     },
     {
       "name": "register_stream_position",
@@ -920,15 +929,36 @@
           "relations": [
             "protocol"
           ]
+        },
+        {
+          "name": "keeper",
+          "optional": true
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "New treasury: still the admin's WSOL ATA (optional; validated)"
+          ],
+          "optional": true
+        },
+        {
+          "name": "config_25",
+          "optional": true
+        },
+        {
+          "name": "config_50",
+          "optional": true
+        },
+        {
+          "name": "config_75",
+          "optional": true
         }
       ],
       "args": [
         {
-          "name": "update",
+          "name": "paused_routing",
           "type": {
-            "defined": {
-              "name": "ProtocolUpdate"
-            }
+            "option": "bool"
           }
         }
       ]
@@ -2537,43 +2567,6 @@
           {
             "name": "bump",
             "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ProtocolUpdate",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "keeper",
-            "type": {
-              "option": "pubkey"
-            }
-          },
-          {
-            "name": "treasury",
-            "type": {
-              "option": "pubkey"
-            }
-          },
-          {
-            "name": "stream_configs",
-            "type": {
-              "option": {
-                "array": [
-                  "pubkey",
-                  3
-                ]
-              }
-            }
-          },
-          {
-            "name": "paused_routing",
-            "type": {
-              "option": "bool"
-            }
           }
         ]
       }

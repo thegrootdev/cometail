@@ -26,16 +26,16 @@ use state::RoutingPolicy;
 pub mod cometail_vault {
     use super::*;
 
-    pub fn init_protocol(ctx: Context<InitProtocol>, stream_configs: [Pubkey; 3]) -> Result<()> {
-        instructions::init_protocol(ctx, stream_configs)
+    pub fn init_protocol(ctx: Context<InitProtocol>) -> Result<()> {
+        instructions::init_protocol(ctx)
     }
 
-    pub fn update_protocol(ctx: Context<UpdateProtocol>, update: ProtocolUpdate) -> Result<()> {
-        instructions::update_protocol(ctx, update)
+    pub fn update_protocol(ctx: Context<UpdateProtocol>, paused_routing: Option<bool>) -> Result<()> {
+        instructions::update_protocol(ctx, paused_routing)
     }
 
-    pub fn create_vault(ctx: Context<CreateVault>, st_mint: Pubkey, policy: RoutingPolicy) -> Result<()> {
-        instructions::create_vault(ctx, st_mint, policy)
+    pub fn create_vault(ctx: Context<CreateVault>, policy: RoutingPolicy) -> Result<()> {
+        instructions::create_vault(ctx, policy)
     }
 
     pub fn deposit_position(ctx: Context<DepositPosition>) -> Result<()> {

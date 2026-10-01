@@ -36,7 +36,7 @@ them; the release gates in `docs/release-gates.md` have to pass before anything 
 ```
 pnpm install
 pnpm build:program          # anchor build --arch v0
-pnpm --filter @cometail/tests build:forwarder
+pnpm --filter @cometail/tests build:forwarder   # separate step: the test suite does not build it
 pnpm test:program
 pnpm dev:web
 ```

@@ -43,18 +43,28 @@ export class VaultClient {
   get protocol(): PublicKey { return deriveProtocol(VAULT_PROGRAM_ID)[0]; }
   vault(stMint: PublicKey): PublicKey { return deriveVault(VAULT_PROGRAM_ID, stMint)[0]; }
 
-  async initProtocol(a: { admin: PublicKey; keeper: PublicKey; treasury: PublicKey; payer: PublicKey; streamConfigs: [PublicKey, PublicKey, PublicKey] }): Promise<TransactionInstruction> {
-    return this.program.methods.initProtocol(a.streamConfigs).accountsPartial({ protocol: this.protocol, admin: a.admin, keeper: a.keeper, treasury: a.treasury, payer: a.payer, systemProgram: SystemProgram.programId }).instruction();
+  /** The program's upgradeable-loader ProgramData account (where the upgrade authority lives). */
+  get programData(): PublicKey { return PublicKey.findProgramAddressSync([VAULT_PROGRAM_ID.toBuffer()], new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111"))[0]; }
+  /** `admin` must be the program's upgrade authority; `treasury` is its WSOL ATA (derived here unless given). */
+  async initProtocol(a: { admin: PublicKey; keeper: PublicKey; payer: PublicKey; streamConfigs: [PublicKey, PublicKey, PublicKey]; treasury?: PublicKey; programData?: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.initProtocol().accountsPartial({
+      protocol: this.protocol, admin: a.admin, program: VAULT_PROGRAM_ID, programData: a.programData ?? this.programData, keeper: a.keeper,
+      treasury: a.treasury ?? getAssociatedTokenAddressSync(NATIVE_MINT, a.admin), config25: a.streamConfigs[0], config50: a.streamConfigs[1], config75: a.streamConfigs[2],
+      payer: a.payer, systemProgram: SystemProgram.programId,
+    }).instruction();
   }
-  async updateProtocol(a: { admin: PublicKey; keeper?: PublicKey; treasury?: PublicKey; streamConfigs?: [PublicKey, PublicKey, PublicKey]; pausedRouting?: boolean }): Promise<TransactionInstruction> {
-    return this.program.methods.updateProtocol({ keeper: a.keeper ?? null, treasury: a.treasury ?? null, streamConfigs: a.streamConfigs ?? null, pausedRouting: a.pausedRouting ?? null }).accountsPartial({ protocol: this.protocol, admin: a.admin }).instruction();
+  async updateProtocol(a: { admin: PublicKey; keeper?: PublicKey; treasury?: PublicKey; streamConfigs?: [PublicKey | null, PublicKey | null, PublicKey | null]; pausedRouting?: boolean }): Promise<TransactionInstruction> {
+    return this.program.methods.updateProtocol(a.pausedRouting ?? null).accountsPartial({
+      protocol: this.protocol, admin: a.admin, keeper: a.keeper ?? null, treasury: a.treasury ?? null,
+      config25: a.streamConfigs?.[0] ?? null, config50: a.streamConfigs?.[1] ?? null, config75: a.streamConfigs?.[2] ?? null,
+    } as any).instruction();
   }
-  /** Returns the instruction plus the placeholder keypair that must sign. */
+  /** Returns the instruction plus the placeholder keypair that must sign; the ST mint keypair signs too. */
   async createVault(a: { depositor: PublicKey; stMint: PublicKey; policy: RoutingPolicy }) {
     const vault = this.vault(a.stMint);
     const placeholder = Keypair.generate();
-    const ix = await this.program.methods.createVault(a.stMint, a.policy).accountsPartial({
-      vault, depositor: a.depositor, wsolMint: NATIVE_MINT,
+    const ix = await this.program.methods.createVault(a.policy).accountsPartial({
+      vault, stMint: a.stMint, depositor: a.depositor, wsolMint: NATIVE_MINT,
       depositorWsol: getAssociatedTokenAddressSync(NATIVE_MINT, a.depositor),
       incomeWsol: getAssociatedTokenAddressSync(NATIVE_MINT, vault, true),
       placeholderWsol: placeholder.publicKey,

@@ -40,7 +40,27 @@ function setClonedAccount(svm: LiteSVM, address: PublicKey, file: string) {
   });
 }
 
-export function startSvm(opts: { withVaultProgram?: boolean } = {}): LiteSVM {
+export const UPGRADEABLE_LOADER = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+export function vaultProgramData(): PublicKey {
+  return PublicKey.findProgramAddressSync([vaultProgramId().toBuffer()], UPGRADEABLE_LOADER)[0];
+}
+/** Install the vault program the way a cluster deploy does: an upgradeable-loader Program
+ *  account pointing at a ProgramData account that carries the ELF and the upgrade authority. */
+export function installVaultProgram(svm: LiteSVM, upgradeAuthority: PublicKey) {
+  const id = vaultProgramId();
+  const programData = vaultProgramData();
+  const elf = fs.readFileSync(path.join(ROOT, "target", "deploy", "cometail_vault.so"));
+  const hdr = Buffer.alloc(45);
+  hdr.writeUInt32LE(3, 0); // UpgradeableLoaderState::ProgramData
+  hdr.writeBigUInt64LE(BigInt(0), 4); // slot
+  hdr.writeUInt8(1, 12); upgradeAuthority.toBuffer().copy(hdr, 13); // Some(authority)
+  svm.setAccount(programData, { lamports: 10_000_000_000, data: new Uint8Array(Buffer.concat([hdr, elf])), owner: UPGRADEABLE_LOADER, executable: false });
+  const prog = Buffer.alloc(36);
+  prog.writeUInt32LE(2, 0); programData.toBuffer().copy(prog, 4); // UpgradeableLoaderState::Program
+  svm.setAccount(id, { lamports: 1_000_000_000, data: new Uint8Array(prog), owner: UPGRADEABLE_LOADER, executable: true });
+}
+
+export function startSvm(opts: { withVaultProgram?: boolean; upgradeAuthority?: PublicKey } = {}): LiteSVM {
   const svm = new LiteSVM();
   const P = (f: string) => path.join(FIX, "programs", f);
   svm.addProgramFromFile(DBC_PROGRAM_ID, P("dbc_mainnet.so"));
@@ -51,7 +71,8 @@ export function startSvm(opts: { withVaultProgram?: boolean } = {}): LiteSVM {
   svm.addProgramFromFile(LOCKER_PROGRAM_ID, P("locker.so"));
   svm.addProgramFromFile(METAPLEX_PROGRAM_ID, P("metaplex.so"));
   if (opts.withVaultProgram !== false) {
-    svm.addProgramFromFile(vaultProgramId(), path.join(ROOT, "target", "deploy", "cometail_vault.so"));
+    if (opts.upgradeAuthority) installVaultProgram(svm, opts.upgradeAuthority);
+    else svm.addProgramFromFile(vaultProgramId(), path.join(ROOT, "target", "deploy", "cometail_vault.so"));
   }
   setClonedAccount(svm, DAMM_V2_MIGRATION_CONFIG.fixedBps25, "damm_v2_config_fixedbps25.json");
   setClonedAccount(svm, DAMM_V2_MIGRATION_CONFIG.customizable, "damm_v2_config_customizable.json");

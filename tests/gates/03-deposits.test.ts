@@ -36,9 +36,9 @@ describe("gate 1 + 4: deposits, eligibility, delegates, withdrawals", () => {
     const protocol = fund(svm), creator = fund(svm), buyer = fund(svm);
     const ext = await externalStream(svm, protocol, creator, buyer);
     // the creator is the depositor here: creates a vault, moves the position NFT in, deposits
-    const stMint = Keypair.generate().publicKey;
-    const cv = await client.createVault({ depositor: creator.publicKey, stMint, policy });
-    send(svm, [cv.ix], [creator, cv.placeholder], { label: "create_vault" });
+    const stMintKp = Keypair.generate();
+    const cv = await client.createVault({ depositor: creator.publicKey, stMint: stMintKp.publicKey, policy });
+    send(svm, [cv.ix], [creator, cv.placeholder, stMintKp], { label: "create_vault" });
     const v0 = client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data));
     expect(v0.status).deep.eq({ open: {} });
     expect(v0.placeholderWsol.equals(cv.placeholder.publicKey)).true;
@@ -81,9 +81,9 @@ describe("gate 1 + 4: deposits, eligibility, delegates, withdrawals", () => {
     const client = new VaultClient();
     const protocol = fund(svm), creator = fund(svm), buyer = fund(svm);
     const ext = await externalStream(svm, protocol, creator, buyer);
-    const stMint = Keypair.generate().publicKey;
-    const cv = await client.createVault({ depositor: creator.publicKey, stMint, policy });
-    send(svm, [cv.ix], [creator, cv.placeholder]);
+    const stMintKp = Keypair.generate();
+    const cv = await client.createVault({ depositor: creator.publicKey, stMint: stMintKp.publicKey, policy });
+    send(svm, [cv.ix], [creator, cv.placeholder, stMintKp]);
     const nftMint = ext.creatorPos.state.nftMint;
     const vaultNft = ataIx(creator.publicKey, nftMint, cv.vault, TOKEN_2022_PROGRAM_ID);
     send(svm, [vaultNft.ix, createTransferCheckedInstruction(ext.creatorPos.nftAccount, nftMint, vaultNft.address, creator.publicKey, 1, 0, [], TOKEN_2022_PROGRAM_ID)], [creator]);
@@ -108,9 +108,9 @@ describe("gate 1 + 4: deposits, eligibility, delegates, withdrawals", () => {
     const client = new VaultClient();
     const protocol = fund(svm), creator = fund(svm), buyer = fund(svm);
     const ext = await externalStream(svm, protocol, creator, buyer);
-    const stMint = Keypair.generate().publicKey;
-    const cv = await client.createVault({ depositor: creator.publicKey, stMint, policy });
-    send(svm, [cv.ix], [creator, cv.placeholder]);
+    const stMintKp = Keypair.generate();
+    const cv = await client.createVault({ depositor: creator.publicKey, stMint: stMintKp.publicKey, policy });
+    send(svm, [cv.ix], [creator, cv.placeholder, stMintKp]);
     const nftMint = ext.creatorPos.state.nftMint;
     const vaultNft = ataIx(creator.publicKey, nftMint, cv.vault, TOKEN_2022_PROGRAM_ID);
     const xfer = await dbc.transferPoolCreatorIx(svm, ext.pool, creator.publicKey, cv.vault);
@@ -138,9 +138,9 @@ describe("gate 1 + 4: deposits, eligibility, delegates, withdrawals", () => {
     const client = new VaultClient();
     const protocol = fund(svm), creator = fund(svm), buyer = fund(svm), anyone = fund(svm);
     const ext = await externalStream(svm, protocol, creator, buyer, "plain", false);
-    const stMint = Keypair.generate().publicKey;
-    const cv = await client.createVault({ depositor: creator.publicKey, stMint, policy });
-    send(svm, [cv.ix], [creator, cv.placeholder]);
+    const stMintKp = Keypair.generate();
+    const cv = await client.createVault({ depositor: creator.publicKey, stMint: stMintKp.publicKey, policy });
+    send(svm, [cv.ix], [creator, cv.placeholder, stMintKp]);
     const xfer = await dbc.transferPoolCreatorIx(svm, ext.pool, creator.publicKey, cv.vault);
     const dep = await client.depositDbcRights({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint });
     send(svm, [xfer, dep], [creator], { label: "deposit_dbc_rights.pre_bonding" });
@@ -169,9 +169,9 @@ describe("gate 1 + 4: deposits, eligibility, delegates, withdrawals", () => {
     const client = new VaultClient();
     const protocol = fund(svm), creator = fund(svm), buyer = fund(svm);
     const ext = await externalStream(svm, protocol, creator, buyer);
-    const stMint = Keypair.generate().publicKey;
-    const cv = await client.createVault({ depositor: creator.publicKey, stMint, policy });
-    send(svm, [cv.ix], [creator, cv.placeholder]);
+    const stMintKp = Keypair.generate();
+    const cv = await client.createVault({ depositor: creator.publicKey, stMint: stMintKp.publicKey, policy });
+    send(svm, [cv.ix], [creator, cv.placeholder, stMintKp]);
     const before = damm.getPosition(svm, ext.creatorPos.position).permanentLockedLiquidity;
     const split = await client.depositPositionSplit({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dammPool: ext.dammPool, sourcePosition: ext.creatorPos.position, sourceNftAccount: ext.creatorPos.nftAccount, baseMint: ext.mint, permanentLockedPct: 30, feeAPct: 0, feeBPct: 0 });
     send(svm, [split.ix], [creator, split.newNftMint], { cu: 600_000, label: "deposit_position_split" });
