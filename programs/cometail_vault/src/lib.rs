@@ -17,6 +17,7 @@ declare_program!(lb_clmm);
 pub mod constants;
 pub mod errors;
 pub mod instructions;
+pub mod math;
 pub mod state;
 
 use instructions::*;
@@ -56,5 +57,33 @@ pub mod cometail_vault {
 
     pub fn withdraw_stream(ctx: Context<WithdrawStream>) -> Result<()> {
         instructions::withdraw_stream(ctx)
+    }
+
+    pub fn launch(ctx: Context<Launch>, preset: u8, metadata: LaunchMetadata) -> Result<()> {
+        instructions::launch(ctx, preset, metadata)
+    }
+
+    pub fn register_pair(ctx: Context<RegisterPair>) -> Result<()> {
+        instructions::register_pair(ctx)
+    }
+
+    pub fn register_own_position(ctx: Context<RegisterOwnPosition>) -> Result<()> {
+        instructions::register_own_position(ctx)
+    }
+
+    pub fn cashout(ctx: Context<Cashout>) -> Result<()> {
+        instructions::cashout(ctx)
+    }
+
+    pub fn harvest_dbc(ctx: Context<HarvestDbc>) -> Result<()> {
+        instructions::harvest_dbc(ctx)
+    }
+
+    pub fn harvest_position(ctx: Context<HarvestPosition>) -> Result<()> {
+        instructions::harvest_position(ctx)
+    }
+
+    pub fn harvest_one_time(ctx: Context<HarvestOneTime>) -> Result<()> {
+        instructions::harvest_one_time(ctx)
     }
 }

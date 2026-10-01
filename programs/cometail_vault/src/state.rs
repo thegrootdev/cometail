@@ -69,8 +69,9 @@ pub struct Vault {
     /// Stream-token mint, generated client-side and bound at `launch`.
     pub st_mint: Pubkey,
     pub st_ata: Pubkey,
-    /// The stream token's DBC pool (set at launch) and the DAMM v2 pool it migrates into.
+    /// The stream token's DBC pool and config (set at launch) and the DAMM v2 pool it migrates into.
     pub dbc_pool: Pubkey,
+    pub dbc_config: Pubkey,
     pub damm_pool: Pubkey,
     pub dlmm_pair: Pubkey,
     /// true when the stream token is the pair's token X (bids are bid-side below active).

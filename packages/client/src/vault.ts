@@ -118,3 +118,61 @@ export class VaultClient {
   decodeStream(data: Buffer): any { return this.program.coder.accounts.decode("stream", data); }
   decodeProtocol(data: Buffer): any { return this.program.coder.accounts.decode("protocol", data); }
 }
+
+// ---- step 4: launch, pair registration, own position, cash-out ----
+export const DBC_POOL_AUTHORITY = PublicKey.findProgramAddressSync([Buffer.from("pool_authority")], DBC_PROGRAM_ID)[0];
+export const METAPLEX_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+export function dbcPoolAddress(config: PublicKey, baseMint: PublicKey, quoteMint: PublicKey): PublicKey {
+  const [lo, hi] = baseMint.toBuffer().compare(quoteMint.toBuffer()) < 0 ? [baseMint, quoteMint] : [quoteMint, baseMint];
+  return PublicKey.findProgramAddressSync([Buffer.from("pool"), config.toBuffer(), hi.toBuffer(), lo.toBuffer()], DBC_PROGRAM_ID)[0];
+}
+export function dbcTokenVault(pool: PublicKey, mint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("token_vault"), mint.toBuffer(), pool.toBuffer()], DBC_PROGRAM_ID)[0];
+}
+export function mintMetadata(mint: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("metadata"), METAPLEX_PROGRAM_ID.toBuffer(), mint.toBuffer()], METAPLEX_PROGRAM_ID)[0];
+}
+
+export class VaultClientStep4 extends VaultClient {
+  async launch(a: { vault: PublicKey; depositor: PublicKey; stMint: PublicKey; config: PublicKey; preset: number; streamIndex: number; metadata: { name: string; symbol: string; uri: string } }) {
+    const pool = dbcPoolAddress(a.config, a.stMint, NATIVE_MINT);
+    const ix = await this.program.methods.launch(a.preset, a.metadata).accountsPartial({
+      protocol: this.protocol, vault: a.vault, depositor: a.depositor, stMint: a.stMint, config: a.config, pool, dbcPoolAuthority: DBC_POOL_AUTHORITY,
+      baseVault: dbcTokenVault(pool, a.stMint), quoteVault: dbcTokenVault(pool, NATIVE_MINT), mintMetadata: mintMetadata(a.stMint), metadataProgram: METAPLEX_PROGRAM_ID,
+      wsolMint: NATIVE_MINT, stream: deriveStream(a.vault, a.streamIndex), streamIndex: deriveStreamIndex(pool), stAta: getAssociatedTokenAddressSync(a.stMint, a.vault, true),
+      dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY, tokenProgram: TOKEN_PROGRAM_ID, associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    }).instruction();
+    return { ix, pool, stAta: getAssociatedTokenAddressSync(a.stMint, a.vault, true) };
+  }
+  async registerPair(a: { vault: PublicKey; lbPair: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.registerPair().accountsPartial({ vault: a.vault, lbPair: a.lbPair }).instruction();
+  }
+  async registerOwnPosition(a: { vault: PublicKey; payer: PublicKey; streamIndex: number; dbcPool: PublicKey; dbcConfig: PublicKey; dammPool: PublicKey; position: PublicKey; nftAccount: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.registerOwnPosition().accountsPartial({
+      vault: a.vault, payer: a.payer, stream: deriveStream(a.vault, a.streamIndex), streamIndex: deriveStreamIndex(a.position), dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, dammPool: a.dammPool,
+      position: a.position, nftAccount: a.nftAccount, cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: CP_AMM_EVENT_AUTHORITY, systemProgram: SystemProgram.programId,
+    }).instruction();
+  }
+  async cashout(a: { vault: PublicKey; dbcPool: PublicKey; dbcConfig: PublicKey; quoteVault: PublicKey; depositorWsol: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.cashout().accountsPartial({
+      vault: a.vault, dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, dbcPoolAuthority: DBC_POOL_AUTHORITY, quoteVault: a.quoteVault, wsolMint: NATIVE_MINT, depositorWsol: a.depositorWsol,
+      dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY, tokenProgram: TOKEN_PROGRAM_ID,
+    }).instruction();
+  }
+}
+
+// ---- step 5: harvests ----
+export class VaultClientStep5 extends VaultClientStep4 {
+  private common(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey }) {
+    return { protocol: this.protocol, vault: a.vault, stream: a.stream, incomeWsol: a.incomeWsol, placeholderWsol: a.placeholderWsol, depositorWsol: a.depositorWsol, treasury: a.treasury, wsolMint: NATIVE_MINT, tokenProgram: TOKEN_PROGRAM_ID };
+  }
+  async harvestDbc(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dbcPool: PublicKey; baseVault: PublicKey; quoteVault: PublicKey; baseMint: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.harvestDbc().accountsPartial({ common: this.common(a), dbcPool: a.dbcPool, dbcPoolAuthority: DBC_POOL_AUTHORITY, baseVault: a.baseVault, quoteVault: a.quoteVault, baseMint: a.baseMint, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY } as any).instruction();
+  }
+  async harvestPosition(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dammPool: PublicKey; position: PublicKey; nftAccount: PublicKey; tokenAVault: PublicKey; tokenBVault: PublicKey; tokenAMint: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.harvestPosition().accountsPartial({ common: this.common(a), dammPool: a.dammPool, position: a.position, nftAccount: a.nftAccount, cpAmmPoolAuthority: CP_AMM_POOL_AUTHORITY, tokenAVault: a.tokenAVault, tokenBVault: a.tokenBVault, tokenAMint: a.tokenAMint, cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: CP_AMM_EVENT_AUTHORITY } as any).instruction();
+  }
+  async harvestOneTime(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dbcPool: PublicKey; dbcConfig: PublicKey; quoteVault: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.harvestOneTime().accountsPartial({ common: this.common(a), dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, dbcPoolAuthority: DBC_POOL_AUTHORITY, quoteVault: a.quoteVault, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY } as any).instruction();
+  }
+}
