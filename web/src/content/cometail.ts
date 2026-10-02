@@ -66,6 +66,7 @@ export const vaultPage = {
   filled: "filled",
   partial: "partly filled",
   unknownFill: "fill state unread",
+  ladderUnavailable: "The standing bids could not be read just now.",
   poolPrice: "Pool price now",
   noBins: "No bins resting right now.",
   lockedShare: "of the locked liquidity",

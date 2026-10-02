@@ -59,15 +59,18 @@ export function readBinView(data: Buffer, pair: PublicKey, binId: number): BinVi
 }
 /** The unfilled principal of one order bin, as DLMM's reader and the program's settle compute it
  *  (ladder.rs unfilled_amount): untouched while the bin's order age is the order's own; a partially
- *  processed generation keeps ceil(amount x processed_remaining / total_processing); older is filled. */
-export function unfilledAmount(orderBin: LimitOrderBin, bin: BinView): bigint {
+ *  processed generation keeps ceil(amount x processed_remaining / total_processing); two or more
+ *  generations older is filled. An order age ahead of the bin's is incoherent (accounts read from
+ *  mismatched slots): the program rejects it (ladder.rs:64), here it is null, unknown, never filled. */
+export function unfilledAmount(orderBin: LimitOrderBin, bin: BinView): bigint | null {
   if (orderBin.age === bin.orderAge) return orderBin.amount;
   if (orderBin.age + 1 === bin.orderAge) {
     if (bin.openOrderAmount === 0n && bin.processedOrderRemainingAmount === 0n) return 0n;
     if (bin.totalProcessingOrderAmount === 0n) return 0n;
     return (orderBin.amount * bin.processedOrderRemainingAmount + bin.totalProcessingOrderAmount - 1n) / bin.totalProcessingOrderAmount;
   }
-  return 0n;
+  if (orderBin.age + 2 <= bin.orderAge) return 0n;
+  return null;
 }
 
 export interface Decoded<T = any> { pubkey: PublicKey; account: T }

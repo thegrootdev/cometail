@@ -82,10 +82,14 @@ export class Indexer {
    *  resting amount, whether the active bin has crossed it) and the pool's active price. Display
    *  only; the keeper's settle logic reads the bins itself. */
   private async liveView(vaultPk: PublicKey, vault: any): Promise<any> {
+    // ladder null: the vault has no pair yet (known); ladder.status "unavailable": the pair exists
+    // but its orders or bins could not be read this pass (the metrics count that as incomplete)
     const out: any = { updatedAt: Date.now(), ladder: null };
+    const hasPair = !!vault.dlmmPair && !isDefault(vault.dlmmPair);
     try {
-      if (vault.dlmmPair && !isDefault(vault.dlmmPair)) {
+      if (hasPair) {
         const pair = await this.chain.lbPair(vault.dlmmPair);
+        if (!pair) out.ladder = { status: "unavailable", reason: "pair account not found" };
         if (pair) {
           const binStep = Number(pair.binStep), activeId = Number(pair.activeId);
           const dec = await this.stDecimals(vault.stMint);
@@ -109,10 +113,14 @@ export class Indexer {
           const allBins = orders.flatMap((o) => o.bins as any[]);
           const resting = allBins.reduce((a, b) => a + BigInt(b.remaining ?? 0), 0n);
           const unknownBins = allBins.filter((b) => b.remaining === null).length;
-          out.ladder = { pair: vault.dlmmPair.toBase58(), activeId, binStep, activePrice: price(activeId), orders, restingLamports: resting.toString(), unknownBins };
+          out.ladder = { status: "ok", pair: vault.dlmmPair.toBase58(), activeId, binStep, activePrice: price(activeId), orders, restingLamports: resting.toString(), unknownBins };
         }
       }
-    } catch (e) { log("live ladder read failed", { vault: vaultPk.toBase58(), error: String((e as Error).message ?? e) }); }
+    } catch (e) {
+      const error = String((e as Error).message ?? e);
+      log("live ladder read failed", { vault: vaultPk.toBase58(), error });
+      if (hasPair) out.ladder = { status: "unavailable", reason: error };
+    }
     return out;
   }
 

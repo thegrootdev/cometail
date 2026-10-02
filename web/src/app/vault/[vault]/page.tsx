@@ -164,7 +164,10 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                   tone="plain"
                 />
               </div>
-              {v.live?.ladder && (
+              {v.live?.ladder && v.live.ladder.status !== "ok" && v.live.ladder.status !== undefined && (
+                <p className="mt-4 text-sm text-starlight/60">{vaultPage.ladderUnavailable}</p>
+              )}
+              {v.live?.ladder && (v.live.ladder.status === "ok" || v.live.ladder.status === undefined) && (
                 <div className="mt-5">
                   <div className="caption">{vaultPage.depth}</div>
                   {(() => {
