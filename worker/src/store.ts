@@ -12,7 +12,7 @@ export interface TradeRow { signature: string; idx: number; slot: number; blockT
  *  indexed. A catch-up walks backward from the newest signature (`newHead`) toward `head` (`target`)
  *  in bounded pages, continuing from `tail`; only when the walk reaches the target does head move,
  *  so no interval is ever skipped. `tail` set means the pool is still catching up. */
-export interface PoolCursor { head: string | null; tail: string | null; target: string | null; newHead: string | null }
+export interface PoolCursor { head: string | null; tail: string | null; target: string | null; newHead: string | null; /** "ok" after a successful catch-up; "pending" while catching up, after an interrupted pass, or before the first successful one. */ status: "ok" | "pending" }
 export interface SkyRow {
   pool: string; config: string; baseMint: string; quoteMint: string; creator: string; custody: "wallet" | "program" | "unknown";
   progress: number; eligible: boolean; reasons: string[]; creatorPct: number; partnerPct: number; creatorFeePct: number;
@@ -62,7 +62,7 @@ export interface Store {
 
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
@@ -93,6 +93,16 @@ class PgStore implements Store {
   async init() {
     const { Pool } = await import("pg");
     this.pool = new Pool({ connectionString: this.url });
+    // the schema version decides before any table exists: a changed version drops every data table
+    // (CREATE IF NOT EXISTS would keep old columns and keys) and the version is recorded last, so a
+    // crash in between repeats the rebuild on the next start
+    await this.pool.query("create table if not exists meta (key text primary key, value text not null)");
+    const r = await this.pool.query("select value from meta where key = 'schema'");
+    const have = r.rows[0] ? Number(r.rows[0].value) : 0;
+    if (have !== SCHEMA_VERSION) {
+      if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades");
+    }
     await this.pool.query(`
       create table if not exists events (signature text not null, idx int not null, slot bigint not null, block_time bigint, name text not null, vault text, data jsonb not null, primary key (signature, idx));
       create index if not exists events_vault_idx on events (vault);
@@ -100,19 +110,9 @@ class PgStore implements Store {
       create table if not exists vaults (vault text primary key, data jsonb not null, updated_at bigint not null);
       create table if not exists streams (stream text primary key, vault text not null, data jsonb not null, updated_at bigint not null);
       create table if not exists sky (pool text primary key, data jsonb not null, updated_at bigint not null);
-      create table if not exists meta (key text primary key, value text not null);
-      create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text);
+      create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text, status text not null default 'pending');
       create table if not exists trades (signature text not null, idx int not null, slot bigint not null, block_time bigint, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy boolean not null, amount_in text not null, amount_out text not null, primary key (signature, idx, pool));`);
-    await this.ensureVersion(async () => { await this.pool.query("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky; delete from cursors; delete from trades"); });
-  }
-  private async ensureVersion(wipe: () => Promise<void>) {
-    const r = await this.pool.query("select value from meta where key = 'schema'");
-    const have = r.rows[0] ? Number(r.rows[0].value) : 0;
-    if (have !== SCHEMA_VERSION) {
-      if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      await wipe();
-      await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
-    }
+    if (have !== SCHEMA_VERSION) await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
   }
   async pruneStreams(vault: string, keep: string[]) { await this.pool.query("delete from streams where vault = $1 and not (stream = any($2))", [vault, keep]); }
   async pruneSky(keep: string[]) { await this.pool.query("delete from sky where not (pool = any($1))", [keep]); }
@@ -122,9 +122,9 @@ class PgStore implements Store {
     return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
   }
   async getCursor() { const r = await this.pool.query("select signature from cursor where id = 1"); return r.rows[0]?.signature ?? null; }
-  async getPoolCursor(key: string) { const r = await this.pool.query("select head, tail, target, new_head from cursors where key = $1", [key]); return r.rows[0] ? { head: r.rows[0].head, tail: r.rows[0].tail, target: r.rows[0].target, newHead: r.rows[0].new_head } : null; }
-  async setPoolCursor(key: string, c: PoolCursor) { await this.pool.query("insert into cursors (key, head, tail, target, new_head) values ($1,$2,$3,$4,$5) on conflict (key) do update set head = $2, tail = $3, target = $4, new_head = $5", [key, c.head, c.tail, c.target, c.newHead]); }
-  async listPoolCursors() { const r = await this.pool.query("select key, head, tail, target, new_head from cursors"); return r.rows.map((x: any) => ({ key: x.key, cursor: { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head } })); }
+  async getPoolCursor(key: string) { const r = await this.pool.query("select head, tail, target, new_head, status from cursors where key = $1", [key]); return r.rows[0] ? { head: r.rows[0].head, tail: r.rows[0].tail, target: r.rows[0].target, newHead: r.rows[0].new_head, status: r.rows[0].status } : null; }
+  async setPoolCursor(key: string, c: PoolCursor) { await this.pool.query("insert into cursors (key, head, tail, target, new_head, status) values ($1,$2,$3,$4,$5,$6) on conflict (key) do update set head = $2, tail = $3, target = $4, new_head = $5, status = $6", [key, c.head, c.tail, c.target, c.newHead, c.status]); }
+  async listPoolCursors() { const r = await this.pool.query("select key, head, tail, target, new_head, status from cursors"); return r.rows.map((x: any) => ({ key: x.key, cursor: { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head, status: x.status } })); }
   async insertTrades(rows: TradeRow[]) {
     for (const r of rows) await this.pool.query("insert into trades (signature, idx, slot, block_time, pool, vault, trader, trader_kind, buy, amount_in, amount_out) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict do nothing", [r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.traderKind, r.buy, r.amountIn, r.amountOut]);
   }
@@ -163,6 +163,13 @@ class SqliteStore implements Store {
   async init() {
     const { DatabaseSync } = await import("node:sqlite");
     this.db = new DatabaseSync(this.file);
+    this.db.exec("create table if not exists meta (key text primary key, value text not null)");
+    const r = this.db.prepare("select value from meta where key = 'schema'").get();
+    const have = r ? Number(r.value) : 0;
+    if (have !== SCHEMA_VERSION) {
+      if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists trades");
+    }
     this.db.exec(`
       create table if not exists events (signature text not null, idx integer not null, slot integer not null, block_time integer, name text not null, vault text, data text not null, primary key (signature, idx));
       create index if not exists events_vault_idx on events (vault);
@@ -170,16 +177,9 @@ class SqliteStore implements Store {
       create table if not exists vaults (vault text primary key, data text not null, updated_at integer not null);
       create table if not exists streams (stream text primary key, vault text not null, data text not null, updated_at integer not null);
       create table if not exists sky (pool text primary key, data text not null, claimable text not null, updated_at integer not null);
-      create table if not exists meta (key text primary key, value text not null);
-      create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text);
+      create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text, status text not null default 'pending');
       create table if not exists trades (signature text not null, idx integer not null, slot integer not null, block_time integer, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy integer not null, amount_in text not null, amount_out text not null, primary key (signature, idx, pool));`);
-    const r = this.db.prepare("select value from meta where key = 'schema'").get();
-    const have = r ? Number(r.value) : 0;
-    if (have !== SCHEMA_VERSION) {
-      if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      this.db.exec("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky; delete from cursors; delete from trades");
-      this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
-    }
+    if (have !== SCHEMA_VERSION) this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
   }
   async pruneStreams(vault: string, keep: string[]) {
     const rows = this.db.prepare("select stream from streams where vault = ?").all(vault);
@@ -197,9 +197,9 @@ class SqliteStore implements Store {
     return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
   }
   async getCursor() { const r = this.db.prepare("select signature from cursor where id = 1").get(); return r ? r.signature : null; }
-  async getPoolCursor(key: string) { const x = this.db.prepare("select head, tail, target, new_head from cursors where key = ?").get(key); return x ? { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head } : null; }
-  async setPoolCursor(key: string, c: PoolCursor) { this.db.prepare("insert into cursors (key, head, tail, target, new_head) values (?,?,?,?,?) on conflict (key) do update set head = excluded.head, tail = excluded.tail, target = excluded.target, new_head = excluded.new_head").run(key, c.head, c.tail, c.target, c.newHead); }
-  async listPoolCursors() { return this.db.prepare("select key, head, tail, target, new_head from cursors").all().map((x: any) => ({ key: x.key, cursor: { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head } })); }
+  async getPoolCursor(key: string) { const x = this.db.prepare("select head, tail, target, new_head, status from cursors where key = ?").get(key); return x ? { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head, status: x.status } : null; }
+  async setPoolCursor(key: string, c: PoolCursor) { this.db.prepare("insert into cursors (key, head, tail, target, new_head, status) values (?,?,?,?,?,?) on conflict (key) do update set head = excluded.head, tail = excluded.tail, target = excluded.target, new_head = excluded.new_head, status = excluded.status").run(key, c.head, c.tail, c.target, c.newHead, c.status); }
+  async listPoolCursors() { return this.db.prepare("select key, head, tail, target, new_head, status from cursors").all().map((x: any) => ({ key: x.key, cursor: { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head, status: x.status } })); }
   async insertTrades(rows: TradeRow[]) {
     const ins = this.db.prepare("insert or ignore into trades (signature, idx, slot, block_time, pool, vault, trader, trader_kind, buy, amount_in, amount_out) values (?,?,?,?,?,?,?,?,?,?,?)");
     for (const r of rows) ins.run(r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.traderKind, r.buy ? 1 : 0, r.amountIn, r.amountOut);

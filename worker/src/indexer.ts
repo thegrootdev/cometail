@@ -8,7 +8,7 @@ import { Chain , isDefault , Decoded , DAMM_V2_PROGRAM_ID } from "./chain";
 import { isCrossed } from "./ladder";
 import { binArrayIndex, readBinView, unfilledAmount } from "./chain";
 import { getMint, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
-import { EventRow, Store, TradeRow, plain } from "./store";
+import { EventRow, PoolCursor, Store, TradeRow, plain } from "./store";
 import { log, parseEvents } from "./tx";
 
 /** Public RPC endpoints throttle; a read is retried a few times with backoff before the pass fails. */
@@ -53,7 +53,12 @@ export class Indexer {
       if (!pool || isDefault(pool)) continue;
       const poolKey = pool.toBase58(), vaultKey = v.pubkey.toBase58();
       try {
-        const cur = (await this.store.getPoolCursor(poolKey)) ?? { head: null, tail: null, target: null, newHead: null };
+        // a known pool always has a cursor row; it is pending until a catch-up completes, and a pass
+        // interrupted by an unavailable transaction or an error sets it pending again without losing
+        // the progress fields
+        const existing = await this.store.getPoolCursor(poolKey);
+        const cur: PoolCursor = existing ?? { head: null, tail: null, target: null, newHead: null, status: "pending" };
+        if (!existing) await this.store.setPoolCursor(poolKey, cur);
         const catchingUp = cur.tail !== null;
         let target = catchingUp ? cur.target : cur.head;
         let newHead = catchingUp ? cur.newHead : null;
@@ -82,10 +87,13 @@ export class Indexer {
           if (rows.length) log("indexed trades", { pool: poolKey, signature: s.signature, trades: rows.length });
         }
         // the frontier moves only over what was fully processed; a stopped pass keeps it where it was
-        if (stopped) continue;
-        if (reachedTarget) await this.store.setPoolCursor(poolKey, { head: newHead ?? cur.head, tail: null, target: null, newHead: null });
-        else await this.store.setPoolCursor(poolKey, { head: cur.head, tail: before ?? null, target, newHead });
-      } catch (e) { log("trade index failed for a pool; it resumes next pass", { pool: poolKey, error: String((e as Error).message ?? e) }); }
+        if (stopped) { await this.store.setPoolCursor(poolKey, { ...cur, status: "pending" }); continue; }
+        if (reachedTarget) await this.store.setPoolCursor(poolKey, { head: newHead ?? cur.head, tail: null, target: null, newHead: null, status: "ok" });
+        else await this.store.setPoolCursor(poolKey, { head: cur.head, tail: before ?? null, target, newHead, status: "pending" });
+      } catch (e) {
+        log("trade index failed for a pool; it resumes next pass", { pool: poolKey, error: String((e as Error).message ?? e) });
+        try { const c = await this.store.getPoolCursor(poolKey); await this.store.setPoolCursor(poolKey, { ...(c ?? { head: null, tail: null, target: null, newHead: null }), status: "pending" }); } catch { /* the store itself is failing; the next pass retries */ }
+      }
     }
     return added;
   }

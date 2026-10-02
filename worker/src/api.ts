@@ -60,7 +60,12 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
   const counts = () => ({ independent: 0, demo: 0, unattributed: 0 });
   const str = (p: Record<Cls, bigint>) => ({ independent: p.independent.toString(), demo: p.demo.toString(), unattributed: p.unattributed.toString() });
   const [vaults, streams, sky, recurringEvents, oneTimeEvents, settled, trades, poolCursors] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested"], 0), store.listEventsSince(["oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0), store.listTrades(null, 1_000_000), store.listPoolCursors()]);
-  const catchingUp = poolCursors.filter((c) => c.cursor.tail !== null).length;
+  // a pool is pending while catching up, after an interrupted pass, before its first successful
+  // catch-up, or when a known graduated pool has no cursor row yet
+  const cursorOf = new Map(poolCursors.map((c) => [c.key, c.cursor]));
+  const DEFAULT_KEY = "11111111111111111111111111111111";
+  let catchingUp = poolCursors.filter((c) => c.cursor.status !== "ok").length;
+  for (const v of vaults) { const p = v.data?.dammPool; if (p && String(p) !== DEFAULT_KEY && !cursorOf.has(String(p))) catchingUp++; }
   const vaultClass = new Map<string, Cls>(vaults.map((v) => [v.vault, cls(v.data?.depositor ? String(v.data.depositor) : null)]));
   const ofVault = (vault: string | null | undefined): Cls => (vault && vaultClass.get(vault)) || "unattributed";
   const own = new Map(streams.map((s) => [s.stream, !!s.data.isOwn]));
@@ -110,7 +115,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     notes: [
       "independent and demo are decided by the actor that owns each line: launches by creator (a vault-held launch by its depositor), vaults by depositor; owners not yet resolved are unattributed, never independent",
       "buyers are the distinct signers of stream-token purchases on the vaults' graduated pools (cp-amm swap / swap2 paired with EvtSwap2), classified by the signer wallet; a purchase known only by its fee payer is unattributed; sells are counted, not attributed",
-      ...(catchingUp > 0 ? [`trade history is still catching up on ${catchingUp} pool(s); buyers and purchases are partial`] : []),
+      ...(catchingUp > 0 ? [`trade history is pending on ${catchingUp} pool(s) (catching up, interrupted, or never covered); buyers and purchases are partial`] : []),
       "launch volume is an estimate: the flat 1% curve fee, booked by DBC net of its 20% protocol share, implies net fee x 125",
       "bid depth is the unfilled principal of every resting bin from the bin arrays, the same accounting settle applies",
       ...(unknownBins > 0 ? [`${unknownBins} bin(s) could not be read; their depth is not counted`] : []),
@@ -120,7 +125,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     recurringIncomeLamports: { external: str(recurring.external), own: str(recurring.own) },
     oneTimeProceedsLamports: { external: str(oneTime.external), own: str(oneTime.own) },
     depositors: { independent: depositors.independent.size, demo: depositors.demo.size },
-    buyers: { distinct: { independent: buyerSets.independent.size, demo: buyerSets.demo.size, unattributed: buyerSets.unattributed.size }, buyVolumeLamports: str(buyVolume), purchases: buys, sales: sells, poolsCatchingUp: catchingUp },
+    buyers: { distinct: { independent: buyerSets.independent.size, demo: buyerSets.demo.size, unattributed: buyerSets.unattributed.size }, buyVolumeLamports: str(buyVolume), purchases: buys, sales: sells, poolsPending: catchingUp },
     bidDepthLamports: str(depth),
     fillsAndBurns: { settledWithBurn: fills, burnedSt: str(burned) },
     refundedPrincipalLamports: str(refunded),
