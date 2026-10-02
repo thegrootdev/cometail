@@ -93,7 +93,7 @@ export function CometAnatomy() {
         <g
           fill="#9baec4"
           fontSize="9"
-          fontFamily="Plex,monospace"
+          fontFamily="Nunito,sans-serif"
           letterSpacing="1"
         >
           <text x="455" y="142">
@@ -303,7 +303,7 @@ export function StarAtlas({
             <text
               x={x + 12}
               y={y + 22}
-              fontFamily="Plex,monospace"
+              fontFamily="Nunito,sans-serif"
               fontSize={compact ? 13 : 10}
               fill="#92a7be"
             >
@@ -312,7 +312,7 @@ export function StarAtlas({
             <text
               x={x + 12}
               y={y + (compact ? 40 : 37)}
-              fontFamily="Plex,monospace"
+              fontFamily="Nunito,sans-serif"
               fontSize={compact ? 13 : 10}
               fill="#f5c451a0"
             >

@@ -1,0 +1,1050 @@
+/* The comet universe: a cartoon sky, sticker cards, chunky pills and rounded display type.
+   This layer loads after globals.css and reskins the shared classes the pages already use,
+   so transaction surfaces, the upload flow and every builder stay exactly as they are.
+   Illustrations live in /art (placeholders until the real ones land); their names and
+   sizes are the contract. */
+@font-face {
+  font-family: Fredoka;
+  src: url("/fonts/Fredoka.ttf") format("truetype");
+  font-weight: 300 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: Nunito;
+  src: url("/fonts/Nunito.ttf") format("truetype");
+  font-weight: 200 1000;
+  font-display: swap;
+}
+:root {
+  --ion: #5bc8ff;
+  --dust: #f5c451;
+  --night: #06070b;
+  --starlight: #e8ecf4;
+  --muted: #b7c0dc;
+  --line: #0b1226;
+  --panel: #151d47;
+  --panel-deep: #0f1538;
+  --space-top: #0d1538;
+  --space-bottom: #2a1d6b;
+  --nebula-pink: #ff8fb1;
+  --nebula-violet: #8f7bff;
+  --ink: #0b1226;
+  --font-body: Nunito, "Segoe UI", sans-serif;
+  --font-display: Fredoka, "Arial Rounded MT Bold", sans-serif;
+  --font-mono: Nunito, sans-serif;
+  --radius: 22px;
+  --outline: 3px;
+  --shadow-ion: 7px 7px 0 var(--ion);
+  --shadow-dust: 7px 7px 0 var(--dust);
+  --shadow-ink: 0 6px 0 var(--ink);
+}
+html {
+  color-scheme: dark;
+}
+body {
+  background: var(--space-top);
+  color: var(--starlight);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  font-weight: 500;
+}
+/* The sky: navy to indigo, a tiled star field, two nebula clouds. Fixed as an element, not
+   a fixed background, so it holds up inside the Phantom and Safari in-app browsers. */
+body:before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 15% 20%, #ff8fb14d, transparent 45%),
+    radial-gradient(ellipse at 85% 75%, #5bc8ff40, transparent 45%),
+    radial-gradient(ellipse at 70% 15%, #8f7bff40, transparent 40%),
+    url("/art/stars-tile.png") repeat,
+    linear-gradient(180deg, var(--space-top), var(--space-bottom));
+}
+::selection {
+  background: #f5c45180;
+  color: var(--ink);
+}
+p {
+  color: var(--muted);
+}
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: #fff;
+}
+h1 {
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+  font-size: clamp(40px, 6vw, 72px) !important;
+  line-height: 1.02;
+  text-shadow: 4px 4px 0 var(--ink);
+}
+h2 {
+  font-size: clamp(26px, 3.2vw, 36px);
+}
+h3 {
+  font-size: 22px;
+}
+.hero h1 em,
+.page-heading h1 em {
+  font-style: normal;
+  color: var(--dust);
+}
+strong {
+  font-weight: 800;
+}
+
+/* Labels: rounded, bold, barely tracked. Nothing monospace. */
+.micro,
+.eyebrow,
+.stat-label,
+.panel-heading,
+.caption,
+.field > span,
+.art-label,
+.art-caption,
+.atlas-toolbar,
+.atlas-coordinates,
+.atlas-legend,
+.live-status,
+.catalogue-header small,
+.stream-table th,
+.detail-address,
+.footer-signature,
+.network-badge,
+.hero-footnote,
+.form-step,
+.steps-rail {
+  font-family: var(--font-body) !important;
+  letter-spacing: 0.02em !important;
+  text-transform: none !important;
+}
+.micro,
+.stat-label,
+.stream-table th,
+.field > span,
+.caption {
+  font-weight: 800;
+  font-size: 13px;
+  color: #c9d2f2;
+}
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--dust);
+  color: var(--ink);
+  border: var(--outline) solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  font-weight: 800;
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+.eyebrow span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+/* Sticker cards: solid fill, thick outline, hard offset shadow, an illustrated icon. */
+.panel,
+.glass,
+.atlas-surface,
+.data-state,
+.chapter,
+.mechanics,
+.portfolio-item,
+.launch-aside .panel,
+.upload-drop,
+.form-success,
+.token-summary {
+  background: var(--panel);
+  border: var(--outline) solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-ion);
+  padding: 26px;
+  backdrop-filter: none;
+  position: relative;
+}
+.panel + .panel,
+.sticker-gold,
+.panel:nth-of-type(even),
+.chapter:nth-child(2),
+.portfolio-item:nth-child(even) {
+  box-shadow: var(--shadow-dust);
+}
+.panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: -4px 0 18px;
+  font-family: var(--font-display) !important;
+  font-weight: 600;
+  font-size: 21px;
+  color: #fff;
+  border: 0;
+  padding: 0;
+}
+.panel-heading:before {
+  content: "";
+  flex: none;
+  width: 40px;
+  height: 40px;
+  background: var(--sticker, url("/art/sticker-planet.png")) center/contain no-repeat;
+  filter: drop-shadow(2px 2px 0 var(--ink));
+}
+.panel-heading.no-sticker:before {
+  display: none;
+}
+.panel .panel {
+  box-shadow: none;
+  background: var(--panel-deep);
+}
+.panel .text-sm,
+.panel ul li,
+.panel p {
+  color: var(--muted);
+}
+
+/* Big chunky numbers. */
+.stat {
+  padding: 4px 0;
+}
+.stat-value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(26px, 3vw, 36px);
+  line-height: 1.1;
+  color: #fff;
+  letter-spacing: 0;
+}
+.stat-dust .stat-value,
+.panel .stat-ion .stat-value,
+.money,
+.text-dust {
+  color: var(--dust);
+}
+.stat-ion .stat-value {
+  color: var(--ion);
+}
+.atlas-stats .stat-value {
+  font-size: clamp(28px, 3.4vw, 40px);
+}
+
+/* Chunky pills. The hard shadow presses down on tap. */
+.button,
+body .wallet-adapter-button,
+.wallet-placeholder,
+.page-content button.rounded-full,
+.panel button.rounded-full,
+.page-content a.rounded-full,
+.crop-actions button,
+.empty-actions a,
+.empty-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 12px 26px !important;
+  border-radius: 999px !important;
+  border: var(--outline) solid var(--ink) !important;
+  background: var(--panel) !important;
+  color: #fff !important;
+  font-family: var(--font-display) !important;
+  font-weight: 600 !important;
+  font-size: 17px !important;
+  line-height: 1.1 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  box-shadow: var(--shadow-ink);
+  transform: translateY(0);
+  transition:
+    transform 0.08s,
+    box-shadow 0.08s,
+    filter 0.15s;
+}
+.button-primary,
+body .wallet-adapter-button-trigger,
+.page-content button.rounded-full.bg-ion,
+.page-content a.rounded-full.bg-ion,
+.panel button.rounded-full.bg-ion {
+  background: var(--ion) !important;
+  color: var(--ink) !important;
+}
+.button-gold,
+.page-content button.rounded-full.bg-dust,
+.page-content a.rounded-full.bg-dust,
+.panel button.rounded-full.bg-dust {
+  background: var(--dust) !important;
+  color: var(--ink) !important;
+}
+.button:hover:not(:disabled),
+body .wallet-adapter-button:hover:not(:disabled),
+.page-content button.rounded-full:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: inherit;
+}
+.button:active:not(:disabled),
+body .wallet-adapter-button:active:not(:disabled),
+.page-content button.rounded-full:active:not(:disabled),
+.panel button.rounded-full:active:not(:disabled),
+.crop-actions button:active:not(:disabled) {
+  transform: translateY(6px);
+  box-shadow: 0 0 0 var(--ink);
+}
+.button:disabled,
+.page-content button.rounded-full:disabled {
+  opacity: 0.5;
+  transform: none;
+}
+.button-full {
+  width: 100%;
+}
+.text-link {
+  color: var(--ion);
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 4px;
+}
+.text-link:hover {
+  color: var(--dust);
+}
+
+/* Inputs sit in the card's deep fill with the same outline language. */
+input:not([type="range"]):not([type="checkbox"]),
+textarea,
+select,
+.panel input:not([type="checkbox"]):not([type="range"]),
+.page-content .rounded-lg.bg-night,
+.amount-input,
+.atlas-search input {
+  background: var(--panel-deep) !important;
+  border: var(--outline) solid var(--ink) !important;
+  border-radius: 16px !important;
+  color: #fff;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 16px;
+  padding: 14px 16px !important;
+  box-shadow: inset 0 4px 0 #00000040;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--ion) !important;
+  box-shadow:
+    inset 0 4px 0 #00000040,
+    0 0 0 4px #5bc8ff40;
+}
+input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--ion);
+  border-radius: 8px;
+}
+input[type="range"] {
+  accent-color: var(--dust);
+}
+::placeholder {
+  color: #8a94bf;
+  font-weight: 600;
+}
+
+/* Badges. */
+.badge,
+.network-badge,
+.page-content .border-dust,
+.rounded-full.border {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 2px solid var(--ink) !important;
+  background: var(--panel-deep);
+  color: #fff;
+  font-weight: 800;
+  font-size: 13px;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.badge-ion {
+  background: var(--ion);
+  color: var(--ink);
+}
+.badge-gold,
+.network-badge {
+  background: var(--dust);
+  color: var(--ink);
+}
+.network-badge i {
+  background: var(--ink);
+}
+
+/* Header, nav, footer. */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 28px;
+  background: #0d1538e6;
+  backdrop-filter: blur(10px);
+  border-bottom: var(--outline) solid var(--ink);
+}
+.brand-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-link .brand-mascot {
+  width: 44px;
+  height: 44px;
+  filter: drop-shadow(2px 2px 0 var(--ink));
+}
+.brand-link .wordmark {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 24px;
+  color: #fff;
+  text-shadow: 2px 2px 0 var(--ink);
+}
+.desktop-nav {
+  display: flex;
+  gap: 6px;
+}
+.desktop-nav a {
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 17px;
+  color: #dfe6ff;
+}
+.desktop-nav a:hover {
+  border-color: var(--ink);
+  background: var(--panel);
+}
+.desktop-nav a[aria-current] {
+  background: var(--dust);
+  color: var(--ink);
+  border-color: var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.desktop-nav a[aria-current]:after {
+  display: none;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.site-footer {
+  margin-top: 64px;
+  padding: 28px;
+  border-top: var(--outline) solid var(--ink);
+  background: #0b1226cc;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.footer-signature {
+  font-family: var(--font-display) !important;
+  font-size: 20px;
+  color: #fff;
+}
+.built-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--panel);
+  font-weight: 800;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.built-on > span {
+  color: var(--dust);
+}
+.mobile-nav {
+  background: #0d1538f2;
+  border-top: var(--outline) solid var(--ink);
+  backdrop-filter: blur(10px);
+}
+.mobile-nav a {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 12px;
+  color: #dfe6ff;
+  gap: 2px;
+}
+.mobile-nav a img {
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(1px 1px 0 var(--ink));
+}
+.mobile-nav a[aria-current] {
+  color: var(--dust);
+}
+.mobile-nav a[aria-current] img {
+  transform: translateY(-3px) scale(1.12);
+}
+
+/* Home. */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 32px;
+  align-items: center;
+  padding: 40px 0 24px;
+}
+.hero-copy > p {
+  font-size: 19px;
+  color: #dfe6ff;
+  max-width: 34rem;
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 26px 0 18px;
+}
+.hero-actions .button {
+  min-height: 60px;
+  padding: 14px 32px !important;
+  font-size: 20px !important;
+}
+.hero-footnote {
+  font-weight: 800;
+  color: var(--dust);
+}
+.hero-footnote:before {
+  display: none;
+}
+.hero-art {
+  position: relative;
+  border: var(--outline) solid var(--ink);
+  border-radius: 28px;
+  box-shadow: var(--shadow-dust);
+  overflow: hidden;
+  background: var(--space-bottom);
+  aspect-ratio: 16 / 9;
+}
+.hero-art:before {
+  display: none;
+}
+.hero-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hero-art .art-caption {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #0b1226cc;
+  font-weight: 800;
+  font-size: 12px;
+  color: #dfe6ff;
+}
+.hero-mascot {
+  position: absolute;
+  right: -8px;
+  bottom: -14px;
+  width: 38%;
+  filter: drop-shadow(3px 3px 0 var(--ink));
+}
+.atlas-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 40px 0 16px;
+}
+.chapter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 40px 0 0;
+}
+.chapter {
+  border-left: var(--outline) solid var(--ink);
+  padding-top: 68px;
+}
+.chapter + .chapter {
+  border-left: var(--outline) solid var(--ink);
+}
+.chapter:before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  left: 22px;
+  width: 44px;
+  height: 44px;
+  background: var(--sticker, url("/art/sticker-planet.png")) center/contain no-repeat;
+  filter: drop-shadow(2px 2px 0 var(--ink));
+}
+.chapter .micro {
+  position: absolute;
+  top: 26px;
+  right: 22px;
+  color: var(--dust);
+}
+.chapter h3 {
+  font-size: 24px;
+}
+.mechanics {
+  margin-top: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 24px;
+  align-items: center;
+  box-shadow: var(--shadow-dust);
+}
+.mechanics h2 {
+  margin: 0;
+}
+
+/* The atlas keeps its data and gets a cartoon sky behind it. */
+.atlas-surface {
+  padding: 0;
+  overflow: hidden;
+}
+.atlas-surface:after {
+  display: none;
+}
+.atlas-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: var(--outline) solid var(--ink);
+  background: var(--panel-deep);
+  font-weight: 800;
+}
+.atlas-svg {
+  display: block;
+  width: 100%;
+  background:
+    radial-gradient(ellipse at 20% 30%, #ff8fb12e, transparent 45%),
+    radial-gradient(ellipse at 80% 70%, #5bc8ff2e, transparent 45%),
+    url("/art/stars-tile.png") repeat,
+    linear-gradient(180deg, #121a4a, #241a62);
+}
+.atlas-legend {
+  padding: 12px 20px;
+  border-top: var(--outline) solid var(--ink);
+  background: var(--panel-deep);
+  font-weight: 700;
+  color: #dfe6ff;
+}
+.atlas-stats {
+  border-top: var(--outline) solid var(--ink);
+  background: var(--panel);
+}
+.atlas-stats .stat {
+  padding: 18px 20px;
+}
+.atlas-stats .stat + .stat {
+  border-left: var(--outline) solid var(--ink);
+}
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--panel);
+  font-size: 13px;
+}
+.atlas-empty-overlay .data-state {
+  box-shadow: var(--shadow-dust);
+}
+
+/* Tables. */
+.stream-table {
+  border-collapse: separate;
+  border-spacing: 0 8px;
+}
+.stream-table th {
+  padding: 4px 14px;
+  color: #c9d2f2;
+  border: 0;
+}
+.stream-table td {
+  padding: 14px;
+  background: var(--panel-deep);
+  border-top: var(--outline) solid var(--ink);
+  border-bottom: var(--outline) solid var(--ink);
+  font-weight: 700;
+}
+.stream-table td:first-child {
+  border-left: var(--outline) solid var(--ink);
+  border-radius: 16px 0 0 16px;
+}
+.stream-table td:last-child {
+  border-right: var(--outline) solid var(--ink);
+  border-radius: 0 16px 16px 0;
+}
+.stream-table tbody tr:hover td {
+  background: #1b2458;
+}
+.token-cell strong {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  color: #fff;
+}
+.token-avatar {
+  border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+  background: linear-gradient(135deg, var(--ion), var(--nebula-violet));
+}
+.avatar-large {
+  border-width: var(--outline);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+
+/* Loading, empty, error and wallet states carry the mascot. */
+.data-state {
+  text-align: center;
+  padding: 36px 26px;
+  border-style: dashed;
+}
+.data-state .state-orbit {
+  display: none;
+}
+.data-state .state-mascot {
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 10px;
+  filter: drop-shadow(3px 3px 0 var(--ink));
+}
+.state-error {
+  box-shadow: 7px 7px 0 var(--nebula-pink);
+}
+.state-compact {
+  padding: 22px;
+}
+.state-compact .state-mascot {
+  width: 64px;
+  height: 64px;
+}
+.loading-track {
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--panel-deep);
+  overflow: hidden;
+  margin: 14px auto 0;
+  max-width: 260px;
+}
+.loading-track span {
+  background: var(--dust);
+}
+
+/* Page headings with a mascot on the side. */
+.page-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: end;
+  margin: 28px 0 24px;
+}
+.page-heading p {
+  font-size: 18px;
+  color: #dfe6ff;
+  max-width: 40rem;
+}
+.page-mascot {
+  width: clamp(120px, 16vw, 200px);
+  filter: drop-shadow(4px 4px 0 var(--ink));
+  justify-self: end;
+}
+
+/* Forms, wizard, upload. */
+.field-grid {
+  gap: 16px;
+}
+.field > span {
+  margin-bottom: 6px;
+  display: block;
+}
+.field-hint,
+.form-hint,
+.caption {
+  font-weight: 600;
+  color: #b7c0dc;
+}
+.upload-drop {
+  border-style: dashed;
+  border-color: var(--ion);
+  background: var(--panel-deep);
+  box-shadow: none;
+  text-align: center;
+}
+.upload-mark {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 8px;
+  background: url("/art/sticker-telescope.png") center/contain no-repeat;
+}
+.upload-mark svg {
+  display: none;
+}
+.crop-frame {
+  border: var(--outline) solid var(--ink);
+  border-radius: 20px;
+  box-shadow: 4px 4px 0 var(--ink);
+  overflow: hidden;
+}
+.identity-preview {
+  background: var(--panel-deep);
+  border: var(--outline) solid var(--ink);
+  border-radius: 20px;
+}
+.identity-preview:before {
+  display: none;
+}
+.form-step,
+.steps-rail span:first-child {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--dust);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  font-weight: 900;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.form-error,
+.upload-error,
+.route-error,
+.panel .text-red-300,
+.page-content .text-red-300 {
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: #ff8fb1;
+  color: var(--ink) !important;
+  border: 2px solid var(--ink);
+  font-weight: 800;
+}
+.form-success,
+.success-note {
+  background: var(--dust);
+  color: var(--ink);
+  box-shadow: var(--shadow-ion);
+}
+.form-success h3,
+.form-success p,
+.success-note,
+.success-note a {
+  color: var(--ink);
+}
+.page-content .h-3 {
+  height: 16px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--panel-deep);
+}
+.page-content .h-3 > div {
+  background: var(--dust);
+}
+.disclosure-copy,
+.disclosure-list {
+  font-weight: 600;
+  color: #dfe6ff;
+}
+.detail-address {
+  font-weight: 700;
+  color: #c9d2f2;
+  word-break: break-all;
+}
+
+/* Wallet adapter: pills and a sticker modal. */
+body .wallet-adapter-modal-wrapper {
+  background: var(--panel);
+  border: var(--outline) solid var(--ink);
+  border-radius: 28px;
+  box-shadow: var(--shadow-dust);
+  font-family: var(--font-body);
+}
+body .wallet-adapter-modal-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: #fff;
+}
+body .wallet-adapter-modal-list .wallet-adapter-button {
+  margin: 8px 0;
+  justify-content: flex-start;
+}
+body .wallet-adapter-modal-button-close {
+  background: var(--dust);
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+body .wallet-adapter-modal-button-close svg {
+  fill: var(--ink);
+}
+body .wallet-adapter-dropdown-list {
+  background: var(--panel);
+  border: var(--outline) solid var(--ink);
+  border-radius: 18px;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+body .wallet-adapter-dropdown-list-item {
+  font-family: var(--font-body);
+  font-weight: 800;
+  border-radius: 12px;
+}
+.wallet-adapter-modal-middle:before {
+  background: url("/art/mascot.png") center/80px no-repeat;
+  border: var(--outline) solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  background-color: var(--panel-deep);
+}
+.wallet-adapter-modal-overlay {
+  background: #0b1226b3;
+}
+
+/* Phone: one column, tighter stickers, the hero art on top, room for the bottom nav. */
+@media (max-width: 760px) {
+  body {
+    font-size: 15px;
+  }
+  :root {
+    --radius: 18px;
+    --shadow-ion: 5px 5px 0 var(--ion);
+    --shadow-dust: 5px 5px 0 var(--dust);
+  }
+  /* The phone header stays in flow (no sticky overlap inside in-app browsers) and the
+     desktop links give way to the bottom tabs. */
+  .site-header {
+    position: static;
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  .desktop-nav {
+    display: none;
+  }
+  .brand-link .brand-mascot {
+    width: 36px;
+    height: 36px;
+  }
+  .brand-link .wordmark {
+    font-size: 19px;
+  }
+  .network-badge {
+    padding: 4px 9px;
+    font-size: 12px;
+  }
+  .chapter {
+    padding-top: 68px;
+  }
+  .atlas-stats .stat-value {
+    font-size: 20px;
+    white-space: nowrap;
+  }
+  .atlas-stats .stat {
+    padding: 14px 12px;
+  }
+  .page-heading {
+    margin-top: 16px;
+  }
+  .panel,
+  .data-state,
+  .chapter,
+  .mechanics,
+  .portfolio-item {
+    padding: 20px 18px;
+  }
+  .hero {
+    grid-template-columns: 1fr;
+    padding-top: 18px;
+    gap: 22px;
+  }
+  .hero-art {
+    order: -1;
+    aspect-ratio: 4 / 5;
+    max-height: 62vh;
+  }
+  .hero-actions .button {
+    width: 100%;
+  }
+  .chapter-grid,
+  .mechanics {
+    grid-template-columns: 1fr;
+  }
+  .page-heading {
+    grid-template-columns: 1fr;
+  }
+  .page-mascot {
+    width: 120px;
+    justify-self: start;
+    order: -1;
+  }
+  .stat-value {
+    font-size: 24px;
+  }
+  .stream-table td {
+    padding: 10px;
+  }
+  .site-footer {
+    padding-bottom: 96px;
+  }
+  .button,
+  body .wallet-adapter-button,
+  .page-content button.rounded-full {
+    min-height: 48px;
+    padding: 11px 20px !important;
+    font-size: 16px !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  body .wallet-adapter-button {
+    transition: none;
+  }
+}
+
+/* Links that used to be tracked-out capitals. */
+.atlas-divider .text-link,
+.catalogue-header .text-link,
+.text-link {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-size: 15px;
+}
+.atlas-coordinates text,
+.atlas-svg text {
+  font-family: var(--font-body);
+  font-weight: 700;
+}

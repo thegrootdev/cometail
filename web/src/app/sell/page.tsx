@@ -349,6 +349,7 @@ function Wizard() {
   return (
     <>
       <PageHeader
+        art="sell"
         eyebrow={c.sellKicker}
         title={wizard.title}
         body={c.sellBody}

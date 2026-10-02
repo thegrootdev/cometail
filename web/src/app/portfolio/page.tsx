@@ -40,6 +40,7 @@ export default function PortfolioPage() {
   return (
     <Shell>
       <PageHeader
+        art="mascot"
         eyebrow={copy.portfolioKicker}
         title={nav.portfolio}
         body={copy.portfolioBody}

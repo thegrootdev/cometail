@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { product } from "@/content/cometail";
 import { Providers } from "@/lib/providers";
 import "./globals.css";
+import "./theme.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(product.url),

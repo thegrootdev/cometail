@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
-import { CometAnatomy, HomeAtlas } from "@/components/Atlas";
+import { HomeAtlas } from "@/components/Atlas";
 import { experience as copy, hero, plainLaunch } from "@/content/cometail";
 export default function Home() {
   return (
@@ -29,12 +29,22 @@ export default function Home() {
           </div>
           <div className="hero-footnote">{plainLaunch.creationFee}</div>
         </div>
-        <CometAnatomy />
+        <div className="hero-art">
+          <picture>
+            <source media="(max-width: 760px)" srcSet="/art/hero-mobile.png" />
+            <img src="/art/hero.png" alt="" width="1600" height="900" />
+          </picture>
+          <span className="art-caption">{copy.illustration}</span>
+        </div>
       </section>
       <HomeAtlas />
       <section className="chapter-grid">
-        {copy.chapters.map((c) => (
-          <article className="chapter" key={c.number}>
+        {copy.chapters.map((c, i) => (
+          <article
+            className="chapter"
+            key={c.number}
+            style={{ "--sticker": `url(/art/sticker-${["planet", "coin", "flame"][i % 3]}.png)` } as React.CSSProperties}
+          >
             <span className="micro">{c.number} /</span>
             <h3>{c.title}</h3>
             <p>{c.body}</p>

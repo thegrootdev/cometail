@@ -77,6 +77,7 @@ export default function LaunchPage() {
   return (
     <Shell>
       <PageHeader
+        art="launch"
         eyebrow={c.launchKicker}
         title={plainLaunch.title}
         body={c.launchBody}

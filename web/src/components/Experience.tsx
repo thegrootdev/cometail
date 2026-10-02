@@ -7,14 +7,26 @@ export function PageHeader({
   title,
   body,
   children,
+  art,
 }: {
   eyebrow: string;
   title: string;
   body?: string;
   children?: React.ReactNode;
+  /** The mascot pose shown beside the heading (illustrations in /art). */
+  art?: "mascot" | "launch" | "sell";
 }) {
   return (
     <div className="page-heading">
+      {art && (
+        <img
+          className="page-mascot"
+          src={`/art/${art === "mascot" ? "mascot" : `mascot-${art}`}.png`}
+          alt=""
+          width="200"
+          height="200"
+        />
+      )}
       <div>
         <div className="eyebrow">
           <span />
@@ -48,6 +60,13 @@ export function DataState({
       role={kind === "error" ? "alert" : "status"}
       aria-live="polite"
     >
+      <img
+        className="state-mascot"
+        src="/art/mascot.png"
+        alt=""
+        width="96"
+        height="96"
+      />
       <svg
         className="state-orbit"
         viewBox="0 0 160 100"

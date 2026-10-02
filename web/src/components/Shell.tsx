@@ -28,10 +28,10 @@ export function Shell({
 }) {
   const path = usePathname();
   const links = [
-    { href: "/sky", label: nav.sky, mark: "✧" },
-    { href: "/launch", label: nav.launch, mark: "↗" },
-    { href: "/sell", label: nav.sell, mark: "⌁" },
-    { href: "/portfolio", label: nav.portfolio, mark: "◌" },
+    { href: "/sky", label: nav.sky, icon: "/art/sticker-telescope.png" },
+    { href: "/launch", label: nav.launch, icon: "/art/sticker-planet.png" },
+    { href: "/sell", label: nav.sell, icon: "/art/sticker-coin.png" },
+    { href: "/portfolio", label: nav.portfolio, icon: "/art/sticker-flame.png" },
   ];
   return (
     <div className="site-frame">
@@ -40,14 +40,14 @@ export function Shell({
       </a>
       <header className="site-header">
         <Link href="/" className="brand-link" aria-label={product.name}>
-          <img src="/brand/symbol.svg" alt="" width="36" height="36" />
           <img
-            className="wordmark"
-            src="/brand/wordmark.svg"
-            alt={product.name}
-            width="150"
-            height="30"
+            className="brand-mascot"
+            src="/art/mascot.png"
+            alt=""
+            width="44"
+            height="44"
           />
+          <span className="wordmark">{product.name}</span>
         </Link>
         <nav className="desktop-nav" aria-label={copy.menu}>
           {links.map((l) => (
@@ -89,7 +89,7 @@ export function Shell({
             href={l.href}
             aria-current={path === l.href ? "page" : undefined}
           >
-            <span aria-hidden="true">{l.mark}</span>
+            <img src={l.icon} alt="" width="30" height="30" />
             {l.label}
           </Link>
         ))}
@@ -97,17 +97,34 @@ export function Shell({
     </div>
   );
 }
+// Every sticker card carries a small illustrated icon; pages can name one, otherwise the
+// title picks it (income and fees: coin; buybacks and burns: flame; streams, sky and
+// vaults: telescope; anything else: planet).
+export type Sticker = "planet" | "coin" | "flame" | "telescope";
+function stickerFor(title?: string): Sticker {
+  const t = (title ?? "").toLowerCase();
+  if (/income|fee|cash|money|trade|buy/.test(t)) return "coin";
+  if (/buyback|ladder|burn|bid/.test(t)) return "flame";
+  if (/stream|sky|vault|position|tail/.test(t)) return "telescope";
+  return "planet";
+}
 export function Card({
   title,
   children,
   className = "",
+  icon,
 }: {
   title?: string;
   children: React.ReactNode;
   className?: string;
+  icon?: Sticker;
 }) {
+  const sticker = icon ?? stickerFor(title);
   return (
-    <section className={`panel ${className}`}>
+    <section
+      className={`panel ${className}`}
+      style={{ "--sticker": `url(/art/sticker-${sticker}.png)` } as React.CSSProperties}
+    >
       {title && <h2 className="panel-heading">{title}</h2>}
       {children}
     </section>
