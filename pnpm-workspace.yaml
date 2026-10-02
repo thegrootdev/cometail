@@ -3,10 +3,9 @@ packages:
   - worker
   - tests
   - packages/*
-onlyBuiltDependencies:
-  - bigint-buffer
-  - bufferutil
-  - esbuild
-  - sharp
-  - unrs-resolver
-  - utf-8-validate
+allowBuilds:
+  bigint-buffer: true
+  bufferutil: true
+  esbuild: true
+  unrs-resolver: true
+  utf-8-validate: true

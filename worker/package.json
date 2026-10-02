@@ -2,13 +2,16 @@
   "name": "@cometail/worker",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
-  "description": "COMETAIL keeper and indexer: harvests, migrates, routes bids, settles fills, indexes events.",
+  "description": "COMETAIL keeper and indexer: migrates, registers, harvests, routes bids, settles fills, indexes events.",
   "scripts": {
     "start": "tsx src/index.ts",
+    "keeper": "COMETAIL_MODE=keeper tsx src/index.ts",
+    "indexer": "COMETAIL_MODE=indexer tsx src/index.ts",
+    "once": "COMETAIL_MODE=once tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cometail/client": "workspace:*",
     "@coral-xyz/anchor": "0.31.1",
     "@meteora-ag/cp-amm-sdk": "1.5.1",
     "@meteora-ag/dlmm": "1.9.14",

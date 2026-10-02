@@ -4,10 +4,12 @@
   "version": "0.1.0",
   "description": "LiteSVM test harness running the vault program against the live mainnet Meteora binaries.",
   "scripts": {
-    "test": "ts-mocha --exit -p ./tsconfig.json -t 1000000 \"harness/**/*.test.ts\" \"regression/**/*.test.ts\" \"gates/**/*.test.ts\"",
+    "test": "bash run-sequential.sh",
     "smoke": "ts-mocha --exit -p ./tsconfig.json -t 1000000 harness/smoke.test.ts",
-    "regression": "ts-mocha --exit -p ./tsconfig.json -t 1000000 \"regression/**/*.test.ts\"",
-    "build:forwarder": "cd programs/test_forwarder && cargo build-sbf"
+    "regression": "bash run-sequential.sh '^./regression/'",
+    "build:forwarder": "cd programs/test_forwarder && cargo build-sbf",
+    "test:one-process": "ts-mocha --exit -p ./tsconfig.json -t 1000000 \"harness/**/*.test.ts\" \"regression/**/*.test.ts\" \"gates/**/*.test.ts\"",
+    "gates": "bash run-sequential.sh '^./gates/'"
   },
   "dependencies": {
     "@anchor-lang/core": "1.0.2",

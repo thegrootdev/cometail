@@ -50,3 +50,28 @@ load. The verifiable mainnet build gets its own pinned, documented toolchain.
 
 DBC for the curves, DAMM v2 for the graduated pools (compounding), DLMM for the buyback
 ladder. All three are load-bearing.
+
+## Running the worker
+
+One process, three modes, all configured from the environment:
+
+```
+COMETAIL_MODE=keeper|indexer|once   # keeper loop, event indexer, or a single keeper pass
+COMETAIL_RPC_URL=http://127.0.0.1:8899
+COMETAIL_KEEPER_KEYPAIR=~/.config/cometail/keeper.json   # the bounded hot key
+COMETAIL_POLL_MS=15000
+COMETAIL_DUST_LAMPORTS=1000000        # harvests below this gross are skipped
+COMETAIL_MIN_ROUTE_LAMPORTS=10000000  # idle income below this is not laddered
+COMETAIL_MAX_ROUTE_LAMPORTS=5000000000
+COMETAIL_LADDER_BINS=5 COMETAIL_LADDER_DECAY=0.85
+COMETAIL_STALE_ORDER_SECONDS=86400    # resting bins older than this are cancelled and re-laddered
+COMETAIL_DRY_RUN=1                    # simulate everything, send nothing
+COMETAIL_ALERT_WEBHOOK=               # optional JSON webhook for failures
+DATABASE_URL=postgres://...           # indexer mode only
+```
+
+The keeper's order per vault is migrate, register positions, cash out, harvest, settle, route.
+Every write is simulated first and a rejected simulation is logged and skipped, so the loop is
+safe to run against a vault whose policy says no. Ladders start at the nearest bin inside the
+price cap and walk away from the market with geometric weights; ladders wider than twelve bins
+go out as v0 transactions with a per-vault address lookup table.
