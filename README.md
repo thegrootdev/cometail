@@ -7,31 +7,38 @@ launched here (or any eligible stream from another DBC launchpad) earns fees for
 as it trades, and I let the creator sell that stream of fees as its own token. The fee
 stream is the tail. The tail of `$CAT` trades as `tCAT`.
 
-## What's in here
+## Where it runs
 
-- `programs/cometail_vault`: the on-chain program. It custodies fee streams (DBC creator
-  rights and DAMM v2 position NFTs) under a program-derived vault, launches the stream token
-  on DBC with the vault as pool creator, harvests income through CPI, and turns that income
-  into DLMM limit-order bids that burn whatever they fill.
-- `web`: the site. The launchpad front door, The Sky (every Meteora fee stream as a comet),
-  token pages, vault pages.
-- `worker`: the keeper and indexer. Harvests, migrates, places and settles bids, indexes
-  events.
-- `configs`: the four DBC partner configs (three stream-token presets and the plain launch).
-- `tests`: a LiteSVM harness that runs the program against the live mainnet Meteora
-  binaries, plus the release gates.
+Devnet: program `5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg` (the same id is reserved for
+mainnet), protocol account `3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR`, configs and the
+rest in `configs/devnet.json`. The devnet deployment carries small-threshold configs with the
+presets' economics so a curve fills with half a SOL; the full-size configs are deployed next
+to them. Nothing is on mainnet yet: the economics, the authority model and every disclosure
+are written down in `docs/` before the code that implements them, the release gates in
+`docs/release-gates.md` have to pass before anything ships, and `docs/deploy.md` says how
+the program is built for size and deployed with a program-data account no larger than the
+binary.
+
+## Layout
+
+- `programs/cometail_vault`: the on-chain program (Anchor). It custodies fee streams (DBC
+  creator rights and DAMM v2 position NFTs) under a program-derived vault, launches the
+  stream token on DBC with the vault as pool creator, harvests income through CPI, and turns
+  that income into DLMM limit-order bids that burn whatever they fill.
+- `packages/client`: TypeScript instruction builders and PDA helpers for the program, used
+  by the site, the worker and the tests.
+- `web`: the site (Next.js). The launchpad front door, The Sky (every Meteora fee stream as
+  a comet), token pages, the sell-your-tail wizard, vault pages, the portfolio. Every line of
+  copy lives in `web/src/content/cometail.ts`.
+- `worker`: the keeper and indexer, one process with modes: migrates, registers, cashes out,
+  harvests, opens and registers the stream token's DLMM pair, places and settles bids;
+  indexes events, snapshots vaults, scans the Sky, serves the site's read API.
+- `configs`: the four DBC partner config parameter files and the devnet addresses.
+- `tests`: the LiteSVM harness that runs the program against the live mainnet Meteora
+  binaries, the regression suite, the release gates, and the devnet scripts.
 - `idls`: pinned Meteora IDLs.
-- `docs`: how it works, the economics, the security model.
-
-## Where it stands
-
-Devnet build in progress: the program has its accounts and first instructions, the
-harness runs the Meteora paths against the live binaries, the site is a scaffold.
-Nothing here is on mainnet yet. The economics, the authority
-model and every disclosure are written down in `docs/` before the code that implements
-them; the release gates in `docs/release-gates.md` have to pass before anything ships, and
-`docs/deploy.md` says how the program is built for size and deployed with a program-data
-account no larger than the binary.
+- `docs`: how a vault works, the economics, the security model, the release gates, the
+  deploy plan, the devnet browser checklist.
 
 ## Running it
 
