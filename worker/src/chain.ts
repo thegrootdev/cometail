@@ -4,7 +4,7 @@
 import { AnchorProvider, BN, EventParser, Idl, Program, Wallet } from "@coral-xyz/anchor";
 import { AccountLayout } from "@solana/spl-token";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, VAULT_PROGRAM_ID, VaultClientStep6 } from "@cometail/client";
+import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, VAULT_PROGRAM_ID, VaultClientStep6 , DLMM_PROGRAM_ID } from "@cometail/client";
 import { derivePositionNftAccount } from "@meteora-ag/cp-amm-sdk";
 import path from "path";
 
@@ -24,7 +24,7 @@ export const DAMM_V2_MIGRATION_CONFIGS = [
 export const DBC_PROGRESS = { preBonding: 0, postBonding: 1, lockedVesting: 2, createdPool: 3 } as const;
 const LIMIT_ORDER_DISCRIMINATOR = Buffer.from([137, 183, 212, 91, 115, 29, 141, 227]);
 
-export interface LimitOrderBin { id: number; amount: bigint; isAsk: boolean }
+export interface LimitOrderBin { id: number; amount: bigint; isAsk: boolean; age: number }
 export interface LimitOrderView { lbPair: PublicKey; owner: PublicKey; bins: LimitOrderBin[] }
 
 export function parseLimitOrder(data: Buffer): LimitOrderView {
@@ -34,9 +34,40 @@ export function parseLimitOrder(data: Buffer): LimitOrderView {
   const bins: LimitOrderBin[] = [];
   for (let i = 0; i < binCount; i++) {
     const o = 120 + 32 * i;
-    bins.push({ amount: data.readBigUInt64LE(o), id: data.readInt32LE(o + 16), isAsk: data[o + 20] !== 0 });
+    bins.push({ amount: data.readBigUInt64LE(o), age: data.readUInt32LE(o + 8), id: data.readInt32LE(o + 16), isAsk: data[o + 20] !== 0 });
   }
   return { lbPair: new PublicKey(data.subarray(8, 40)), owner: new PublicKey(data.subarray(40, 72)), bins };
+}
+
+/** The limit-order fields of one DLMM `Bin`, read from its bin array exactly as the program's
+ *  settle does (ladder.rs read_bin: 8 + 48 byte header, 144-byte bins, 70 per array). */
+export interface BinView { openOrderAmount: bigint; totalProcessingOrderAmount: bigint; processedOrderRemainingAmount: bigint; orderAge: number }
+export const BINS_PER_ARRAY = 70;
+const BIN_SIZE = 144, BIN_ARRAY_HEADER = 8 + 8 + 1 + 7 + 32;
+const BIN_ARRAY_DISCRIMINATOR = Buffer.from([92, 142, 92, 220, 5, 148, 70, 181]);
+export function binArrayIndex(binId: number): number { return Math.floor(binId / BINS_PER_ARRAY); }
+export function deriveBinArray(pair: PublicKey, index: number): PublicKey {
+  const b = Buffer.alloc(8); b.writeBigInt64LE(BigInt(index));
+  return PublicKey.findProgramAddressSync([Buffer.from("bin_array"), pair.toBuffer(), b], DLMM_PROGRAM_ID)[0];
+}
+export function readBinView(data: Buffer, pair: PublicKey, binId: number): BinView | null {
+  if (data.length < BIN_ARRAY_HEADER + BINS_PER_ARRAY * BIN_SIZE || !data.subarray(0, 8).equals(BIN_ARRAY_DISCRIMINATOR)) return null;
+  if (data.readBigInt64LE(8) !== BigInt(binArrayIndex(binId))) return null;
+  if (!new PublicKey(data.subarray(24, 56)).equals(pair)) return null;
+  const o = BIN_ARRAY_HEADER + (((binId % BINS_PER_ARRAY) + BINS_PER_ARRAY) % BINS_PER_ARRAY) * BIN_SIZE;
+  return { openOrderAmount: data.readBigUInt64LE(o + 112), totalProcessingOrderAmount: data.readBigUInt64LE(o + 120), processedOrderRemainingAmount: data.readBigUInt64LE(o + 128), orderAge: data.readUInt32LE(o + 136) };
+}
+/** The unfilled principal of one order bin, as DLMM's reader and the program's settle compute it
+ *  (ladder.rs unfilled_amount): untouched while the bin's order age is the order's own; a partially
+ *  processed generation keeps ceil(amount x processed_remaining / total_processing); older is filled. */
+export function unfilledAmount(orderBin: LimitOrderBin, bin: BinView): bigint {
+  if (orderBin.age === bin.orderAge) return orderBin.amount;
+  if (orderBin.age + 1 === bin.orderAge) {
+    if (bin.openOrderAmount === 0n && bin.processedOrderRemainingAmount === 0n) return 0n;
+    if (bin.totalProcessingOrderAmount === 0n) return 0n;
+    return (orderBin.amount * bin.processedOrderRemainingAmount + bin.totalProcessingOrderAmount - 1n) / bin.totalProcessingOrderAmount;
+  }
+  return 0n;
 }
 
 export interface Decoded<T = any> { pubkey: PublicKey; account: T }
@@ -90,6 +121,12 @@ export class Chain {
   dammPool(pk: PublicKey) { return this.decode(this.damm, "pool", pk); }
   dammPosition(pk: PublicKey) { return this.decode(this.damm, "position", pk); }
   lbPair(pk: PublicKey) { return this.decode(this.dlmm, "lbPair", pk); }
+  /** The bin arrays of a pair that hold the given bins, keyed by array index (null when absent). */
+  async binArrays(pair: PublicKey, binIds: number[]): Promise<Map<number, Buffer | null>> {
+    const indices = [...new Set(binIds.map(binArrayIndex))];
+    const infos = await this.connection.getMultipleAccountsInfo(indices.map((i) => deriveBinArray(pair, i)), "confirmed");
+    return new Map(indices.map((i, j) => [i, infos[j] ? infos[j]!.data : null]));
+  }
   async limitOrder(pk: PublicKey): Promise<LimitOrderView | null> {
     const info = await this.connection.getAccountInfo(pk);
     return info ? parseLimitOrder(info.data) : null;

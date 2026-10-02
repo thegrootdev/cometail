@@ -104,8 +104,10 @@ size rule would admit it, keyed by the position address with `kind: "position"`)
 view (the standing bids bin by bin with prices and the pool's active price) and stream rows the
 registered position's share of its pool's locked liquidity. `/api/metrics` reports the submission
 numbers with independent actors apart from the demo set (`COMETAIL_DEMO_ACTORS`): plain launches
-and their fee volume by creator, external and own income, depositors, bid depth, fills and burns
-and refunded principal by vault depositor; stream-token buyers are not indexed.
+and their fee volume by creator, recurring external and own income apart from one-time proceeds,
+depositors, bid depth (unfilled principal from the bin arrays), fills and burns and refunded
+principal by vault depositor; anything whose owner is not yet resolved is reported as
+unattributed, never independent; stream-token buyers are not indexed.
 
 ## Running the site
 

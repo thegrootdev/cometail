@@ -46,41 +46,61 @@ async function refuseIfTaken(host: string, port: number): Promise<void> {
   if (taken) throw new Error(`API port ${host}:${port} is already in use by another process; refusing to start`);
 }
 
-/** The metrics of PLAN 8.7, each independent-versus-demo by the actor that owns it: a launch by its
- *  creator, a vault (its income, bids, fills, burns, refunds) by its depositor. Stream-token buyers
- *  are not indexed (DAMM v2 swaps are outside the event stream), so that line is null. */
+/** The metrics of PLAN 8.7, each line independent versus demo by the actor that owns it: a launch by
+ *  its creator (a vault-held launch by that vault's depositor), a vault (its income, bids, fills,
+ *  burns, refunds) by its depositor. A line whose owner cannot be resolved yet (an event before its
+ *  vault's snapshot, a program-held launch without a vault record) is "unattributed", never
+ *  independent, and the document says so. One-time proceeds (migration surplus, one-time claims)
+ *  are reported apart from recurring income. Stream-token buyers are not indexed (DAMM v2 swaps are
+ *  outside the event stream), so that line is null. */
 export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set<string>) {
-  type Cls = "independent" | "demo";
-  const cls = (actor: string): Cls => (demo.has(actor) ? "demo" : "independent");
-  const pair = () => ({ independent: 0n, demo: 0n });
-  const str = (p: { independent: bigint; demo: bigint }) => ({ independent: p.independent.toString(), demo: p.demo.toString() });
-  const [vaults, streams, sky, harvests, settled] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested", "oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0)]);
-  const vaultClass = new Map(vaults.map((v) => [v.vault, cls(String(v.data.depositor))]));
+  type Cls = "independent" | "demo" | "unattributed";
+  const cls = (actor: string | undefined | null): Cls => (!actor ? "unattributed" : demo.has(actor) ? "demo" : "independent");
+  const triple = () => ({ independent: 0n, demo: 0n, unattributed: 0n });
+  const counts = () => ({ independent: 0, demo: 0, unattributed: 0 });
+  const str = (p: Record<Cls, bigint>) => ({ independent: p.independent.toString(), demo: p.demo.toString(), unattributed: p.unattributed.toString() });
+  const [vaults, streams, sky, recurringEvents, oneTimeEvents, settled] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested"], 0), store.listEventsSince(["oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0)]);
+  const vaultClass = new Map<string, Cls>(vaults.map((v) => [v.vault, cls(String(v.data.depositor))]));
+  const ofVault = (vault: string | null | undefined): Cls => (vault && vaultClass.get(vault)) || "unattributed";
   const own = new Map(streams.map((s) => [s.stream, !!s.data.isOwn]));
-  const launches = { independent: 0, demo: 0 }, launchFees = pair();
-  // a launch whose creator rights sit in a vault shows the vault PDA as its creator: it belongs to
-  // that vault's depositor
-  for (const r of sky) if ((r.kind ?? "curve") === "curve" && plainConfigs.has(r.config)) { const c = (r.vault && vaultClass.get(r.vault)) || cls(r.creator); launches[c]++; launchFees[c] += BigInt(r.tradingFeeLamports); }
-  const external = pair(), ownIncome = pair();
-  for (const e of harvests) { const c = vaultClass.get(e.vault ?? "") ?? "independent"; (own.get(String(e.data.stream)) ? ownIncome : external)[c] += BigInt(e.data.gross ?? 0); }
+  const launches = counts(), launchFees = triple();
+  for (const r of sky) if ((r.kind ?? "curve") === "curve" && plainConfigs.has(r.config)) {
+    // a program-held creator is a vault PDA: the launch belongs to that vault's depositor, or is
+    // unattributed until the vault record exists; a wallet creator classifies by itself
+    const c: Cls = r.vault ? ofVault(r.vault) : r.custody === "program" ? "unattributed" : cls(r.creator);
+    launches[c]++; launchFees[c] += BigInt(r.tradingFeeLamports);
+  }
+  const recurring = { external: triple(), own: triple() }, oneTime = { external: triple(), own: triple() };
+  for (const e of recurringEvents) { const c = ofVault(e.vault); (own.get(String(e.data.stream)) ? recurring.own : recurring.external)[c] += BigInt(e.data.gross ?? 0); }
+  for (const e of oneTimeEvents) { const c = ofVault(e.vault); (own.get(String(e.data.stream)) ? oneTime.own : oneTime.external)[c] += BigInt(e.data.gross ?? 0); }
   const depositors = { independent: new Set<string>(), demo: new Set<string>() };
-  const depth = pair(), refunded = pair(), burned = pair(), fills = { independent: 0, demo: 0 };
+  const depth = triple(), refunded = triple(), burned = triple(), fills = counts();
+  let unknownBins = 0;
   for (const v of vaults) {
     const c = vaultClass.get(v.vault)!;
-    depositors[c].add(String(v.data.depositor));
+    if (c !== "unattributed") depositors[c].add(String(v.data.depositor));
     depth[c] += BigInt(v.data.live?.ladder?.restingLamports ?? 0);
+    unknownBins += Number(v.data.live?.ladder?.unknownBins ?? 0);
     refunded[c] += BigInt(v.data.accounting?.refundedPrincipal ?? 0);
   }
-  for (const e of settled) { const c = vaultClass.get(e.vault ?? "") ?? "independent"; const b = BigInt(e.data.burned ?? 0); if (b > 0n) fills[c]++; burned[c] += b; }
+  for (const e of settled) { const c = ofVault(e.vault); const b = BigInt(e.data.burned ?? 0); if (b > 0n) fills[c]++; burned[c] += b; }
+  const unattributed = launches.unattributed > 0 || fills.unattributed > 0 || [launchFees, recurring.external, recurring.own, oneTime.external, oneTime.own, depth, refunded, burned].some((t) => t.unattributed > 0n);
+  // DBC books the trading fee net of its 20% protocol share, so the flat 1% curve fee implies
+  // volume = net fee x 125; still an estimate, subject to per-trade rounding
+  const volume = (t: Record<Cls, bigint>) => str({ independent: t.independent * 125n, demo: t.demo * 125n, unattributed: t.unattributed * 125n });
   return {
     generatedAt: Date.now(), demoActors: [...demo],
+    incomplete: unattributed || unknownBins > 0,
     notes: [
-      "independent and demo are decided by the actor that owns each line: launches by creator, vaults by depositor",
+      "independent and demo are decided by the actor that owns each line: launches by creator (a vault-held launch by its depositor), vaults by depositor; owners not yet resolved are unattributed, never independent",
       "stream-token buyers are not indexed (DAMM v2 swaps are outside the event stream), so buyers is null",
-      "launch volume is an estimate from the flat 1% curve fee",
+      "launch volume is an estimate: the flat 1% curve fee, booked by DBC net of its 20% protocol share, implies net fee x 125",
+      "bid depth is the unfilled principal of every resting bin from the bin arrays, the same accounting settle applies",
+      ...(unknownBins > 0 ? [`${unknownBins} bin(s) could not be read; their depth is not counted`] : []),
     ],
-    plainLaunches: { count: launches, tradingFeeLamports: str(launchFees), volumeEstimateLamports: str({ independent: launchFees.independent * 100n, demo: launchFees.demo * 100n }) },
-    externalIncomeLamports: str(external), ownIncomeLamports: str(ownIncome),
+    plainLaunches: { count: launches, tradingFeeLamports: str(launchFees), volumeEstimateLamports: volume(launchFees) },
+    recurringIncomeLamports: { external: str(recurring.external), own: str(recurring.own) },
+    oneTimeProceedsLamports: { external: str(oneTime.external), own: str(oneTime.own) },
     depositors: { independent: depositors.independent.size, demo: depositors.demo.size },
     buyers: null,
     bidDepthLamports: str(depth),

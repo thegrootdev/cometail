@@ -176,8 +176,15 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                         {bins.map((b: any) => (
                           <li key={b.id}>
                             <span>{Number(b.price).toPrecision(4)} SOL/token</span>
-                            <span className={b.crossed ? "text-dust" : "text-ion"}>
-                              {sol(String(b.amount))} · {b.crossed ? vaultPage.crossed : vaultPage.resting}
+                            <span className={b.status === "filled" ? "text-dust" : "text-ion"}>
+                              {b.remaining === null
+                                ? `${sol(String(b.amount))} · ${vaultPage.unknownFill}`
+                                : b.status === "filled"
+                                  ? `${sol(String(b.filled))} ${vaultPage.filled}`
+                                  : b.status === "partial"
+                                    ? `${sol(String(b.remaining))} ${vaultPage.resting} · ${sol(String(b.filled))} ${vaultPage.filled}`
+                                    : `${sol(String(b.remaining))} ${vaultPage.resting}`}
+                              {b.crossed && b.status !== "filled" ? ` · ${vaultPage.crossed}` : ""}
                             </span>
                           </li>
                         ))}

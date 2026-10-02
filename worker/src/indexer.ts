@@ -5,6 +5,7 @@ import { Connection } from "@solana/web3.js";
 import { VAULT_PROGRAM_ID } from "@cometail/client";
 import { Chain , isDefault } from "./chain";
 import { isCrossed } from "./ladder";
+import { binArrayIndex, readBinView, unfilledAmount } from "./chain";
 import { getMint, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { EventRow, Store, plain } from "./store";
 import { log, parseEvents } from "./tx";
@@ -90,14 +91,25 @@ export class Indexer {
           const dec = await this.stDecimals(vault.stMint);
           const price = (id: number) => binPriceSolPerSt(id, binStep, !!vault.stIsX, dec);
           const orders: any[] = [];
-          for (const r of await this.chain.orderRecords(vaultPk)) {
-            const order = await this.chain.limitOrder(r.account.limitOrder);
-            if (!order) continue;
-            orders.push({ limitOrder: r.account.limitOrder.toBase58(), placedTs: Number(r.account.placedTs), grossSpent: r.account.grossSpent.toString(),
-              bins: order.bins.map((b) => ({ id: b.id, amount: b.amount.toString(), isAsk: b.isAsk, crossed: isCrossed(b.id, b.isAsk, activeId), price: price(b.id) })) });
+          const read: { order: any; record: any }[] = [];
+          for (const r of await this.chain.orderRecords(vaultPk)) { const order = await this.chain.limitOrder(r.account.limitOrder); if (order) read.push({ order, record: r }); }
+          // the fill state of every bin comes from its bin array, the same accounting the program's
+          // settle applies (chain.unfilledAmount); crossed is only the keeper's settle trigger
+          const arrays = await this.chain.binArrays(vault.dlmmPair, read.flatMap((x) => x.order.bins.map((b: any) => b.id)));
+          for (const { order, record } of read) {
+            const bins = order.bins.map((b: any) => {
+              const data = arrays.get(binArrayIndex(b.id));
+              const view = data ? readBinView(data, vault.dlmmPair, b.id) : null;
+              const remaining = view ? unfilledAmount(b, view) : null;
+              const status = remaining === null ? "unknown" : remaining === b.amount ? "unfilled" : remaining === 0n ? "filled" : "partial";
+              return { id: b.id, amount: b.amount.toString(), remaining: remaining === null ? null : remaining.toString(), filled: remaining === null ? null : (b.amount - remaining).toString(), status, isAsk: b.isAsk, crossed: isCrossed(b.id, b.isAsk, activeId), price: price(b.id) };
+            });
+            orders.push({ limitOrder: record.account.limitOrder.toBase58(), placedTs: Number(record.account.placedTs), grossSpent: record.account.grossSpent.toString(), bins });
           }
-          const resting = orders.flatMap((o) => o.bins as any[]).filter((b) => !b.crossed).reduce((a, b) => a + BigInt(b.amount), 0n);
-          out.ladder = { pair: vault.dlmmPair.toBase58(), activeId, binStep, activePrice: price(activeId), orders, restingLamports: resting.toString() };
+          const allBins = orders.flatMap((o) => o.bins as any[]);
+          const resting = allBins.reduce((a, b) => a + BigInt(b.remaining ?? 0), 0n);
+          const unknownBins = allBins.filter((b) => b.remaining === null).length;
+          out.ladder = { pair: vault.dlmmPair.toBase58(), activeId, binStep, activePrice: price(activeId), orders, restingLamports: resting.toString(), unknownBins };
         }
       }
     } catch (e) { log("live ladder read failed", { vault: vaultPk.toBase58(), error: String((e as Error).message ?? e) }); }
