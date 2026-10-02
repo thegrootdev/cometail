@@ -2,7 +2,7 @@
 import { AnchorProvider, BN, Idl, Program, Wallet } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, AuthorityType, createSetAuthorityInstruction, getAssociatedTokenAddressSync, NATIVE_MINT } from "@solana/spl-token";
-import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, DLMM_PROGRAM_ID, deriveProtocol, deriveVault, SEEDS } from "./index";
+import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, DLMM_PROGRAM_ID, deriveProtocol, deriveVault, SEEDS } from "./ids";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 export const VAULT_IDL = require("../idl/cometail_vault.json") as Idl;

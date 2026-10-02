@@ -20,3 +20,4 @@ test-ledger/
 .idea/
 .vscode/
 .devnet-out/
+.local/

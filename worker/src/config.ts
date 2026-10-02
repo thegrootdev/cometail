@@ -1,7 +1,7 @@
 // Worker configuration, all from the environment. The keeper key is a bounded hot key: it can
 // only call `route` and keeper-only `settle` on the program and pay rent for permissionless
 // steps (migration, registration, harvests). It never holds vault funds.
-import { Keypair } from "@solana/web3.js";
+import { Keypair, PublicKey } from "@solana/web3.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -27,6 +27,12 @@ export interface Config {
   /** Resting bins older than this are cancelled so the income can be re-laddered near the market. */
   staleOrderSeconds: number;
   databaseUrl: string | null;
+  /** The read API for the site (indexer mode); 0 disables it. */
+  apiPort: number;
+  /** DBC configs the Sky scan is limited to; empty scans every pool of the program. */
+  skyConfigs: PublicKey[];
+  /** Run the Sky scan every this many indexer passes. */
+  skyEveryPasses: number;
   dryRun: boolean;
   cuPriceMicroLamports: number;
 }
@@ -68,6 +74,9 @@ export function loadConfig(): Config {
     ladderDecay: num("COMETAIL_LADDER_DECAY", 0.85),
     staleOrderSeconds: num("COMETAIL_STALE_ORDER_SECONDS", 86_400),
     databaseUrl: process.env.DATABASE_URL || null,
+    apiPort: num("COMETAIL_API_PORT", 0),
+    skyConfigs: env("COMETAIL_SKY_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
+    skyEveryPasses: Math.max(1, num("COMETAIL_SKY_EVERY_PASSES", 4)),
     dryRun: env("COMETAIL_DRY_RUN", "0") === "1",
     cuPriceMicroLamports: num("COMETAIL_CU_PRICE", 0),
   };

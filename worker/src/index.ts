@@ -1,11 +1,14 @@
 // COMETAIL worker: one binary, three modes.
 //   keeper   loop: migrate, register, cash out, harvest, settle, route for every vault
-//   indexer  loop: follow program events into Postgres and snapshot vault state
+//   indexer  loop: follow program events into the store, snapshot vault state, scan the Sky, serve the API
 //   once     a single keeper pass (for scripts and the devnet end-to-end)
 import { Connection } from "@solana/web3.js";
 import { Chain } from "./chain";
 import { loadConfig } from "./config";
 import { Indexer } from "./indexer";
+import { startApi } from "./api";
+import { scanSky } from "./sky";
+import { openStore } from "./store";
 import { keeperPass } from "./keeper";
 import { LookupTables } from "./lut";
 import { log } from "./tx";
@@ -24,13 +27,22 @@ async function main() {
 
   if (cfg.mode === "indexer") {
     if (!cfg.databaseUrl) throw new Error("DATABASE_URL is required in indexer mode");
-    const indexer = new Indexer(chain, cfg.databaseUrl);
-    await indexer.init();
+    const store = openStore(cfg.databaseUrl);
+    await store.init();
+    const indexer = new Indexer(chain, store);
+    const api = cfg.apiPort > 0 ? startApi(store, cfg.apiPort) : null;
+    let passes = 0;
     while (!stopping) {
       try { await indexer.pass(); } catch (e) { log("indexer pass failed", { error: String((e as Error).message ?? e) }); }
+      if (passes % cfg.skyEveryPasses === 0) {
+        try { await store.upsertSky(await scanSky(chain, cfg.skyConfigs)); } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
+      }
+      passes++;
+      if (process.env.COMETAIL_ONCE === "1") break;
       await sleep(cfg.pollMs);
     }
-    await indexer.close();
+    api?.close();
+    await store.close();
     return;
   }
 

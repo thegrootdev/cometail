@@ -16,7 +16,7 @@ const ROOT = path.resolve(__dirname, "..", "..");
 const KEYS = path.join(ROOT, "keys", "devnet");
 const STATE = path.join(ROOT, "configs", "devnet.json");
 const RPC = process.env.RPC ?? "https://api.devnet.solana.com";
-const FUND = { keeper: 2, depositor: 3, buyer: 3 } as Record<string, number>; // SOL targets
+const FUND = { keeper: 2, depositor: 5, buyer: 5 } as Record<string, number>; // SOL targets
 
 function key(name: string): Keypair {
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(path.join(KEYS, `${name}.json`), "utf8"))));
