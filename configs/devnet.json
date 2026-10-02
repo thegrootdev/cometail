@@ -1,0 +1,14 @@
+{
+  "cluster": "devnet",
+  "configs": {
+    "stream-25": "2sNpQ3iaH1LUnLesKV2RFEQpphqh7oz3kWScko7Mne51",
+    "stream-50": "CMA2ioUX5YbgotiWSiguX4gCTKnvnwvrFPT5CF2ccrTP",
+    "stream-75": "9SqQb45GMsiHZLF7cre8QcisAJuQwjSytGymAmzvZic9",
+    "plain": "9utyJkkrmQnzdDJjLWQJRN2DocYkTobdwg7eveWmJ4Qj"
+  },
+  "programId": "5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg",
+  "admin": "3eBuya2rggMkpqJC4jM9vJo2u91njEWTuH7AV4RnNNEC",
+  "keeper": "A4iqXrFHjjpDzKbzHgwpeCMbYVFSdVeK5eHkpLe32gKz",
+  "treasury": "JdMo3ektR8etAHpYMiCMZnkPAoJ5djhf1eGaJBMni9H",
+  "protocol": "3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR"
+}

@@ -2,7 +2,8 @@
 // configs (three stream presets and the plain launch config), init_protocol, and funding of
 // the keeper / depositor / buyer keys. Re-runnable: every step is skipped once its account
 // exists. Addresses go to configs/devnet.json (public devnet addresses; no keys).
-//   RPC=https://api.devnet.solana.com ts-node devnet/setup.ts [fund]
+//   cd tests && RPC=https://api.devnet.solana.com ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1000000 devnet/setup.ts -- fund
+// (it runs as one mocha case so the TypeScript client package loads through the same loader as the tests)
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, TransactionInstruction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import fs from "fs";
@@ -90,4 +91,4 @@ async function main() {
   console.log(JSON.stringify(state, null, 2));
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+describe("devnet setup", () => { it("creates what is missing and reports balances", main); });
