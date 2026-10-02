@@ -13,12 +13,12 @@ function hash(s: string): number { let h = 2166136261; for (let i = 0; i < s.len
 const PROGRESS = ["bonding", "curve complete", "locked vesting", "graduated"];
 
 export default function SkyPage() {
-  const { data, loading } = useLoad(() => api.sky(), []);
+  const { data, loading } = useLoad(() => api.sky(), [], 30_000);
   const streams = useMemo(() => data?.streams ?? [], [data]);
   const comets = useMemo(() => {
-    const max = Math.max(1, ...streams.map((s) => Number(s.claimableLamports) + Number(s.realizedLamports)));
+    const max = Math.max(1, ...streams.map((s) => Number(s.claimableLamports) + Number(s.realized30dLamports ?? s.realizedEstimateLamports)));
     return streams.map((s) => {
-      const income = Number(s.claimableLamports) + Number(s.realizedLamports);
+      const income = Number(s.claimableLamports) + Number(s.realized30dLamports ?? s.realizedEstimateLamports);
       const len = 20 + 200 * Math.log1p(income) / Math.log1p(max);
       const claimableShare = income > 0 ? Number(s.claimableLamports) / income : 0;
       return { s, x: 60 + hash(s.pool) * 880, y: 40 + hash(s.creator + s.pool) * 420, len, claimableShare };
@@ -37,7 +37,7 @@ export default function SkyPage() {
               <line x1={0} y1={0} x2={-len} y2={0} stroke="#5BC8FF" strokeWidth={3} strokeLinecap="round" opacity={0.55} />
               <line x1={0} y1={0} x2={-len * claimableShare} y2={0} stroke="#F5C451" strokeWidth={3} strokeLinecap="round" opacity={0.9} />
               <circle r={4.5} fill={s.eligible ? "#F5C451" : "#E8ECF4"} />
-              <title>{`${short(s.baseMint)} · ${sol(s.claimableLamports)} claimable · ${sol(s.realizedLamports)} realized`}</title>
+              <title>{`${short(s.baseMint)} · ${sol(s.claimableLamports)} claimable · ${s.realized30dLamports !== null ? `${sol(s.realized30dLamports)} harvested, 30 days` : `about ${sol(s.realizedEstimateLamports)} earned on the curve`}`}</title>
             </g>
           ))}
         </svg>
@@ -54,7 +54,7 @@ export default function SkyPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase tracking-wider text-starlight/50">
-                <tr><th className="py-2">Token</th><th>Stage</th><th>Creator rights</th><th className="text-right">Claimable</th><th className="text-right">Realized</th><th>Eligible</th><th></th></tr>
+                <tr><th className="py-2">Token</th><th>Stage</th><th>Creator rights</th><th className="text-right">Claimable</th><th className="text-right">{copy.legend.realized}</th><th className="text-right">Curve income (estimate)</th><th>Eligible</th><th></th></tr>
               </thead>
               <tbody>
                 {streams.map((s: SkyStream) => (
@@ -63,7 +63,8 @@ export default function SkyPage() {
                     <td>{PROGRESS[s.progress] ?? s.progress}</td>
                     <td>{s.custody === "wallet" ? "wallet" : s.custody === "program" ? "program-held" : "unknown"} · {s.creatorPct}% locked</td>
                     <td className="text-right text-dust">{sol(s.claimableLamports)}</td>
-                    <td className="text-right">{sol(s.realizedLamports)}</td>
+                    <td className="text-right">{s.realized30dLamports !== null ? sol(s.realized30dLamports) : <span className="text-starlight/40">not in a vault</span>}</td>
+                    <td className="text-right text-starlight/70" title="floor(total trading fee x creator share) minus claimable: at most one lamport per trade above the true accrual">≈ {sol(s.realizedEstimateLamports)}</td>
                     <td>{s.eligible ? "yes" : <span title={s.reasons.join("; ")} className="text-starlight/50">no</span>}</td>
                     <td className="text-right">{s.eligible && s.custody === "wallet" && <Link href={`/sell?pool=${s.pool}`} className="rounded-full border border-dust px-3 py-1 text-xs text-dust">Sell this tail</Link>}</td>
                   </tr>

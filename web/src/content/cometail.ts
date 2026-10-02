@@ -31,7 +31,7 @@ export const hero = {
 export const sky = {
   title: "The Sky",
   body: "Every fee stream on Meteora, drawn as a comet. The longer the tail, the more it earns.",
-  legend: { claimable: "claimable now", realized: "earned, 30 days", locked: "locked liquidity" },
+  legend: { claimable: "claimable now", realized: "harvested, 30 days", locked: "locked liquidity" },
 } as const;
 
 export const tokenPage = {
@@ -73,6 +73,37 @@ export const wizard = {
   ],
   withdrawLock: "Streams can be withdrawn until you launch. A bonding-curve stream that has completed its curve but not migrated yet cannot be moved until it migrates.",
   irreversible: "Launching is final. After launch, streams stay in the vault.",
+  connect: "Connect the wallet that owns the streams.",
+  step1: "1. Your streams",
+  step2: "2. Your share at graduation",
+  step3: "3. The stream token",
+  scanning: "Scanning the wallet…",
+  nothingFound: "No DBC launches or locked positions found for this wallet.",
+  rights: "Creator rights",
+  position: "Locked position",
+  claimable: "claimable",
+  stages: ["bonding", "curve complete", "locked vesting", "graduated"],
+  name: "Name",
+  symbol: (prefix: string) => `Symbol (shown as ${prefix}SYMBOL)`,
+  metadata: "Metadata URL",
+  cap: "Highest price the buyback pays, SOL per token",
+  capEncoded: "Encoded cap:",
+  capInvalid: "Enter a positive price.",
+  signing: "Signing…",
+  stopped: "Stopped:",
+  resumeHint: "The vault exists. Withdraw its streams or finish the launch from the vault page:",
+  launched: "Launched.",
+  openVault: "Open the vault",
+  moneyTitle: "How the money moves",
+} as const;
+
+export const openVault = {
+  title: "Finish or undo this vault",
+  intro: "Nothing has launched yet. Every stream can go back to your wallet, or the stream token can launch now.",
+  withdraw: "Withdraw",
+  launch: "Launch the stream token",
+  mintKeyNote: "Launching needs the stream token key the wizard generated; a vault created in another session can still withdraw its streams here.",
+  needsMintKey: "This browser does not hold the stream token key for this vault. Withdraw the streams and start again from Sell your tail.",
 } as const;
 
 export const splits = {

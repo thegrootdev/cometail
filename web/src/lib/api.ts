@@ -5,7 +5,7 @@ import { API_URL } from "./addresses";
 export interface SkyStream {
   pool: string; config: string; baseMint: string; quoteMint: string; creator: string; custody: "wallet" | "program" | "unknown";
   progress: number; eligible: boolean; reasons: string[]; creatorPct: number; partnerPct: number; creatorFeePct: number;
-  claimableLamports: string; realizedLamports: string; tradingFeeLamports: string; dammPool: string | null; updatedAt: number;
+  claimableLamports: string; realizedEstimateLamports: string; realized7dLamports: string | null; realized30dLamports: string | null; vault: string | null; tradingFeeLamports: string; dammPool: string | null; updatedAt: number;
 }
 export interface VaultRow { vault: string; data: any; updatedAt: number }
 export interface EventRow { signature: string; idx: number; slot: number; blockTime: number | null; name: string; vault: string | null; data: any }

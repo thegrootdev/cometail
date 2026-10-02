@@ -42,16 +42,25 @@ export function wrapSolIxs(owner: PublicKey, lamports: BN): TransactionInstructi
   const dest = ata(NATIVE_MINT, owner);
   return [ataIx(owner, NATIVE_MINT, owner), SystemProgram.transfer({ fromPubkey: owner, toPubkey: dest, lamports: BigInt(lamports.toString()) }), createSyncNativeInstruction(dest)];
 }
+/** Public endpoints throttle reads too: retry a read a few times with backoff. */
+export async function retry<T>(what: string, fn: () => Promise<T>, attempts = 6): Promise<T> {
+  let last: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try { return await fn(); } catch (e) { last = e; if (i < attempts) await new Promise((r) => setTimeout(r, 1500 * i)); }
+  }
+  throw new Error(`${what}: ${String((last as Error)?.message ?? last)}`);
+}
+const getInfo = (connection: Connection, pk: PublicKey) => retry(`read ${pk.toBase58()}`, () => connection.getAccountInfo(pk, "confirmed"));
 export async function tokenBalance(connection: Connection, account: PublicKey): Promise<BN> {
-  const info = await connection.getAccountInfo(account, "confirmed");
+  const info = await getInfo(connection, account);
   return info ? new BN(AccountLayout.decode(info.data).amount.toString()) : new BN(0);
 }
 export async function tokenOwner(connection: Connection, account: PublicKey): Promise<PublicKey | null> {
-  const info = await connection.getAccountInfo(account, "confirmed");
+  const info = await getInfo(connection, account);
   return info ? new PublicKey(AccountLayout.decode(info.data).owner) : null;
 }
 async function decode(connection: Connection, program: any, name: string, pk: PublicKey): Promise<any> {
-  const info = await connection.getAccountInfo(pk, "confirmed");
+  const info = await getInfo(connection, pk);
   if (!info) throw new Error(`missing account ${pk.toBase58()} (${name})`);
   return program.coder.accounts.decode(name, info.data);
 }
@@ -87,7 +96,7 @@ export async function curveBuyIx(a: { config: PublicKey; baseMint: PublicKey; bu
 export async function migrateToDammV2(connection: Connection, payer: Keypair, a: { config: PublicKey; baseMint: PublicKey }) {
   const addrs = poolAddrs(a.config, a.baseMint, NATIVE_MINT);
   const metadata = deriveDammV2MigrationMetadataAddress(addrs.pool);
-  if (!(await connection.getAccountInfo(metadata))) {
+  if (!(await getInfo(connection, metadata))) {
     const m = await dbcProgram.methods.migrationDammV2CreateMetadata().accountsPartial({ virtualPool: addrs.pool, config: a.config, migrationMetadata: metadata, payer: payer.publicKey, systemProgram: SystemProgram.programId }).instruction();
     await send(connection, [m], [payer], { label: "dbc.migration_damm_v2_create_metadata" });
   }

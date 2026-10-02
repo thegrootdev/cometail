@@ -6,7 +6,7 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, unpackMint, getExtensionTypes, ExtensionType } from "@solana/spl-token";
 import { Chain, DAMM_V2_MIGRATION_CONFIGS, DBC_PROGRAM_ID } from "./chain";
-import { SkyRow } from "./store";
+import { SkyRow, Store } from "./store";
 import { log } from "./tx";
 
 /** Byte offsets inside a `VirtualPool` account (8-byte discriminator, then `PoolState`). */
@@ -28,8 +28,24 @@ async function accounts(connection: Connection, keys: PublicKey[]) {
   return out;
 }
 
-/** One scan. `configs` empty means every pool the program owns. */
-export async function scanSky(chain: Chain, configs: PublicKey[]): Promise<SkyRow[]> {
+/** Realized income per stream pool from this protocol's harvest events, in the last `days`. */
+async function realizedByPool(store: Store | null, days: number): Promise<Map<string, bigint>> {
+  const out = new Map<string, bigint>();
+  if (!store) return out;
+  // a stream records its DBC pool (rights) or its DAMM v2 pool (positions); the Sky keys rows by the
+  // DBC pool and knows the derived DAMM v2 pool, so both keys attribute
+  const streams = await store.listAllStreams();
+  const keysOfStream = new Map(streams.map((s) => [s.stream, [String(s.data.pool), String(s.data.derivedDammPool)]]));
+  const since = Math.floor(Date.now() / 1000) - days * 86_400;
+  for (const e of await store.listEventsSince(["harvested", "oneTimeHarvested"], since)) {
+    for (const k of keysOfStream.get(String(e.data.stream)) ?? []) out.set(k, (out.get(k) ?? 0n) + BigInt(e.data.gross ?? 0));
+  }
+  return out;
+}
+
+/** One scan. `configs` empty means every pool the program owns. With a store, realized income
+ *  comes from the indexed harvest events of the vaults that hold the streams. */
+export async function scanSky(chain: Chain, configs: PublicKey[], store: Store | null = null): Promise<SkyRow[]> {
   const conn = chain.connection;
   const disc = chain.dbc.coder.accounts.memcmp("virtualPool") as { offset: number; bytes: string };
   const filters = configs.length ? configs.map((c) => [{ memcmp: disc }, { memcmp: { offset: VIRTUAL_POOL_CONFIG_OFFSET, bytes: c.toBase58() } }]) : [[{ memcmp: disc }]];
@@ -45,6 +61,9 @@ export async function scanSky(chain: Chain, configs: PublicKey[]): Promise<SkyRo
   const creatorInfos = await accounts(conn, [...new Set(pools.map((p) => p.state.creator.toBase58()))].map((k) => new PublicKey(k)));
   const mintInfos = await accounts(conn, pools.map((p) => p.state.baseMint as PublicKey));
   const now = Date.now();
+  const [r7, r30] = await Promise.all([realizedByPool(store, 7), realizedByPool(store, 30)]);
+  const vaultOfPool = new Map<string, string>();
+  if (store) for (const s of await store.listAllStreams()) { vaultOfPool.set(String(s.data.pool), s.vault); vaultOfPool.set(String(s.data.derivedDammPool), s.vault); }
   const rows: SkyRow[] = [];
   for (const p of pools) {
     const s = p.state;
@@ -81,14 +100,21 @@ export async function scanSky(chain: Chain, configs: PublicKey[]): Promise<SkyRo
     const creatorFeePct = cfg ? Number(cfg.creatorTradingFeePercentage) : 0;
     const tradingFee = BigInt(s.metrics?.totalTradingQuoteFee?.toString() ?? "0");
     const claimable = BigInt(s.creatorQuoteFee?.toString() ?? "0");
+    // the program floors the creator share per trade (dbc/state/config.rs:1014-1027), so this
+    // aggregate is at most one lamport per trade above the true accrual: an estimate, labelled so
     const creatorTotal = (tradingFee * BigInt(creatorFeePct)) / 100n;
     const realized = creatorTotal > claimable ? creatorTotal - claimable : 0n;
     const option = cfg ? Number(cfg.migrationFeeOption) : -1;
     const dammPool = cfg && option >= 0 && option < DAMM_V2_MIGRATION_CONFIGS.length ? derivePool(DAMM_V2_MIGRATION_CONFIGS[option], s.baseMint, quoteMint).toBase58() : null;
+    const poolKey = p.pubkey.toBase58();
+    const held = vaultOfPool.get(poolKey) ?? (dammPool ? vaultOfPool.get(dammPool) : undefined) ?? null;
+    const realizedOf = (m: Map<string, bigint>) => (m.get(poolKey) ?? 0n) + (dammPool && dammPool !== poolKey ? m.get(dammPool) ?? 0n : 0n);
     rows.push({
       pool: p.pubkey.toBase58(), config: s.config.toBase58(), baseMint: s.baseMint.toBase58(), quoteMint: quoteMint.toBase58(), creator: s.creator.toBase58(), custody,
       progress, eligible: reasons.length === 0, reasons, creatorPct: cfg ? Number(cfg.creatorPermanentLockedLiquidityPercentage) : 0, partnerPct: cfg ? Number(cfg.partnerPermanentLockedLiquidityPercentage) : 0, creatorFeePct,
-      claimableLamports: claimable.toString(), realizedLamports: realized.toString(), tradingFeeLamports: tradingFee.toString(), dammPool: progress === 3 ? dammPool : null, updatedAt: now,
+      claimableLamports: claimable.toString(), realizedEstimateLamports: realized.toString(),
+      realized7dLamports: held ? realizedOf(r7).toString() : null, realized30dLamports: held ? realizedOf(r30).toString() : null, vault: held,
+      tradingFeeLamports: tradingFee.toString(), dammPool: progress === 3 ? dammPool : null, updatedAt: now,
     });
   }
   log("sky scan", { pools: rows.length, eligible: rows.filter((r) => r.eligible).length, configs: configs.length || "all" });

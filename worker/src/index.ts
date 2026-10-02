@@ -35,7 +35,7 @@ async function main() {
     while (!stopping) {
       try { await indexer.pass(); } catch (e) { log("indexer pass failed", { error: String((e as Error).message ?? e) }); }
       if (passes % cfg.skyEveryPasses === 0) {
-        try { await store.upsertSky(await scanSky(chain, cfg.skyConfigs)); } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
+        try { const rows = await scanSky(chain, cfg.skyConfigs, store); await store.upsertSky(rows); await store.pruneSky(rows.map((r) => r.pool)); } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
       }
       passes++;
       if (process.env.COMETAIL_ONCE === "1") break;

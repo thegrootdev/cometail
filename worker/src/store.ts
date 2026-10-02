@@ -1,13 +1,19 @@
 // Storage behind the indexer and the API: Postgres in production (DATABASE_URL=postgres://...),
 // SQLite through node's built-in driver anywhere else (DATABASE_URL=sqlite:<file>). Both hold
 // the same four tables plus the Sky scan; JSON columns carry the decoded accounts and events.
+import { BN } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 
 export interface EventRow { signature: string; idx: number; slot: number; blockTime: number | null; name: string; vault: string | null; data: any }
 export interface SkyRow {
   pool: string; config: string; baseMint: string; quoteMint: string; creator: string; custody: "wallet" | "program" | "unknown";
   progress: number; eligible: boolean; reasons: string[]; creatorPct: number; partnerPct: number; creatorFeePct: number;
-  claimableLamports: string; realizedLamports: string; tradingFeeLamports: string; dammPool: string | null; updatedAt: number;
+  claimableLamports: string;
+  /** floor(total trading quote fee x creator%) - claimable: an aggregate estimate, at most one lamport per trade above the true accrual. */
+  realizedEstimateLamports: string;
+  /** Realized income from this vault's harvest events in the last 7 and 30 days; null when no vault holds the stream. */
+  realized7dLamports: string | null; realized30dLamports: string | null; vault: string | null;
+  tradingFeeLamports: string; dammPool: string | null; updatedAt: number;
 }
 
 export interface Store {
@@ -17,7 +23,14 @@ export interface Store {
   insertEvents(rows: EventRow[], cursor: string): Promise<void>;
   upsertVault(vault: string, data: any): Promise<void>;
   upsertStream(stream: string, vault: string, data: any): Promise<void>;
+  /** After a complete snapshot: drop streams of the vault that are no longer on chain (withdrawn). */
+  pruneStreams(vault: string, keep: string[]): Promise<void>;
   upsertSky(rows: SkyRow[]): Promise<void>;
+  /** After a complete scan: drop pools the scan no longer returned. */
+  pruneSky(keep: string[]): Promise<void>;
+  listAllStreams(): Promise<{ stream: string; vault: string; data: any }[]>;
+  /** Events of the given names since a unix time, oldest first. */
+  listEventsSince(names: string[], sinceUnix: number): Promise<EventRow[]>;
   listVaults(): Promise<{ vault: string; data: any; updatedAt: number }[]>;
   getVault(vault: string): Promise<{ vault: string; data: any; updatedAt: number } | null>;
   listStreams(vault: string): Promise<{ stream: string; data: any }[]>;
@@ -26,9 +39,25 @@ export interface Store {
   close(): Promise<void>;
 }
 
-/** JSON-safe copy: bigints and BNs to strings, public keys to base58. */
-export const plain = (v: any): any =>
-  JSON.parse(JSON.stringify(v, (_, x) => (typeof x === "bigint" ? x.toString() : x instanceof PublicKey ? x.toBase58() : x && x.constructor && x.constructor.name === "BN" ? x.toString() : x)));
+/** Schema version: a store written by an older version is rebuilt from the chain (the chain is
+ *  the source of truth for every row here), never patched by guessing at old encodings. */
+export const SCHEMA_VERSION = 2;
+
+/** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
+ *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
+ *  turn amounts into bare hex, so the walk happens here, not in a replacer.) */
+export function plain(v: any): any {
+  if (v === null || v === undefined) return v;
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v !== "object") return v;
+  if (v instanceof PublicKey) return v.toBase58();
+  if (BN.isBN(v) || (v.constructor && v.constructor.name === "BN" && typeof v.toString === "function")) return v.toString(10);
+  if (v instanceof Uint8Array || Buffer.isBuffer(v)) return Array.from(v);
+  if (Array.isArray(v)) return v.map(plain);
+  const out: any = {};
+  for (const k of Object.keys(v)) out[k] = plain(v[k]);
+  return out;
+}
 
 export function openStore(url: string): Store {
   if (url.startsWith("postgres://") || url.startsWith("postgresql://")) return new PgStore(url);
@@ -49,7 +78,25 @@ class PgStore implements Store {
       create table if not exists cursor (id int primary key, signature text not null);
       create table if not exists vaults (vault text primary key, data jsonb not null, updated_at bigint not null);
       create table if not exists streams (stream text primary key, vault text not null, data jsonb not null, updated_at bigint not null);
-      create table if not exists sky (pool text primary key, data jsonb not null, updated_at bigint not null);`);
+      create table if not exists sky (pool text primary key, data jsonb not null, updated_at bigint not null);
+      create table if not exists meta (key text primary key, value text not null);`);
+    await this.ensureVersion(async () => { await this.pool.query("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky"); });
+  }
+  private async ensureVersion(wipe: () => Promise<void>) {
+    const r = await this.pool.query("select value from meta where key = 'schema'");
+    const have = r.rows[0] ? Number(r.rows[0].value) : 0;
+    if (have !== SCHEMA_VERSION) {
+      if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      await wipe();
+      await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
+    }
+  }
+  async pruneStreams(vault: string, keep: string[]) { await this.pool.query("delete from streams where vault = $1 and not (stream = any($2))", [vault, keep]); }
+  async pruneSky(keep: string[]) { await this.pool.query("delete from sky where not (pool = any($1))", [keep]); }
+  async listAllStreams() { const r = await this.pool.query("select stream, vault, data from streams"); return r.rows; }
+  async listEventsSince(names: string[], sinceUnix: number) {
+    const r = await this.pool.query("select * from events where name = any($1) and block_time >= $2 order by slot asc, idx asc", [names, sinceUnix]);
+    return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
   }
   async getCursor() { const r = await this.pool.query("select signature from cursor where id = 1"); return r.rows[0]?.signature ?? null; }
   async setCursor(s: string) { await this.pool.query("insert into cursor (id, signature) values (1, $1) on conflict (id) do update set signature = $1", [s]); }
@@ -89,7 +136,30 @@ class SqliteStore implements Store {
       create table if not exists cursor (id integer primary key, signature text not null);
       create table if not exists vaults (vault text primary key, data text not null, updated_at integer not null);
       create table if not exists streams (stream text primary key, vault text not null, data text not null, updated_at integer not null);
-      create table if not exists sky (pool text primary key, data text not null, claimable text not null, updated_at integer not null);`);
+      create table if not exists sky (pool text primary key, data text not null, claimable text not null, updated_at integer not null);
+      create table if not exists meta (key text primary key, value text not null);`);
+    const r = this.db.prepare("select value from meta where key = 'schema'").get();
+    const have = r ? Number(r.value) : 0;
+    if (have !== SCHEMA_VERSION) {
+      if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      this.db.exec("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky");
+      this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
+    }
+  }
+  async pruneStreams(vault: string, keep: string[]) {
+    const rows = this.db.prepare("select stream from streams where vault = ?").all(vault);
+    const del = this.db.prepare("delete from streams where stream = ?");
+    for (const r of rows) if (!keep.includes(r.stream)) del.run(r.stream);
+  }
+  async pruneSky(keep: string[]) {
+    const rows = this.db.prepare("select pool from sky").all();
+    const del = this.db.prepare("delete from sky where pool = ?");
+    for (const r of rows) if (!keep.includes(r.pool)) del.run(r.pool);
+  }
+  async listAllStreams() { return this.db.prepare("select stream, vault, data from streams").all().map((x: any) => ({ stream: x.stream, vault: x.vault, data: JSON.parse(x.data) })); }
+  async listEventsSince(names: string[], sinceUnix: number) {
+    const rows = this.db.prepare(`select * from events where name in (${names.map(() => "?").join(",")}) and block_time >= ? order by slot asc, idx asc`).all(...names, sinceUnix);
+    return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
   }
   async getCursor() { const r = this.db.prepare("select signature from cursor where id = 1").get(); return r ? r.signature : null; }
   async setCursor(s: string) { this.db.prepare("insert into cursor (id, signature) values (1, ?) on conflict (id) do update set signature = excluded.signature").run(s); }

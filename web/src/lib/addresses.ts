@@ -18,5 +18,9 @@ export const ADDRESSES = {
   ] as [PublicKey, PublicKey, PublicKey],
   treasury: new PublicKey(process.env.NEXT_PUBLIC_TREASURY ?? "JdMo3ektR8etAHpYMiCMZnkPAoJ5djhf1eGaJBMni9H"),
 };
-/** Meteora's customizable DAMM v2 config for DBC migrations (migration fee option 6). */
-export const DAMM_V2_CUSTOMIZABLE_CONFIG = new PublicKey("A8gMrEPJkacWkcb3DGwtJwTe16HktSEfvwtuDh2MCtck");
+/** Meteora's DAMM v2 configs for DBC migrations, by the config's migration fee option (0-5 fixed fees, 6 customizable). */
+export const DAMM_V2_MIGRATION_CONFIGS = [
+  "7F6dnUcRuyM2TwR8myT1dYypFXpPSxqwKNSFNkxyNESd", "2nHK1kju6XjphBLbNxpM5XRGFj7p9U8vvNzyZiha1z6k", "Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp",
+  "2c4cYd4reUYVRAB9kUUkrq55VPyy2FNQ3FDL4o12JXmq", "AkmQWebAwFvWk55wBoCr5D62C6VVDTzi84NJuD9H7cFD", "DbCRBj8McvPYHJG1ukj8RE15h2dCNUdTAESG49XpQ44u", "A8gMrEPJkacWkcb3DGwtJwTe16HktSEfvwtuDh2MCtck",
+].map((k) => new PublicKey(k));
+export const DAMM_V2_CUSTOMIZABLE_CONFIG = DAMM_V2_MIGRATION_CONFIGS[6];

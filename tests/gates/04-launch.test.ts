@@ -58,7 +58,9 @@ describe("launch, migration, own position, cash-out, pair registration", () => {
       const wrong = await client.launch({ vault: cv.vault, depositor: creator.publicKey, stMint: stMint.publicKey, config: h.cfgs[preset === 0 ? 1 : 0], preset, streamIndex: 1, metadata: { name: "tail", symbol: "tTKN", uri: "https://cometail.fun/t.json" } });
       expectFail(svm, [wrong.ix], [creator, stMint], "AccountMismatch");
       const L = await client.launch({ vault: cv.vault, depositor: creator.publicKey, stMint: stMint.publicKey, config: h.cfgs[preset], preset, streamIndex: 1, metadata: { name: "tail", symbol: "tTKN", uri: "https://cometail.fun/t.json" } });
-      send(svm, [L.ix], [creator, stMint], { cu: 800_000, label: "launch" });
+      // the budget the wizard attaches (web/src/app/sell/page.tsx CU.launch) covers the launch against the mainnet binaries
+      const launched = send(svm, [L.ix], [creator, stMint], { cu: 500_000, label: "launch" });
+      expect(Number(launched.computeUnits)).lte(500_000);
       const v = client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data));
       expect(v.status).deep.eq({ launched: {} });
       expect(v.dbcPool.equals(L.pool)).true;

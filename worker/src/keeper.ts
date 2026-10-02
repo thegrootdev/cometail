@@ -17,6 +17,7 @@ import { binsForSpread, buildLadder, isCrossed } from "./ladder";
 import { log, sendTx, simulateEvents } from "./tx";
 import { LookupTables } from "./lut";
 import { alert } from "./alert";
+import { bootstrapPair, migratePlainLaunches } from "./bootstrap";
 import { dlmmBinArray } from "@cometail/client";
 
 export interface KeeperContext { chain: Chain; cfg: Config; keeper: Keypair; luts: LookupTables }
@@ -32,6 +33,8 @@ export async function keeperPass(ctx: KeeperContext): Promise<void> {
   const protocol = await chain.protocol();
   const vaults = await chain.vaults();
   log("keeper pass", { vaults: vaults.length, pausedRouting: protocol.pausedRouting });
+  // plain launches on the protocol's configs graduate without anyone's help
+  try { await migratePlainLaunches(ctx, (pool, state) => migrate(ctx, pool, state)); } catch (e) { log("plain-launch migration pass failed", { error: String((e as Error).message ?? e) }); }
   for (const v of vaults) {
     try {
       await vaultPass(ctx, protocol, v);
@@ -52,8 +55,9 @@ async function vaultPass(ctx: KeeperContext, protocol: any, entry: Decoded): Pro
   // 1. the vault's own curve: migrate when the curve is complete, then register and cash out
   const ownPool = await chain.dbcPool(vault.dbcPool);
   if (ownPool) {
-    // the presets carry no vesting, so a complete curve (PostBondingCurve) migrates directly; a
-    // config with vesting would sit in LockedVesting after its locker and migrate from there
+    // a complete curve without vesting goes straight to LockedVesting and migrates from there
+    // (dbc/state/virtual_pool.rs:66-72, process_swap.rs:354-362); with vesting it passes through
+    // PostBondingCurve first and needs its locker before the same migration
     if (ownPool.migrationProgress === DBC_PROGRESS.postBonding || ownPool.migrationProgress === DBC_PROGRESS.lockedVesting) {
       await migrate(ctx, vault.dbcPool, ownPool);
     }
@@ -74,6 +78,11 @@ async function vaultPass(ctx: KeeperContext, protocol: any, entry: Decoded): Pro
       await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 400_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label: `cashout ${vaultPk.toBase58()}` });
       vault = (await chain.vault(vaultPk)) ?? vault;
     }
+  }
+
+  // the pair: created, prepared and registered by the keeper once the vault is Live
+  if (STATUS(vault) === "live" && isDefault(vault.dlmmPair)) {
+    if (await bootstrapPair(ctx, vaultPk, vault)) vault = (await chain.vault(vaultPk)) ?? vault;
   }
 
   // 2. streams: register migrated creator positions, then harvest whatever clears the dust line
@@ -143,6 +152,8 @@ async function streamPass(ctx: KeeperContext, protocol: any, vaultPk: PublicKey,
   if (kind === "dbcCreatorRights") {
     const pool = await chain.dbcPool(s.pool);
     if (!pool) return;
+    // a deposited curve that completed migrates like the vault's own
+    if (!s.isOwn && (pool.migrationProgress === DBC_PROGRESS.lockedVesting || pool.migrationProgress === DBC_PROGRESS.postBonding)) await migrate(ctx, s.pool, pool);
     // external curves migrate on their own; the creator position then registers permissionlessly
     if (!s.isOwn && pool.migrationProgress === DBC_PROGRESS.createdPool && isDefault(s.position)) {
       const mine = await chain.positionsOwnedBy(s.derivedDammPool, vaultPk);

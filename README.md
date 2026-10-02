@@ -73,9 +73,14 @@ DATABASE_URL=postgres://... | sqlite:/path/to/file.sqlite   # indexer mode: Post
 COMETAIL_API_PORT=8787                # indexer mode: the read API the site uses (0 = off)
 COMETAIL_SKY_CONFIGS=                 # comma-separated DBC configs the Sky scan is limited to (empty = every pool)
 COMETAIL_SKY_EVERY_PASSES=4           # scan the Sky every N indexer passes
+COMETAIL_MIGRATE_CONFIGS=             # keeper mode: DBC configs whose complete curves the keeper migrates (the plain-launch configs)
 ```
 
-The keeper's order per vault is migrate, register positions, cash out, harvest, settle, route.
+The keeper's order per vault is migrate, register positions, cash out, harvest, create and
+register the stream token's DLMM pair once the vault is Live (it buys a little stream token on
+the graduated pool to fund the pair, opens it at the pool's price, prepares the bin arrays the
+ladder uses), settle, route. Complete curves on the configured plain-launch configs and on
+deposited rights are migrated as well.
 Every write is simulated first and a rejected simulation is logged and skipped, so the loop is
 safe to run against a vault whose policy says no. Ladders spread their bins across a band 2% to 20% away
 from the market (nearest bins weighted most) and drop any bin outside the price cap; ladders wider than twelve bins
@@ -97,6 +102,10 @@ token, sell-your-tail wizard, vault, portfolio. Every line of copy is in
 ## Devnet
 
 `tests/devnet/setup.ts` creates the treasury, the four configs and the protocol and funds
-the actor keys; `tests/devnet/e2e.ts` runs the whole lifecycle with the keeper and the
-indexer in-process on devnet-only small-threshold configs (see the file headers for the
-commands). Addresses live in `configs/devnet.json`; keys never leave `keys/devnet/`.
+the actor keys. `tests/devnet/e2e.ts` runs a vault with both DBC-rights stream states and
+in-process keeper passes; `tests/devnet/e2e2.ts` runs a second vault with a standalone
+position stream, the keeper and indexer as the real worker processes, and the trades through
+the app's own helpers. Both use devnet-only configs with the presets' economics and market
+caps divided by 80 (curves fill with half a SOL) and a reduced routing threshold; they are
+integration evidence, not production thresholds. Addresses live in `configs/devnet.json`;
+keys never leave `keys/devnet/`.

@@ -33,6 +33,8 @@ export interface Config {
   skyConfigs: PublicKey[];
   /** Run the Sky scan every this many indexer passes. */
   skyEveryPasses: number;
+  /** DBC configs whose complete curves the keeper migrates (the protocol's plain-launch configs). */
+  migrateConfigs: PublicKey[];
   dryRun: boolean;
   cuPriceMicroLamports: number;
 }
@@ -77,6 +79,7 @@ export function loadConfig(): Config {
     apiPort: num("COMETAIL_API_PORT", 0),
     skyConfigs: env("COMETAIL_SKY_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
     skyEveryPasses: Math.max(1, num("COMETAIL_SKY_EVERY_PASSES", 4)),
+    migrateConfigs: env("COMETAIL_MIGRATE_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
     dryRun: env("COMETAIL_DRY_RUN", "0") === "1",
     cuPriceMicroLamports: num("COMETAIL_CU_PRICE", 0),
   };

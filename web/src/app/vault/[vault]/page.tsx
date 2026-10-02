@@ -12,6 +12,8 @@ import { EXPLORER } from "@/lib/addresses";
 import { api } from "@/lib/api";
 import { useLoad } from "@/lib/hooks";
 import { ago, short, sol, units } from "@/lib/format";
+import { q64ToCap } from "@/lib/q64";
+import { OpenVaultActions } from "@/components/OpenVaultActions";
 
 const STATUS = (v: any) => (v?.status ? Object.keys(v.status)[0] : "unknown");
 const KIND = (s: any) => (s?.kind ? Object.keys(s.kind)[0] : "");
@@ -20,13 +22,13 @@ export default function VaultPage({ params }: { params: Promise<{ vault: string 
   const { vault: vaultStr } = use(params);
   const { connection } = useConnection();
   const client = useMemo(() => new VaultClientStep6(connection), [connection]);
-  const { data } = useLoad(async () => {
+  const { data, reload } = useLoad(async () => {
     const fromApi = await api.vault(vaultStr);
     if (fromApi) return { vault: fromApi.data, streams: fromApi.streams.map((s) => s.data), events: fromApi.events, updatedAt: fromApi.updatedAt };
     const info = await connection.getAccountInfo(new PublicKey(vaultStr));
     if (!info) return null;
     return { vault: client.decodeVault(info.data), streams: [] as any[], events: [] as any[], updatedAt: Date.now() };
-  }, [vaultStr]);
+  }, [vaultStr], 15_000);
   const v = data?.vault;
   const acc = v?.accounting ?? {};
   const burns = (data?.events ?? []).filter((e) => e.name === "settled");
@@ -60,10 +62,11 @@ export default function VaultPage({ params }: { params: Promise<{ vault: string 
                 <Stat label={vaultPage.bids} value={String(v.routing?.outstandingOrders ?? 0)} tone="plain" />
                 <Stat label="placed, gross" value={sol(str(acc.routedGross))} />
                 <Stat label={vaultPage.burned} value={units(str(acc.burnedSt), 6)} tone="dust" />
-                <Stat label={vaultPage.cap} value={v.policy ? `${(Number(BigInt(str(v.policy.maxPriceQ64)) >> 64n) * 1e6 / 1e9).toLocaleString("en-US", { maximumFractionDigits: 6 })} SOL/token` : ""} tone="plain" />
+                <Stat label={vaultPage.cap} value={v.policy ? `${q64ToCap(str(v.policy.maxPriceQ64), 6)} SOL/token` : ""} tone="plain" />
               </div>
             </Card>
           </div>
+          {STATUS(v) === "open" && <OpenVaultActions vault={vaultStr} v={v} streams={data.streams} onChange={reload} />}
           <Card title={vaultPage.streams} className="mt-6">
             {data.streams.length === 0 && <p className="text-starlight/60">No stream records indexed yet.</p>}
             <ul className="divide-y divide-starlight/10 text-sm">

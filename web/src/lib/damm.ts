@@ -5,12 +5,12 @@ import { CpAmm, getUnClaimLpFee, getTokenProgram } from "@meteora-ag/cp-amm-sdk"
 
 export function cpAmm(connection: Connection) { return new CpAmm(connection); }
 
-export async function dammSwapTx(connection: Connection, pool: PublicKey, payer: PublicKey, inputTokenMint: PublicKey, amountIn: BN, slippagePct = 1): Promise<{ tx: Transaction; minOut: BN; out: BN }> {
+export async function dammSwapTx(connection: Connection, pool: PublicKey, payer: PublicKey, inputTokenMint: PublicKey, amountIn: BN, decimals: { a: number; b: number }, slippagePct = 1): Promise<{ tx: Transaction; minOut: BN; out: BN }> {
   const amm = cpAmm(connection);
   const poolState: any = await amm.fetchPoolState(pool);
   const slot = await connection.getSlot();
   const time = await connection.getBlockTime(slot);
-  const quote: any = amm.getQuote({ inAmount: amountIn, inputTokenMint, slippage: slippagePct, poolState, currentTime: time ?? Math.floor(Date.now() / 1000), currentSlot: slot, tokenADecimal: 6, tokenBDecimal: 9 });
+  const quote: any = amm.getQuote({ inAmount: amountIn, inputTokenMint, slippage: slippagePct, poolState, currentTime: time ?? Math.floor(Date.now() / 1000), currentSlot: slot, tokenADecimal: decimals.a, tokenBDecimal: decimals.b });
   const outputTokenMint = inputTokenMint.equals(poolState.tokenAMint) ? poolState.tokenBMint : poolState.tokenAMint;
   const tx = await amm.swap({
     payer, pool, inputTokenMint, outputTokenMint, amountIn, minimumAmountOut: quote.minSwapOutAmount, tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint,
