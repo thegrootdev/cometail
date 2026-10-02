@@ -177,6 +177,8 @@ describe("gate 7 + 8: routing bounds and settlement", () => {
     expectFail(svm, [sIx], [anyone], "LiquidityLocked", { cu: 600_000 });
     const clock = svm.getClock(); clock.slot = clock.slot + BigInt(2); clock.unixTimestamp = clock.unixTimestamp + BigInt(2); svm.setClock(clock);
     // crossed bins settle permissionlessly: fills burned, WSOL back is fee share only (no principal on crossed bins)
+    const wantCrossed = dlmm.orderAmounts(svm, h.pair, r.limitOrder.publicKey, true, crossed);
+    expect(wantCrossed.principal).eq(0n);
     const supply0 = Number(require("@solana/spl-token").MintLayout.decode(Buffer.from(svm.getAccount(h.stMint)!.data)).supply);
     const i0 = balance(svm, h.cv.incomeWsol);
     send(svm, [sIx], [anyone], { cu: 600_000, label: "settle.crossed" });
@@ -187,19 +189,24 @@ describe("gate 7 + 8: routing bounds and settlement", () => {
     expect(v.accounting.burnedSt.toNumber()).eq(supply0 - supply1);
     expect(v.accounting.refundedPrincipal.toNumber()).eq(0);
     expect(v.accounting.orderFeesWsol.toString()).eq(balance(svm, h.cv.incomeWsol).sub(i0).toString());
+    expect(v.accounting.orderFeesWsol.toString()).eq(wantCrossed.fees.toString());
     expect(v.routing.outstandingOrders).eq(1); // one bin still rests
     expect(svm.getAccount(deriveOrderRecord(h.cv.vault, r.limitOrder.publicKey))).not.null;
     // the keeper cancels the resting bin: principal comes back, the order closes, the record follows
     const rest = bins.filter((b) => b <= afterActive);
+    const wantRest = dlmm.orderAmounts(svm, h.pair, r.limitOrder.publicKey, true, rest);
+    // the resting bin was partly filled by the same swap: the independent reader sees both an unfilled remainder and a fee share
+    expect(wantRest.rows.some((row) => row.status === "partial" && row.unfilled > 0n && row.filled > 0n)).true;
+    expect(wantRest.fees > 0n).true;
+    const fees0 = v.accounting.orderFeesWsol;
     const i1 = balance(svm, h.cv.incomeWsol);
     send(svm, [await client.settle(settleArgs(h, r.limitOrder.publicKey, keeper.publicKey, rest))], [keeper], { cu: 600_000, label: "settle.resting" });
     v = client.decodeVault(Buffer.from(svm.getAccount(h.cv.vault)!.data));
-    // the resting bin was partly filled by the same swap: the refund is below the deposited amount
-    // and the booking cannot yet separate its fee share (open gate-8 item)
+    // exact separation: the unfilled principal comes from the bin's fill state, the rest of the WSOL is fee share
     const refunded = v.accounting.refundedPrincipal.toNumber();
-    expect(refunded).greaterThan(0);
-    expect(refunded).lte(40_000_000 * rest.length);
-    expect(balance(svm, h.cv.incomeWsol).sub(i1).toNumber()).eq(refunded + 0 * 0); // all WSOL back was booked as principal
+    expect(refunded.toString()).eq(wantRest.principal.toString());
+    expect(v.accounting.orderFeesWsol.sub(fees0).toString()).eq(wantRest.fees.toString());
+    expect(balance(svm, h.cv.incomeWsol).sub(i1).toString()).eq((wantRest.principal + wantRest.fees).toString());
     expect(v.routing.outstandingOrders).eq(0);
     const closed = svm.getAccount(r.limitOrder.publicKey);
     expect(!closed || Number(closed.lamports) === 0).true;

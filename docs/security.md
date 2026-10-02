@@ -21,7 +21,8 @@
 - Swap anything. Income is WSOL only; streams whose fees arrive in anything else are
   rejected at deposit.
 - Accept a client's word for anything it can read from the chain: eligibility, ownership,
-  provenance of the vault's own streams, which position is a migrated creator position,
+  provenance of the vault's own streams, which position may register as a migrated
+  creator position (custody plus a size policy, since the chain records no role),
   order ownership, fill state.
 - Launch a vault whose streams were all withdrawn: the count of open streams, not the
   number ever created, gates the launch.

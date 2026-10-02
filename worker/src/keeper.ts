@@ -133,7 +133,8 @@ async function streamPass(ctx: KeeperContext, protocol: any, vaultPk: PublicKey,
   const sendIfWorthIt = async (ix: any, label: string, minGross: bigint) => {
     const sim = await simulateEvents({ connection: chain.connection, payer: keeper.publicKey, ixs: [ix], parser: chain.events, cu: 500_000 });
     if (!sim.ok) { log(`${label}: not claimable now`, { error: sim.error }); return; }
-    const ev = sim.events.find((e) => e.name === "Harvested");
+    // the coder reports event names in camelCase (harvested, oneTimeHarvested)
+    const ev = sim.events.find((e) => /^(one[Tt]ime)?[Hh]arvested$/.test(e.name));
     const gross = ev ? big(ev.data.gross as BN) : 0n;
     if (gross < minGross) { log(`${label}: below dust`, { gross, dust: minGross }); return; }
     await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 500_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label });

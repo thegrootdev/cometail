@@ -218,7 +218,7 @@ pub fn deposit_dbc_rights_migrated(ctx: Context<DepositDbcRightsMigrated>) -> Re
     require_keys_eq!(damm_pool.token_b_mint, WSOL_MINT, VaultError::Ineligible);
     require!(damm_pool.collect_fee_mode == DAMM_COLLECT_ONLY_B || damm_pool.collect_fee_mode == DAMM_COLLECT_COMPOUNDING, VaultError::Ineligible);
     let pos = ctx.accounts.creator_position.load()?;
-    check_creator_position(&damm_pool, &pos, &ctx.accounts.creator_nft_account, &ctx.accounts.vault.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage)?;
+    check_creator_position(&damm_pool, &pos, &ctx.accounts.creator_nft_account, &ctx.accounts.vault.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage, true)?;
     let nft_mint = pos.nft_mint;
     drop(pos);
     drop(damm_pool);

@@ -2530,6 +2530,19 @@
       ]
     },
     {
+      "name": "OneTimeHarvested",
+      "discriminator": [
+        236,
+        197,
+        139,
+        104,
+        65,
+        79,
+        197,
+        72
+      ]
+    },
+    {
       "name": "PairRegistered",
       "discriminator": [
         125,
@@ -3430,6 +3443,41 @@
           },
           {
             "name": "_padding",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OneTimeHarvested",
+      "docs": [
+        "The migration fee and surplus of a deposited DBC pool, each claimed once; same fields."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "stream",
+            "type": "pubkey"
+          },
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "to_depositor",
+            "type": "u64"
+          },
+          {
+            "name": "to_protocol",
+            "type": "u64"
+          },
+          {
+            "name": "to_income",
             "type": "u64"
           }
         ]

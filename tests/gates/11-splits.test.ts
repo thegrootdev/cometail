@@ -87,7 +87,10 @@ describe("gate 11: splits on real claims, new delta only, pinned destinations", 
     await dbc.buy(svm, buyer, ext.pool, ext.buyerQuote, ext.buyerBase, ext.R.muln(2));
     await dbc.migrateToDammV2(svm, buyer, ext.pool, DAMM_V2_MIGRATION_CONFIG.customizable);
     const ot = await client.harvestOneTime({ ...harvestArgs(w, cv, deriveStream(cv.vault, 0)), dbcPool: ext.pool, dbcConfig: w.plain, quoteVault: ps.quoteVault });
-    send(svm, [ot], [anyone], { label: "harvest_one_time.plain" }); // claims succeed with zero amounts
+    const otRes = send(svm, [ot], [anyone], { label: "harvest_one_time.plain" }); // claims succeed with zero amounts
+    const events = otRes.logs.filter((l) => l.startsWith("Program data: ")).map((l) => (client as any).program.coder.events.decode(l.slice("Program data: ".length))).filter(Boolean).map((e: any) => e.name);
+    expect(events).include("oneTimeHarvested"); // the coder reports event names in camelCase
+    expect(events).not.include("harvested");
     expect(client.decodeStream(Buffer.from(svm.getAccount(deriveStream(cv.vault, 0))!.data)).oneTimeClaims).eq(3);
     expectFail(svm, [ot], [anyone], "WrongStatus"); // nothing left to claim
     // the vault's own pool is never a one-time stream

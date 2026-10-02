@@ -156,13 +156,23 @@ pub fn position_nft_account_pda(nft_mint: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"position_nft_account", nft_mint.as_ref()], &cp_amm::ID).0
 }
 
-/// a * b >= c * d without overflow: exact when it fits, otherwise on both sides shifted down
-/// by 8 bits (a bound check, so the lost precision cannot flip a comfortable margin).
+/// a * b as a 256-bit (high, low) pair: exact for any u128 operands.
+fn mul_wide(a: u128, b: u128) -> (u128, u128) {
+    let (a_hi, a_lo) = (a >> 64, a & 0xFFFF_FFFF_FFFF_FFFF);
+    let (b_hi, b_lo) = (b >> 64, b & 0xFFFF_FFFF_FFFF_FFFF);
+    let ll = a_lo * b_lo;
+    let lh = a_lo * b_hi;
+    let hl = a_hi * b_lo;
+    let hh = a_hi * b_hi;
+    let (mid, c1) = (lh & 0xFFFF_FFFF_FFFF_FFFF).overflowing_add(hl & 0xFFFF_FFFF_FFFF_FFFF);
+    let (lo, c2) = ll.overflowing_add(mid << 64);
+    let hi = hh + (lh >> 64) + (hl >> 64) + (mid >> 64) + (c1 as u128) + (c2 as u128);
+    (hi, lo)
+}
+
+/// a * b >= c * d, exact (no truncation, no overflow).
 fn mul_ge(a: u128, b: u128, c: u128, d: u128) -> bool {
-    match (a.checked_mul(b), c.checked_mul(d)) {
-        (Some(l), Some(r)) => l >= r,
-        _ => (a >> 8).saturating_mul(b) >= (c >> 8).saturating_mul(d),
-    }
+    mul_wide(a, b) >= mul_wide(c, d)
 }
 
 /// The creator-side position of a migrated DBC pool, proven structurally instead of by a
@@ -173,14 +183,25 @@ fn mul_ge(a: u128, b: u128, c: u128, d: u128) -> bool {
 ///    (`cpamm/state/position.rs:546-564`, `ix_permanent_lock_position.rs:48-51`,
 ///    `ix_add_liquidity.rs:97`).
 /// 2. it carries only permanently locked liquidity (no withdrawable principal).
-/// 3. its permanently locked liquidity is at least half the creator's share of the pool's
-///    permanently locked total (`pool.permanent_lock_liquidity`, `cpamm/state/pool.rs:166`,
-///    which only permanent locks move, never `add_liquidity`): at the preset 80/20 the
-///    partner position fails, and a griefer would have to permanently lock as much as the
-///    whole migration to shift the bound. For configs where the partner's permanent share is
-///    at least half the creator's, the partner's own position would also pass; it can only
-///    get here if the partner hands it to the vault, and it is never smaller than half the
-///    creator share.
+/// 3. its size, measured against the pool's permanently locked total T
+///    (`pool.permanent_lock_liquidity`, `cpamm/state/pool.rs:166`; `add_liquidity` leaves it
+///    unchanged, `pool.rs:888-904`; only permanent locks raise it, `pool.rs:1070-1076`). The
+///    chain records no role for a migrated position (both are plain cp-amm positions,
+///    `ix_create_position.rs:18-46`), so this is a size policy, stated exactly:
+///    - external streams, creator share C above the partner's P: the position must hold a
+///      majority of T (`2A >= T`). The partner position (P/(C+P) < 1/2) never qualifies; the
+///      creator position (A = T0*C/(C+P)) qualifies until newly locked liquidity exceeds
+///      T0*(C-P)/(C+P), 60% of the migration at 80/20.
+///    - external streams, C <= P: at least half the creator's share (`2A(C+P) >= TC`,
+///      liveness until newly locked liquidity exceeds T0) and at most nine eighths of it
+///      (`8A(C+P) <= 9TC`): the partner position, bigger by P/C, is refused unless P/C <= 9/8,
+///      in which case it is at most an eighth larger than the creator's and never smaller.
+///    - the vault's own position (`register_own_position`): the lower bound only. The
+///      partner there is the protocol itself, and the own registration is on the path to
+///      Live, so it keeps the widest liveness margin.
+///    Rounding: the migration floors each distribution (`dbc/state/config.rs:951-992`) and the
+///    second position's liquidity is recomputed from the leftover amounts, so the shares are
+///    exact to within a few units; the bounds above sit far from those margins.
 pub fn check_creator_position(
     pool: &cp_amm::accounts::Pool,
     pos: &cp_amm::accounts::Position,
@@ -188,16 +209,25 @@ pub fn check_creator_position(
     vault: &Pubkey,
     creator_pct: u8,
     partner_pct: u8,
+    external: bool,
 ) -> Result<()> {
     require_keys_eq!(nft_account.key(), position_nft_account_pda(&pos.nft_mint), VaultError::AccountMismatch);
     check_nft_account(nft_account, vault, &pos.nft_mint)?;
     check_position_principal(pos)?;
-    let total_pct = (creator_pct as u128).checked_add(partner_pct as u128).ok_or(VaultError::Overflow)?;
+    let (c, p) = (creator_pct as u128, partner_pct as u128);
+    let total_pct = c.checked_add(p).ok_or(VaultError::Overflow)?;
     require!(creator_pct > 0 && total_pct <= 100, VaultError::Ineligible);
-    // pos.permanent_locked * (creator + partner) * 2 >= pool.permanent_lock * creator
-    require!(
-        mul_ge(pos.permanent_locked_liquidity, total_pct * 2, pool.permanent_lock_liquidity, creator_pct as u128),
-        VaultError::AccountMismatch
-    );
+    let (a, t) = (pos.permanent_locked_liquidity, pool.permanent_lock_liquidity);
+    if external && c > p {
+        // a majority of everything permanently locked
+        require!(mul_ge(a, 2, t, 1), VaultError::AccountMismatch);
+    } else {
+        // at least half the creator's share: 2A(C+P) >= TC
+        require!(mul_ge(a, total_pct * 2, t, c), VaultError::AccountMismatch);
+    }
+    if external {
+        // at most nine eighths of the creator's share: 8A(C+P) <= 9TC
+        require!(mul_ge(t, 9 * c, a, 8 * total_pct), VaultError::AccountMismatch);
+    }
     Ok(())
 }

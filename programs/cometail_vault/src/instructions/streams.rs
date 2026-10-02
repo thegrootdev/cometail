@@ -57,7 +57,7 @@ pub fn register_stream_position(ctx: Context<RegisterStreamPosition>) -> Result<
     require_keys_eq!(pool.token_b_mint, WSOL_MINT, VaultError::Ineligible);
     require!(pool.collect_fee_mode == DAMM_COLLECT_ONLY_B || pool.collect_fee_mode == DAMM_COLLECT_COMPOUNDING, VaultError::Ineligible);
     let pos = ctx.accounts.position.load()?;
-    check_creator_position(&pool, &pos, &ctx.accounts.nft_account, &ctx.accounts.vault.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage)?;
+    check_creator_position(&pool, &pos, &ctx.accounts.nft_account, &ctx.accounts.vault.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage, true)?;
     require_keys_neq!(ctx.accounts.position.key(), ctx.accounts.vault.own_position, VaultError::Duplicate);
     let nft_mint = pos.nft_mint;
     drop(pos); drop(pool); drop(config); drop(dbc_pool);

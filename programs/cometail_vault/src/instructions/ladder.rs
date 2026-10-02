@@ -11,8 +11,59 @@ use crate::state::*;
 
 fn vault_signer(vault: &Vault) -> [Vec<u8>; 3] { [SEED_VAULT.to_vec(), vault.st_mint.to_bytes().to_vec(), vec![vault.bump]] }
 
-/// Minimal view of a DLMM `LimitOrder` account: header (8 + 112 bytes) then 32-byte bins.
-pub struct LimitOrderView { pub lb_pair: Pubkey, pub owner: Pubkey, pub bins: Vec<(i32, u64, bool)> }
+/// Minimal view of a DLMM `LimitOrder` account: header (8 + 112 bytes) then 32-byte bins
+/// (`LimitOrderBinData`: amount u64, age u32, bin_id i32 at 16, is_ask at 20).
+pub struct LimitOrderView { pub lb_pair: Pubkey, pub owner: Pubkey, pub bins: Vec<OrderBin> }
+#[derive(Clone, Copy)]
+pub struct OrderBin { pub id: i32, pub amount: u64, pub is_ask: bool, pub age: u32 }
+
+/// The limit-order fields of one DLMM `Bin` (`Bin` is 144 bytes; `BinArray` holds 70 of them
+/// after an 8 + 48 byte header: index i64, version, padding, lb_pair).
+pub struct BinView { pub open_order_amount: u64, pub total_processing_order_amount: u64, pub processed_order_remaining_amount: u64, pub order_age: u32 }
+pub const BIN_ARRAY_DISCRIMINATOR: [u8; 8] = [92, 142, 92, 220, 5, 148, 70, 181];
+pub const BINS_PER_ARRAY: i32 = 70;
+pub const BIN_SIZE: usize = 144;
+pub const BIN_ARRAY_HEADER: usize = 8 + 8 + 1 + 7 + 32;
+
+/// Read a bin's limit-order state from the bin array that holds it, among the accounts
+/// handed to the cancel CPI; the array must be a DLMM `BinArray` of this pair.
+pub fn read_bin(arrays: &[AccountInfo], lb_pair: &Pubkey, bin_id: i32) -> Result<BinView> {
+    let index = bin_id.div_euclid(BINS_PER_ARRAY) as i64;
+    for info in arrays {
+        if *info.owner != lb_clmm::ID { continue; }
+        let data = info.try_borrow_data()?;
+        if data.len() < BIN_ARRAY_HEADER + BINS_PER_ARRAY as usize * BIN_SIZE || data[..8] != BIN_ARRAY_DISCRIMINATOR { continue; }
+        if i64::from_le_bytes(data[8..16].try_into().unwrap()) != index { continue; }
+        if Pubkey::new_from_array(data[24..56].try_into().unwrap()) != *lb_pair { continue; }
+        let o = BIN_ARRAY_HEADER + bin_id.rem_euclid(BINS_PER_ARRAY) as usize * BIN_SIZE;
+        let u64_at = |p: usize| u64::from_le_bytes(data[o + p..o + p + 8].try_into().unwrap());
+        return Ok(BinView {
+            open_order_amount: u64_at(112),
+            total_processing_order_amount: u64_at(120),
+            processed_order_remaining_amount: u64_at(128),
+            order_age: u32::from_le_bytes(data[o + 136..o + 140].try_into().unwrap()),
+        });
+    }
+    err!(VaultError::AccountMismatch)
+}
+
+/// The unfilled principal of one order bin, as DLMM's own reader computes it
+/// (`dlmm/commons/src/extensions/limit_order.rs:123-137, 211-236`): untouched while the
+/// bin's order age is the order's own; a partially processed generation keeps
+/// `ceil(amount * processed_remaining / total_processing)`; anything older is filled.
+pub fn unfilled_amount(order_bin: &OrderBin, bin: &BinView) -> Result<u64> {
+    if order_bin.age == bin.order_age { return Ok(order_bin.amount); }
+    if order_bin.age + 1 == bin.order_age {
+        if bin.open_order_amount == 0 && bin.processed_order_remaining_amount == 0 { return Ok(0); }
+        if bin.total_processing_order_amount == 0 { return Ok(0); }
+        let unfilled = (order_bin.amount as u128)
+            .checked_mul(bin.processed_order_remaining_amount as u128).ok_or(VaultError::Overflow)?
+            .div_ceil(bin.total_processing_order_amount as u128);
+        return u64::try_from(unfilled).map_err(|_| VaultError::Overflow.into());
+    }
+    require!(order_bin.age + 2 <= bin.order_age, VaultError::ForeignAccount);
+    Ok(0)
+}
 pub const LIMIT_ORDER_DISCRIMINATOR: [u8; 8] = [137, 183, 212, 91, 115, 29, 141, 227];
 pub fn read_limit_order(info: &AccountInfo) -> Result<LimitOrderView> {
     require_keys_eq!(*info.owner, lb_clmm::ID, VaultError::ForeignAccount);
@@ -26,9 +77,10 @@ pub fn read_limit_order(info: &AccountInfo) -> Result<LimitOrderView> {
     for i in 0..bin_count {
         let o = 120 + 32 * i;
         let amount = u64::from_le_bytes(data[o..o + 8].try_into().unwrap());
-        let bin_id = i32::from_le_bytes(data[o + 16..o + 20].try_into().unwrap());
+        let age = u32::from_le_bytes(data[o + 8..o + 12].try_into().unwrap());
+        let id = i32::from_le_bytes(data[o + 16..o + 20].try_into().unwrap());
         let is_ask = data[o + 20] != 0;
-        bins.push((bin_id, amount, is_ask));
+        bins.push(OrderBin { id, amount, is_ask, age });
     }
     Ok(LimitOrderView { lb_pair, owner, bins })
 }
@@ -202,13 +254,16 @@ pub fn settle<'info>(ctx: Context<'info, Settle<'info>>, bins: Vec<i32>) -> Resu
     require_keys_eq!(ctx.accounts.reserve_x.key(), reserve_x, VaultError::AccountMismatch);
     require_keys_eq!(ctx.accounts.reserve_y.key(), reserve_y, VaultError::AccountMismatch);
     // every requested bin must be in the order; "fully filled" means the market crossed it entirely:
-    // a bid bin above the active bin (price fell through it) or an ask bin below it
+    // a bid bin above the active bin (price fell through it) or an ask bin below it. The
+    // unfilled principal of each bin comes from the bin's own fill state, read before the cancel.
     let mut all_filled = true;
     let mut principal: u64 = 0;
     for b in &bins {
-        let found = order.bins.iter().find(|(id, _, _)| id == b).ok_or(VaultError::AccountMismatch)?;
-        let crossed = if found.2 { *b < active_id } else { *b > active_id };
-        if !crossed { all_filled = false; principal = principal.checked_add(found.1).ok_or(VaultError::Overflow)?; }
+        let found = order.bins.iter().find(|ob| ob.id == *b).ok_or(VaultError::AccountMismatch)?;
+        let crossed = if found.is_ask { *b < active_id } else { *b > active_id };
+        if !crossed { all_filled = false; }
+        let bin = read_bin(ctx.remaining_accounts, &v.dlmm_pair, *b)?;
+        principal = principal.checked_add(unfilled_amount(found, &bin)?).ok_or(VaultError::Overflow)?;
     }
     if !all_filled { require_keys_eq!(ctx.accounts.signer.key(), ctx.accounts.protocol.keeper, VaultError::NotKeeper); }
 
@@ -246,7 +301,7 @@ pub fn settle<'info>(ctx: Context<'info, Settle<'info>>, bins: Vec<i32>) -> Resu
     }
     // close the DLMM order once nothing is left in any bin (DLMM keeps cancelled bins in the
     // account with a zero amount); the record follows it
-    let remaining = read_limit_order(&ctx.accounts.limit_order.to_account_info()).map(|o| o.bins.iter().filter(|(_, amount, _)| *amount > 0).count()).unwrap_or(0);
+    let remaining = read_limit_order(&ctx.accounts.limit_order.to_account_info()).map(|o| o.bins.iter().filter(|ob| ob.amount > 0).count()).unwrap_or(0);
     let mut closed = false;
     if remaining == 0 {
         lb_clmm::cpi::close_limit_order_if_empty(CpiContext::new_with_signer(ctx.accounts.dlmm_program.key(), lb_clmm::cpi::accounts::CloseLimitOrderIfEmpty {
@@ -257,10 +312,8 @@ pub fn settle<'info>(ctx: Context<'info, Settle<'info>>, bins: Vec<i32>) -> Resu
     }
     ctx.accounts.income_wsol.reload()?;
     let wsol_back = ctx.accounts.income_wsol.amount.checked_sub(wsol_before).ok_or(VaultError::Overflow)?;
-    // WSOL returned on crossed bins is fee share. On uncrossed bins DLMM returns the unfilled
-    // principal plus the fee share; the order account only records the deposited amount per
-    // bin, so a partially filled bin's fee share is booked as principal here. Exact separation
-    // needs the bin arrays' per-bin fill state (open item, docs/release-gates.md gate 8).
+    // what came back beyond the unfilled principal is the WSOL fee share (ST = X); with ST = Y
+    // the fee share arrives in ST and is burned above, so the WSOL back is principal only
     let refunded = wsol_back.min(principal);
     let fees = wsol_back - refunded;
     let vault = &mut ctx.accounts.vault;

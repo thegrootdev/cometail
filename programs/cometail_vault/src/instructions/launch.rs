@@ -252,7 +252,7 @@ pub fn register_own_position(ctx: Context<RegisterOwnPosition>) -> Result<()> {
     require_keys_eq!(pool.token_b_mint, WSOL_MINT, VaultError::Ineligible);
     require!(pool.collect_fee_mode == DAMM_COLLECT_COMPOUNDING, VaultError::Ineligible);
     let pos = ctx.accounts.position.load()?;
-    check_creator_position(&pool, &pos, &ctx.accounts.nft_account, &v.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage)?;
+    check_creator_position(&pool, &pos, &ctx.accounts.nft_account, &v.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage, false)?;
     let nft_mint = pos.nft_mint;
     drop(pos); drop(pool); drop(config); drop(dbc_pool);
     clear_delegate_permission(

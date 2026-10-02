@@ -122,7 +122,7 @@ pub fn harvest_dbc(ctx: Context<HarvestDbc>) -> Result<()> {
         token_base_program: ctx.accounts.base_token_program.to_account_info(), token_quote_program: c.token_program.to_account_info(),
         event_authority: ctx.accounts.dbc_event_authority.to_account_info(), program: ctx.accounts.dbc_program.to_account_info(),
     }, &[signer]), 0, u64::MAX)?;
-    finish(&mut ctx.accounts.common, before)
+    finish(&mut ctx.accounts.common, before, false)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -183,7 +183,7 @@ pub fn harvest_position(ctx: Context<HarvestPosition>) -> Result<()> {
         token_a_program: ctx.accounts.token_a_program.to_account_info(), token_b_program: c.token_program.to_account_info(),
         event_authority: ctx.accounts.cp_amm_event_authority.to_account_info(), program: ctx.accounts.cp_amm_program.to_account_info(),
     }, &[signer]))?;
-    finish(&mut ctx.accounts.common, before)
+    finish(&mut ctx.accounts.common, before, false)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -241,18 +241,22 @@ pub fn harvest_one_time(ctx: Context<HarvestOneTime>) -> Result<()> {
     }
     let common = &mut ctx.accounts.common;
     common.stream.one_time_claims |= (fee_pending as u8) | ((surplus_pending as u8) << 1);
-    finish(common, before)
+    finish(common, before, true)
 }
 
-fn finish(c: &mut HarvestCommon, before: u64) -> Result<()> {
+fn finish(c: &mut HarvestCommon, before: u64, one_time: bool) -> Result<()> {
     c.income_wsol.reload()?;
     let gross = c.income_wsol.amount.checked_sub(before).ok_or(VaultError::Overflow)?;
     let (to_depositor, to_protocol) = split_and_pay(&c.vault, &c.stream, gross, &c.income_wsol.to_account_info(), &c.depositor_wsol.to_account_info(), &c.treasury.to_account_info(), &c.token_program.to_account_info())?;
     let vault_key = c.vault.key();
     let stream_key = c.stream.key();
     book(&mut c.vault, &mut c.stream, gross, to_depositor, to_protocol)?;
-    emit!(Harvested { vault: vault_key, stream: stream_key, gross, to_depositor, to_protocol, to_income: gross - to_depositor - to_protocol });
+    let to_income = gross - to_depositor - to_protocol;
+    if one_time { emit!(OneTimeHarvested { vault: vault_key, stream: stream_key, gross, to_depositor, to_protocol, to_income }); }
+    else { emit!(Harvested { vault: vault_key, stream: stream_key, gross, to_depositor, to_protocol, to_income }); }
     Ok(())
 }
 
 #[event] pub struct Harvested { pub vault: Pubkey, pub stream: Pubkey, pub gross: u64, pub to_depositor: u64, pub to_protocol: u64, pub to_income: u64 }
+/// The migration fee and surplus of a deposited DBC pool, each claimed once; same fields.
+#[event] pub struct OneTimeHarvested { pub vault: Pubkey, pub stream: Pubkey, pub gross: u64, pub to_depositor: u64, pub to_protocol: u64, pub to_income: u64 }

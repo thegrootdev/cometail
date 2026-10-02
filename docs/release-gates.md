@@ -21,8 +21,8 @@ the live mainnet Meteora binaries, in CI.
    budget exhaustion and reset, order cap, pause.
 8. **Settlement**: permissionless settle only for fully filled bins; cancel and burn are
    atomic; records survive until the DLMM order closes; retries on `LiquidityLocked`;
-   unsolicited tokens burned; accounting by balance deltas. Open: on a partially filled bin
-   the fee share is booked as refunded principal until bin-level fill state is read.
+   unsolicited tokens burned; on a partially filled bin the refunded principal and the fee
+   share equal what an independent reader of the bin arrays computes.
 9. **Registration** is write-once; squatted pairs rejected; preset-pair fallback accepted;
    the own position must be the right pool and role.
 10. **Resources and ordering**: full CPI traces and compute for every instruction, launch
@@ -34,8 +34,8 @@ the live mainnet Meteora binaries, in CI.
     before and after creation on devnet.
 13. **Security regressions**: one case per finding of the security pass: a migrated
     creator position is harvestable on its derived pool; registration survives unrelated
-    liquidity additions and rejects the partner position and dust positions in any
-    account; Token-2022 bases harvest with their own token program; an emptied vault
+    liquidity additions and rejects the partner position (80/20 and 20/80) and dust
+    positions in any account; Token-2022 bases harvest with their own token program; an emptied vault
     cannot launch; `register_pair` rejects strangers and fees above 1%; a bundled creator
     position cannot enter twice and its withdrawal requires and closes its index; stream
     configs with another migration option, token type or vesting are refused; an

@@ -80,11 +80,16 @@ the launch is still final: no cash-out, no ladder, but the vault keeps harvestin
 `harvest_dbc`, `harvest_position`, `harvest_one_time`, `route`, `settle`. There is no swap
 instruction and no instruction with a free destination.
 
-A migrated creator position is recognized structurally, never by its share of a moving
-total: its NFT must sit in DAMM v2's own account for that NFT (the one the migration
-re-authorizes), owned by the vault with no delegate, carry only permanently locked
-liquidity, and hold at least half the creator's share of the pool's permanently locked
-liquidity. Depositors hand that account to the vault with a Token-2022 SetAuthority; a
-withdrawal hands it back. Harvests pass each mint's own token program, so Token-2022 bases
+The chain records no role for a migrated position, so a migrated creator position is
+admitted by custody plus an explicit size policy: its NFT must sit in DAMM v2's own account
+for that NFT (the one the migration re-authorizes), owned by the vault with no delegate; it
+carries only permanently locked liquidity; and, measured against the pool's permanently
+locked total (which only new permanent locks move), it holds a majority when the creator's
+configured share exceeds the partner's, or between half and nine eighths of the creator's
+share otherwise. The partner position never qualifies when the creator's share is the
+larger one, and is never smaller than the creator's when it does. Depositors hand the
+account to the vault with a Token-2022 SetAuthority; a withdrawal hands it back. Bin prices
+use DLMM's own integer power, ported step for step; settlement reads each bin's fill state
+before cancelling, so refunded principal and fee share are exact. Harvests pass each mint's own token program, so Token-2022 bases
 work; `register_pair` is signed by the keeper or the depositor and refuses pairs whose base
 fee is above 1%; `create_vault` refuses a price cap that no approved bin step can represent.

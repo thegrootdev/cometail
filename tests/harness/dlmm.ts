@@ -95,3 +95,41 @@ export async function swap2Ix(svm: LiteSVM, a: { pair: PublicKey; user: PublicKe
     tokenXProgram: TOKEN_PROGRAM_ID, tokenYProgram: TOKEN_PROGRAM_ID, memoProgram: MEMO_PROGRAM_ID, eventAuthority: EVENT_AUTHORITY, program: DLMM_PROGRAM_ID,
   }).remainingAccounts(binArraysFor(a.pair, a.binIds)).instruction();
 }
+
+/** Independent per-bin fill reader for one of our orders, following DLMM's own reader
+ *  (`commons/src/extensions/limit_order.rs`: status by order age, ceil unfilled share, fee shares).
+ *  Used to check the program's settlement accounting against the bin arrays, not against itself. */
+export function orderAmounts(svm: LiteSVM, pair: PublicKey, order: PublicKey, stIsX: boolean, ids?: number[]) {
+  const data = Buffer.from(svm.getAccount(order)!.data);
+  const header = getLimitOrder(svm, order);
+  const collect = getPair(svm, pair).parameters.collectFeeMode;
+  if (collect !== 1) throw new Error("orderAmounts expects an OnlyY pair");
+  const n = (v: any) => BigInt(v.toString());
+  const rows: { id: number; status: string; deposit: bigint; unfilled: bigint; filled: bigint; swapped: bigint; fee: bigint; wsolFees: bigint; stReceived: bigint }[] = [];
+  for (let i = 0; i < header.binCount; i++) {
+    const o = 120 + 32 * i;
+    const amount = data.readBigUInt64LE(o), age = data.readUInt32LE(o + 8), id = data.readInt32LE(o + 16), ask = data[o + 20] !== 0;
+    if (ids && !ids.includes(id)) continue;
+    const arrayIndex = Math.floor(id / BINS_PER_ARRAY);
+    const array: any = dlmmProgram.coder.accounts.decode("binArray", Buffer.from(svm.getAccount(deriveBinArray(pair, arrayIndex))!.data));
+    const bin = array.bins[id - arrayIndex * BINS_PER_ARRAY];
+    let status: string, unfilled = 0n;
+    if (amount === 0n && age === 0) status = "empty";
+    else if (age === bin.orderAge) { status = "unfilled"; unfilled = amount; }
+    else if (age + 1 === bin.orderAge && (n(bin.openOrderAmount) > 0n || n(bin.processedOrderRemainingAmount) > 0n)) {
+      status = "partial";
+      const total = n(bin.totalProcessingOrderAmount);
+      unfilled = total === 0n ? 0n : (amount * n(bin.processedOrderRemainingAmount) + total - 1n) / total;
+    } else {
+      if (!(age < bin.orderAge)) throw new Error("invalid order generation");
+      status = "filled";
+    }
+    const filled = amount - unfilled, price = n(bin.price), Q = 1n << 64n;
+    const swapped = filled === 0n ? 0n : ask ? (filled * price) / Q : (filled * Q) / price;
+    const denominator = n(ask ? bin.fulfilledOrderAmountX : bin.fulfilledOrderAmountY);
+    const fee = filled === 0n || denominator === 0n ? 0n : (n(ask ? bin.limitOrderFeeAskSide : bin.limitOrderFeeBidSide) * filled) / denominator;
+    // OnlyY: WSOL fees when ST is X, ST fees (burned) when ST is Y
+    rows.push({ id, status, deposit: amount, unfilled, filled, swapped, fee, wsolFees: stIsX ? fee : 0n, stReceived: swapped + (stIsX ? 0n : fee) });
+  }
+  return { rows, principal: rows.reduce((s, r) => s + r.unfilled, 0n), fees: rows.reduce((s, r) => s + r.wsolFees, 0n), st: rows.reduce((s, r) => s + r.stReceived, 0n) };
+}

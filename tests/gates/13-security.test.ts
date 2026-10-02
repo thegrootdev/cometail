@@ -165,6 +165,24 @@ describe("gate 13: security regressions", () => {
     expect(damm.getPosition(svm, genuine.position).delegatePermission).eq(0);
   });
 
+  it("F9 (verifier 04): with a 20/80 creator/partner config the larger partner position is refused even in its own PDA account handed to the vault, and the smaller genuine creator position registers", async () => {
+    const w = await world();
+    const { svm, client, creator, buyer, owner, anyone } = w;
+    const ext = await external(w, false, configWith("plain", (p) => { p.liquidityDistribution.creatorPermanentLockedLiquidityPercentage = 20; p.liquidityDistribution.partnerPermanentLockedLiquidityPercentage = 80; }));
+    const cv = await newVault(w, creator);
+    send(svm, [await dbc.transferPoolCreatorIx(svm, ext.pool, creator.publicKey, cv.vault), await client.depositDbcRights({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint })], [creator]);
+    await dbc.buy(svm, buyer, ext.pool, ext.buyerQuote, ext.buyerBase, ext.R.muln(6).divn(5));
+    const mig = await dbc.migrateToDammV2(svm, buyer, ext.pool, DAMM_V2_MIGRATION_CONFIG.customizable);
+    const genuine = damm.findPositionOwnedBy(svm, [mig.firstPosition, mig.secondPosition], cv.vault)!;
+    const partner = damm.findPositionOwnedBy(svm, [mig.firstPosition, mig.secondPosition], owner.publicKey)!;
+    expect(damm.getPosition(svm, partner.position).permanentLockedLiquidity.gt(damm.getPosition(svm, genuine.position).permanentLockedLiquidity)).true;
+    send(svm, [handPositionNftToVaultIx(partner.state.nftMint, owner.publicKey, cv.vault)], [owner]);
+    const s0 = deriveStream(cv.vault, 0);
+    expectFail(svm, [await client.registerStreamPosition({ vault: cv.vault, stream: s0, payer: anyone.publicKey, dbcPool: ext.pool, dbcConfig: ext.config, dammPool: mig.dammPool, position: partner.position, nftAccount: partner.nftAccount })], [anyone], "AccountMismatch");
+    send(svm, [await client.registerStreamPosition({ vault: cv.vault, stream: s0, payer: anyone.publicKey, dbcPool: ext.pool, dbcConfig: ext.config, dammPool: mig.dammPool, position: genuine.position, nftAccount: genuine.nftAccount })], [anyone], { label: "register_stream_position.20_80" });
+    expect(streamOf(w, s0).position.equals(genuine.position)).true;
+  });
+
   it("F1: a creator position that came in through DBC rights is harvestable on the derived pool, 1/5 to the treasury; the DBC pool is not accepted as its pool", async () => {
     const w = await world();
     const { svm, client, creator, buyer, anyone, treasury } = w;
