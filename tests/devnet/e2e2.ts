@@ -167,6 +167,7 @@ describe("devnet end-to-end, second vault", () => {
       const arrayAfter = await connection.getAccountInfo(arrayKey);
       step("second ladder", { routedGross: second.accounting.routedGross.toString(), outstanding: second.routing.outstandingOrders, farArray, arrayExistedBefore: !!arrayBefore, arrayExistsAfter: !!arrayAfter });
       expect(!!arrayAfter).true;
+      if (!resumed) expect(!!arrayBefore, "the far array must not exist before the keeper prepares it").false; // a resumed run finds it from the earlier pass
 
       // 6. the indexer's view: events present, accounting reconciled against them, the Sky knows C
       const indexed = await waitFor("indexer reconciles vault 2", async () => {
