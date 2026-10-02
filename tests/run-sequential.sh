@@ -6,6 +6,8 @@
 set -u
 cd "$(dirname "$0")"
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=1536}"
+MOCHA=./node_modules/.bin/ts-mocha
+if [ ! -x "$MOCHA" ]; then echo "ts-mocha not installed: run pnpm install first"; exit 2; fi
 files=()
 if [ $# -gt 0 ]; then
   for p in "$@"; do while IFS= read -r f; do files+=("$f"); done < <(find . -path ./node_modules -prune -o -name "*.test.ts" -print | grep -E "$p" | sort); done
@@ -18,7 +20,7 @@ pass=0
 start=$(date +%s)
 for f in "${files[@]}"; do
   echo "=== $f"
-  if pnpm exec ts-mocha --exit -p ./tsconfig.json -t 1000000 "$f"; then pass=$((pass + 1)); else failed+=("$f"); fi
+  if "$MOCHA" --exit -p ./tsconfig.json -t 1000000 "$f"; then pass=$((pass + 1)); else failed+=("$f"); fi
 done
 echo "=== files passed: $pass/${#files[@]} in $(( $(date +%s) - start ))s"
 if [ ${#failed[@]} -gt 0 ]; then printf 'FAILED: %s\n' "${failed[@]}"; exit 1; fi
