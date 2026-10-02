@@ -22,9 +22,10 @@ The program account itself is 36 bytes (0.00083312 SOL). Rent figures come from
 
 ## Deploy
 
-Deploy with `--max-len` equal to the binary's byte count, so the program-data account holds
-exactly the binary. The CLI default is twice the binary, which would double the rent for
-headroom that may never be used.
+Use an explicit `--max-len` equal to the ELF byte count, so the program-data account holds
+exactly the binary. Agave CLI 3.1.10 already uses that length by default (`cli/src/program.rs`
+at v3.1.10, line 1447); the explicit value makes the intended allocation clear and survives
+a CLI whose default differs.
 
 ```
 solana program deploy target/deploy/cometail_vault.so \
@@ -34,9 +35,14 @@ solana program deploy target/deploy/cometail_vault.so \
   -u <cluster>
 ```
 
-The deploy also needs a buffer account of the same size for the duration of the deploy
-(its rent comes back when the buffer closes), so the deploying key holds at least twice the
-program-data rent plus fees at the moment of the deploy.
+For a fresh loader-v3 deployment the buffer lamports are reused to fund the program-data
+account (the loader drains the buffer to the payer before funding program data,
+`programs/bpf_loader/src/lib.rs` at v3.1.10, line 575), so the deploy does not hold two
+rent deposits at once. At the measured mainnet rent this ELF needs 3.53328732 SOL for the
+program-data and program accounts combined, plus deployment fees and an operating margin.
+Re-query rent and fees before the deploy; a stalled deploy leaves an extra buffer that ties
+up funds until it is closed. An upgrade of an existing program is different: its buffer rent
+is returned when the buffer closes, while the existing program-data account keeps its own.
 
 ## Upgrade
 
