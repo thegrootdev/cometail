@@ -20,7 +20,9 @@ export interface Config {
   /** Largest gross amount the keeper places in one ladder (the policy caps it again on-chain). */
   maxRouteLamports: bigint;
   ladderBins: number;
-  ladderSpreadBps: number;
+  /** The ladder spans this band of price distance below (or above) the market. */
+  ladderNearBps: number;
+  ladderFarBps: number;
   ladderDecay: number;
   /** Resting bins older than this are cancelled so the income can be re-laddered near the market. */
   staleOrderSeconds: number;
@@ -58,10 +60,11 @@ export function loadConfig(): Config {
     pollMs: num("COMETAIL_POLL_MS", 15_000),
     keeper,
     dustLamports: BigInt(env("COMETAIL_DUST_LAMPORTS", "1000000")),
-    minRouteLamports: BigInt(env("COMETAIL_MIN_ROUTE_LAMPORTS", "10000000")),
+    minRouteLamports: BigInt(env("COMETAIL_MIN_ROUTE_LAMPORTS", "100000000")),
     maxRouteLamports: BigInt(env("COMETAIL_MAX_ROUTE_LAMPORTS", "5000000000")),
     ladderBins: Math.max(1, Math.min(50, num("COMETAIL_LADDER_BINS", 5))),
-    ladderSpreadBps: num("COMETAIL_LADDER_SPREAD_BPS", 500),
+    ladderNearBps: num("COMETAIL_LADDER_NEAR_BPS", 200),
+    ladderFarBps: num("COMETAIL_LADDER_FAR_BPS", 2000),
     ladderDecay: num("COMETAIL_LADDER_DECAY", 0.85),
     staleOrderSeconds: num("COMETAIL_STALE_ORDER_SECONDS", 86_400),
     databaseUrl: process.env.DATABASE_URL || null,

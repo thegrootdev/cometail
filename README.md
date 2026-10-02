@@ -61,9 +61,9 @@ COMETAIL_RPC_URL=http://127.0.0.1:8899
 COMETAIL_KEEPER_KEYPAIR=~/.config/cometail/keeper.json   # the bounded hot key
 COMETAIL_POLL_MS=15000
 COMETAIL_DUST_LAMPORTS=1000000        # harvests below this gross are skipped
-COMETAIL_MIN_ROUTE_LAMPORTS=10000000  # idle income below this is not laddered
+COMETAIL_MIN_ROUTE_LAMPORTS=100000000 # idle income below 0.1 SOL is not laddered
 COMETAIL_MAX_ROUTE_LAMPORTS=5000000000
-COMETAIL_LADDER_BINS=5 COMETAIL_LADDER_DECAY=0.85
+COMETAIL_LADDER_BINS=5 COMETAIL_LADDER_NEAR_BPS=200 COMETAIL_LADDER_FAR_BPS=2000 COMETAIL_LADDER_DECAY=0.85
 COMETAIL_STALE_ORDER_SECONDS=86400    # resting bins older than this are cancelled and re-laddered
 COMETAIL_DRY_RUN=1                    # simulate everything, send nothing
 COMETAIL_ALERT_WEBHOOK=               # optional JSON webhook for failures
@@ -72,6 +72,6 @@ DATABASE_URL=postgres://...           # indexer mode only
 
 The keeper's order per vault is migrate, register positions, cash out, harvest, settle, route.
 Every write is simulated first and a rejected simulation is logged and skipped, so the loop is
-safe to run against a vault whose policy says no. Ladders start at the nearest bin inside the
-price cap and walk away from the market with geometric weights; ladders wider than twelve bins
+safe to run against a vault whose policy says no. Ladders spread their bins across a band 2% to 20% away
+from the market (nearest bins weighted most) and drop any bin outside the price cap; ladders wider than twelve bins
 go out as v0 transactions with a per-vault address lookup table.

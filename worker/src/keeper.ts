@@ -13,7 +13,7 @@ import {
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { Chain, DAMM_V2_MIGRATION_CONFIGS, DAMM_V2_PROGRAM_ID, DBC_PROGRESS, Decoded, big, bn, isDefault } from "./chain";
 import { Config } from "./config";
-import { buildLadder, isCrossed } from "./ladder";
+import { binsForSpread, buildLadder, isCrossed } from "./ladder";
 import { log, sendTx, simulateEvents } from "./tx";
 import { LookupTables } from "./lut";
 import { alert } from "./alert";
@@ -207,7 +207,11 @@ async function routePass(ctx: KeeperContext, vaultPk: PublicKey, vault: any, pai
   let budget = income < periodLeft ? income : periodLeft;
   if (budget > cfg.maxRouteLamports) budget = cfg.maxRouteLamports;
   if (budget < cfg.minRouteLamports) { log("route: period budget exhausted", { vault: vaultPk, periodLeft }); return; }
-  const bins = buildLadder({ activeId: pair.activeId, stIsX: vault.stIsX, binBound: vault.binBound, budget, bins: Math.min(cfg.ladderBins, Number(policy.maxBinsPerOrder)), decay: cfg.ladderDecay });
+  const binStep = Number(pair.binStep);
+  const bins = buildLadder({
+    activeId: pair.activeId, stIsX: vault.stIsX, binBound: vault.binBound, budget, bins: Math.min(cfg.ladderBins, Number(policy.maxBinsPerOrder)), decay: cfg.ladderDecay,
+    nearOffset: binsForSpread(cfg.ladderNearBps, binStep), farOffset: binsForSpread(cfg.ladderFarBps, binStep),
+  });
   if (bins.length === 0) { log("route: no bins inside the cap", { vault: vaultPk, active: pair.activeId, bound: vault.binBound }); return; }
   const reserve: PublicKey = vault.stIsX ? pair.reserveY : pair.reserveX;
   const r = await chain.client.route({ vault: vaultPk, keeper: keeper.publicKey, lbPair: vault.dlmmPair, reserve, incomeWsol: vault.incomeWsol, bins: bins.map((b) => ({ id: b.id, amount: bn(b.amount) })) });
