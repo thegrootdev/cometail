@@ -33,8 +33,10 @@ async function main() {
     const api = cfg.apiPort > 0 ? startApi(store, cfg.apiPort) : null;
     let passes = 0;
     while (!stopping) {
-      try { await indexer.pass(); } catch (e) { log("indexer pass failed", { error: String((e as Error).message ?? e) }); }
-      if (passes % cfg.skyEveryPasses === 0) {
+      let added = 0;
+      try { added = await indexer.pass(); } catch (e) { log("indexer pass failed", { error: String((e as Error).message ?? e) }); }
+      // the Sky refreshes on its schedule, and right away when new events change what it shows
+      if (added > 0 || passes % cfg.skyEveryPasses === 0) {
         try { const rows = await scanSky(chain, cfg.skyConfigs, store); await store.upsertSky(rows); await store.pruneSky(rows.map((r) => r.pool)); } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
       }
       passes++;

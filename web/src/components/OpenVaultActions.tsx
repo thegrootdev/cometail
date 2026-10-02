@@ -3,6 +3,7 @@
 // resume path for a wizard that stopped between transactions.
 import { useMemo, useState } from "react";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
+import { TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { VaultClientStep6, dammPositionNftAccount, deriveStream } from "@cometail/client";
 import { Card } from "./Shell";
@@ -37,11 +38,18 @@ export function OpenVaultActions({ vault, v, streams, onChange }: { vault: strin
     const nftMint = hasPosition ? new PublicKey(String(s.nftMint)) : undefined;
     const nftAccount = hasPosition ? new PublicKey(String(s.nftAccount)) : undefined;
     const pda = nftMint ? dammPositionNftAccount(nftMint) : undefined;
-    await run(async () => new Transaction().add(await client.withdrawStream({
-      vault: vaultPk, depositor: publicKey!, stream, kind: dbc ? "dbc" : "position", indexKey: new PublicKey(String(dbc ? s.pool : s.position)),
-      position: dbc && hasPosition ? new PublicKey(String(s.position)) : undefined, dbcPool: dbc ? new PublicKey(String(s.pool)) : undefined, dbcConfig: dbc ? new PublicKey(String(s.config)) : undefined,
-      nftAccount, nftMint, depositorNftAccount: nftAccount && pda && !nftAccount.equals(pda) ? undefined : undefined,
-    })), [], 300_000);
+    // an NFT in cp-amm's PDA account goes back by authority; any other vault-owned account transfers to the depositor's ATA
+    const needsDestination = !!(nftAccount && pda && !nftAccount.equals(pda));
+    const destination = needsDestination ? getAssociatedTokenAddressSync(nftMint!, publicKey!, false, TOKEN_2022_PROGRAM_ID) : undefined;
+    await run(async () => {
+      const tx = new Transaction();
+      if (destination) tx.add(createAssociatedTokenAccountIdempotentInstruction(publicKey!, destination, publicKey!, nftMint!, TOKEN_2022_PROGRAM_ID));
+      return tx.add(await client.withdrawStream({
+        vault: vaultPk, depositor: publicKey!, stream, kind: dbc ? "dbc" : "position", indexKey: new PublicKey(String(dbc ? s.pool : s.position)),
+        position: dbc && hasPosition ? new PublicKey(String(s.position)) : undefined, dbcPool: dbc ? new PublicKey(String(s.pool)) : undefined, dbcConfig: dbc ? new PublicKey(String(s.config)) : undefined,
+        nftAccount, nftMint, depositorNftAccount: destination,
+      }));
+    }, [], 300_000);
     onChange();
   };
   const launch = async () => {

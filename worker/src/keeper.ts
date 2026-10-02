@@ -17,7 +17,7 @@ import { binsForSpread, buildLadder, isCrossed } from "./ladder";
 import { log, sendTx, simulateEvents } from "./tx";
 import { LookupTables } from "./lut";
 import { alert } from "./alert";
-import { bootstrapPair, migratePlainLaunches } from "./bootstrap";
+import { bootstrapPair, ensureBinArrays, migratePlainLaunches } from "./bootstrap";
 import { dlmmBinArray } from "@cometail/client";
 
 export interface KeeperContext { chain: Chain; cfg: Config; keeper: Keypair; luts: LookupTables }
@@ -119,6 +119,7 @@ async function migrate(ctx: KeeperContext, poolPk: PublicKey, pool: any): Promis
     }).instruction());
   }
   const quoteMint: PublicKey = config.quoteMint;
+  const tokenBaseProgram = (await chain.accountOwner(pool.baseMint)) ?? TOKEN_PROGRAM_ID; // Token-2022 bases migrate with their own program
   const dammPool = deriveDammV2PoolAddress(dammConfig, pool.baseMint, quoteMint);
   const first = Keypair.generate(); const second = Keypair.generate();
   ixs.push(await chain.dbc.methods.migrationDammV2().accountsPartial({
@@ -127,7 +128,7 @@ async function migrate(ctx: KeeperContext, poolPk: PublicKey, pool: any): Promis
     secondPositionNftMint: second.publicKey, secondPositionNftAccount: derivePositionNftAccount(second.publicKey), secondPosition: derivePositionAddress(second.publicKey),
     dammPoolAuthority: deriveDammV2PoolAuthority(), ammProgram: DAMM_V2_PROGRAM_ID, baseMint: pool.baseMint, quoteMint,
     tokenAVault: deriveDammV2TokenVaultAddress(dammPool, pool.baseMint), tokenBVault: deriveDammV2TokenVaultAddress(dammPool, quoteMint),
-    baseVault: pool.baseVault, quoteVault: pool.quoteVault, payer: keeper.publicKey, tokenBaseProgram: TOKEN_PROGRAM_ID, tokenQuoteProgram: TOKEN_PROGRAM_ID,
+    baseVault: pool.baseVault, quoteVault: pool.quoteVault, payer: keeper.publicKey, tokenBaseProgram, tokenQuoteProgram: TOKEN_PROGRAM_ID,
     token2022Program: TOKEN_2022_PROGRAM_ID, dammEventAuthority: deriveDammV2EventAuthority(), systemProgram: SystemProgram.programId,
   }).remainingAccounts([{ pubkey: dammConfig, isSigner: false, isWritable: false }]).instruction());
   await sendTx({ connection: chain.connection, payer: keeper, ixs, signers: [first, second], cu: 600_000, cuPrice: cfg.cuPriceMicroLamports, dryRun: cfg.dryRun, label: `migrate ${poolPk.toBase58()}` });
@@ -227,6 +228,8 @@ async function routePass(ctx: KeeperContext, vaultPk: PublicKey, vault: any, pai
     nearOffset: binsForSpread(cfg.ladderNearBps, binStep), farOffset: binsForSpread(cfg.ladderFarBps, binStep),
   });
   if (bins.length === 0) { log("route: no bins inside the cap", { vault: vaultPk, active: pair.activeId, bound: vault.binBound }); return; }
+  // the market may have moved into another 70-bin array since the pair was prepared
+  if (!(await ensureBinArrays(ctx, vault.dlmmPair, bins.map((b) => b.id)))) { log("route: bin arrays not ready; next pass", { vault: vaultPk }); return; }
   const reserve: PublicKey = vault.stIsX ? pair.reserveY : pair.reserveX;
   const r = await chain.client.route({ vault: vaultPk, keeper: keeper.publicKey, lbPair: vault.dlmmPair, reserve, incomeWsol: vault.incomeWsol, bins: bins.map((b) => ({ id: b.id, amount: bn(b.amount) })) });
   let lookupTable = null as Awaited<ReturnType<LookupTables["ensure"]>>;

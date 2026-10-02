@@ -32,13 +32,15 @@ async function accounts(connection: Connection, keys: PublicKey[]) {
 async function realizedByPool(store: Store | null, days: number): Promise<Map<string, bigint>> {
   const out = new Map<string, bigint>();
   if (!store) return out;
-  // a stream records its DBC pool (rights) or its DAMM v2 pool (positions); the Sky keys rows by the
-  // DBC pool and knows the derived DAMM v2 pool, so both keys attribute
+  // each stream has one canonical key, the pool it recorded (the DBC pool for rights, the DAMM v2
+  // pool for positions), so every harvest event lands on exactly one key; a Sky row then reads its
+  // DBC pool key plus its derived DAMM v2 pool key, which are disjoint sets of streams
   const streams = await store.listAllStreams();
-  const keysOfStream = new Map(streams.map((s) => [s.stream, [String(s.data.pool), String(s.data.derivedDammPool)]]));
+  const keyOfStream = new Map(streams.map((s) => [s.stream, String(s.data.pool)]));
   const since = Math.floor(Date.now() / 1000) - days * 86_400;
   for (const e of await store.listEventsSince(["harvested", "oneTimeHarvested"], since)) {
-    for (const k of keysOfStream.get(String(e.data.stream)) ?? []) out.set(k, (out.get(k) ?? 0n) + BigInt(e.data.gross ?? 0));
+    const k = keyOfStream.get(String(e.data.stream));
+    if (k) out.set(k, (out.get(k) ?? 0n) + BigInt(e.data.gross ?? 0));
   }
   return out;
 }
@@ -63,7 +65,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
   const now = Date.now();
   const [r7, r30] = await Promise.all([realizedByPool(store, 7), realizedByPool(store, 30)]);
   const vaultOfPool = new Map<string, string>();
-  if (store) for (const s of await store.listAllStreams()) { vaultOfPool.set(String(s.data.pool), s.vault); vaultOfPool.set(String(s.data.derivedDammPool), s.vault); }
+  if (store) for (const s of await store.listAllStreams()) vaultOfPool.set(String(s.data.pool), s.vault);
   const rows: SkyRow[] = [];
   for (const p of pools) {
     const s = p.state;

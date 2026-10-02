@@ -88,7 +88,20 @@ export async function bootstrapPair(ctx: BootstrapContext, vaultPk: PublicKey, v
   const stIsX = state.tokenXMint.equals(stMint);
   const far = binsForSpread(cfg.ladderFarBps, Number(state.binStep)) + 5;
   const edge = stIsX ? state.activeId - far : state.activeId + far;
-  const indexes = [...new Set([state.activeId, edge].map((b) => Math.floor(b / BINS_PER_ARRAY)))];
+  if (!(await ensureBinArrays(ctx, pair, [state.activeId, edge]))) return false;
+  // 4. write-once registration
+  if (isDefault(vault.dlmmPair)) {
+    const ix = await chain.client.registerPair({ vault: vaultPk, signer: keeper.publicKey, lbPair: pair });
+    const r = await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 200_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label: `register_pair ${vaultPk.toBase58()}` });
+    return r.ok;
+  }
+  return true;
+}
+
+/** The bin arrays that hold these bins (and everything between), created when missing. */
+export async function ensureBinArrays(ctx: BootstrapContext, pair: PublicKey, binIds: number[]): Promise<boolean> {
+  const { chain, cfg, keeper } = ctx;
+  const indexes = binIds.map((b) => Math.floor(b / BINS_PER_ARRAY));
   const lo = Math.min(...indexes), hi = Math.max(...indexes);
   for (let i = lo; i <= hi; i++) {
     const key = binArray(pair, i);
@@ -96,12 +109,6 @@ export async function bootstrapPair(ctx: BootstrapContext, vaultPk: PublicKey, v
     const ix = await chain.dlmm.methods.initializeBinArray(new BN(i)).accountsStrict({ lbPair: pair, binArray: key, funder: keeper.publicKey, systemProgram: SystemProgram.programId }).instruction();
     const r = await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 1_400_000, cuPrice: cfg.cuPriceMicroLamports, dryRun: cfg.dryRun, label: `bin array ${i} of ${pair.toBase58()}` });
     if (!r.ok) return false;
-  }
-  // 4. write-once registration
-  if (isDefault(vault.dlmmPair)) {
-    const ix = await chain.client.registerPair({ vault: vaultPk, signer: keeper.publicKey, lbPair: pair });
-    const r = await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 200_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label: `register_pair ${vaultPk.toBase58()}` });
-    return r.ok;
   }
   return true;
 }

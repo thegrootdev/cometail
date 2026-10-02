@@ -18,12 +18,15 @@ async function retry<T>(what: string, fn: () => Promise<T>, attempts = 8): Promi
 export class Indexer {
   constructor(readonly chain: Chain, readonly store: Store) {}
 
-  async pass(): Promise<void> {
-    await this.indexEvents();
+  /** One pass; returns how many events were newly indexed. */
+  async pass(): Promise<number> {
+    const added = await this.indexEvents();
     await this.snapshot();
+    return added;
   }
 
-  private async indexEvents(): Promise<void> {
+  private async indexEvents(): Promise<number> {
+    let added = 0;
     const conn: Connection = this.chain.connection;
     const until = (await this.store.getCursor()) ?? undefined;
     // newest first from the RPC; stop at the cursor, then apply oldest first
@@ -43,13 +46,15 @@ export class Indexer {
         if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
         tx = await retry(`transaction ${s.signature}`, () => conn.getTransaction(s.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
       }
-      if (!tx) { log("transaction not available yet; the pass stops here and resumes next time", { signature: s.signature }); return; }
+      if (!tx) { log("transaction not available yet; the pass stops here and resumes next time", { signature: s.signature }); return added; }
       if (tx.meta?.err) { await this.store.setCursor(s.signature); continue; } // failed transactions carry no events
       const events = parseEvents(this.chain.events, tx.meta?.logMessages ?? []);
       const rows: EventRow[] = events.map((e, i) => { const data = plain(e.data); return { signature: s.signature, idx: i, slot: s.slot, blockTime: s.blockTime, name: e.name, vault: typeof data.vault === "string" ? data.vault : null, data }; });
       await this.store.insertEvents(rows, s.signature);
+      added += rows.length;
       if (events.length) log("indexed", { signature: s.signature, events: events.map((e) => e.name) });
     }
+    return added;
   }
 
   /** Every vault and its streams as they are on chain now. Withdrawn streams leave the current

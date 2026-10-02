@@ -40,7 +40,7 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
   const dammPool = view ? derivedDammPool(mint, view.migrationFeeOption) : PublicKey.default;
   const doQuote = async () => {
     const raw = amountRaw(); if (!raw || !view) return;
-    if (bonding) { const q: any = await curveQuote(connection, view, raw, side === "sell"); setQuote(side === "buy" ? `${units(q.amountOut, dec)} tokens` : sol(q.amountOut)); }
+    if (bonding) { const q: any = await curveQuote(connection, view, raw, side === "sell"); setQuote(side === "buy" ? `${units(q.outputAmount, dec)} tokens` : sol(q.outputAmount)); }
     else if (graduated) { const r = await dammSwapTx(connection, dammPool, publicKey ?? view.creator, side === "buy" ? NATIVE_MINT : mint, raw, { a: dec, b: 9 }); setQuote(side === "buy" ? `${units(r.out, dec)} tokens` : sol(r.out)); }
   };
   const trade = async () => {

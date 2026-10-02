@@ -65,7 +65,7 @@ describe("devnet end-to-end, second vault", () => {
     try {
       // the worker, as deployed: keeper loop and indexer loop with the API
       // devnet scope: half-SOL curves, so the routing threshold is 0.001 SOL here instead of the planned 0.1 SOL
-      procs.push(worker("keeper", { COMETAIL_MIGRATE_CONFIGS: plainCfg.toBase58(), COMETAIL_DUST_LAMPORTS: "100000", COMETAIL_MIN_ROUTE_LAMPORTS: "1000000", COMETAIL_LADDER_BINS: "3" }));
+      procs.push(worker("keeper", { COMETAIL_MIGRATE_CONFIGS: plainCfg.toBase58(), COMETAIL_DUST_LAMPORTS: "100000", COMETAIL_MIN_ROUTE_LAMPORTS: "1000000", COMETAIL_LADDER_BINS: "3", COMETAIL_LADDER_FAR_BPS: "6000" }));
       procs.push(worker("indexer", { DATABASE_URL: `sqlite:${dbFile}`, COMETAIL_API_PORT: String(API), COMETAIL_SKY_CONFIGS: [plainCfg, ...streamCfgs].map((k) => k.toBase58()).join(","), COMETAIL_SKY_EVERY_PASSES: "3", COMETAIL_POLL_MS: "20000" }));
       await waitFor("api", async () => (await fetch(`http://127.0.0.1:${API}/api/health`)).ok, 60_000, 2_000);
 
@@ -126,8 +126,8 @@ describe("devnet end-to-end, second vault", () => {
       const alreadySettled = live.accounting.burnedSt.gtn(0); // a resumed run that already settled goes straight to the indexer check
 
       // 4. trades on C's pool and the stream token's pool through the app helper, then the ladder
-      if (!alreadySettled) {
       const stDamm = deriveDammV2PoolAddress(DAMM_V2_MIGRATION_CONFIG.customizable, stMint.publicKey, NATIVE_MINT);
+      if (!alreadySettled) {
       for (const [pool, label] of [[dammC, "C"], [stDamm, "stream token 2"]] as const) {
         if (resumed) break; // the trades already happened
         const r = await retry(`damm swap tx ${label}`, () => dammSwapTx(connection, pool, buyer.publicKey, NATIVE_MINT, new BN(200_000_000), { a: 6, b: 9 }));
@@ -150,6 +150,24 @@ describe("devnet end-to-end, second vault", () => {
       step("settled", { burnedSt: settled.accounting.burnedSt.toString(), orderFeesWsol: settled.accounting.orderFeesWsol.toString(), refundedPrincipal: settled.accounting.refundedPrincipal.toString() });
       }
 
+      // 5b. a second ladder after the market moved: its far bins sit in a bin array that did not exist
+      // when the pair was prepared, so the keeper must create it before routing
+      const pairNow = await dlmmPair(connection, live.dlmmPair);
+      const farBin = pairNow.activeId - 65;
+      const farArray = Math.floor(farBin / 70);
+      const arrayKey = PublicKey.findProgramAddressSync([Buffer.from("bin_array"), live.dlmmPair.toBuffer(), (() => { const b = Buffer.alloc(8); b.writeBigInt64LE(BigInt(farArray)); return b; })()], new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"))[0];
+      const arrayBefore = await connection.getAccountInfo(arrayKey);
+      const routedBefore = BigInt((await chain.vault(cv.vault)).accounting.routedGross.toString());
+      // income for the second ladder: trades on both pools through the app helper
+      for (const [pool, label] of [[dammC, "C"], [stDamm, "stream token 2"]] as const) {
+        const r = await retry(`damm swap tx ${label} (2)`, () => dammSwapTx(connection, pool, buyer.publicKey, NATIVE_MINT, new BN(300_000_000), { a: 6, b: 9 }));
+        await sendApp(connection, r.tx, [buyer], `buyer swaps again on ${label}'s DAMM v2 pool through the app helper`);
+      }
+      const second = await waitFor("second ladder", async () => { const v = await chain.vault(cv.vault); return BigInt(v.accounting.routedGross.toString()) > routedBefore ? v : null; }, 420_000);
+      const arrayAfter = await connection.getAccountInfo(arrayKey);
+      step("second ladder", { routedGross: second.accounting.routedGross.toString(), outstanding: second.routing.outstandingOrders, farArray, arrayExistedBefore: !!arrayBefore, arrayExistsAfter: !!arrayAfter });
+      expect(!!arrayAfter).true;
+
       // 6. the indexer's view: events present, accounting reconciled against them, the Sky knows C
       const indexed = await waitFor("indexer reconciles vault 2", async () => {
         const r = await fetch(`http://127.0.0.1:${API}/api/vaults/${cv.vault.toBase58()}?limit=100`);
@@ -158,11 +176,17 @@ describe("devnet end-to-end, second vault", () => {
         const names = new Set((j.events ?? []).map((e: any) => e.name));
         return ["launched", "live", "cashedOut", "harvested", "routed", "settled"].every((n) => names.has(n)) && j.data?.reconciliation?.matches ? j : null;
       }, 240_000, 10_000);
-      const sky = await (await fetch(`http://127.0.0.1:${API}/api/sky`)).json();
-      const cRow = sky.streams.find((s: any) => s.baseMint === mintC.publicKey.toBase58());
+      const streamC0 = (indexed.streams ?? []).find((x: any) => String(x.data.pool) === dammC.toBase58());
+      const harvestedC0 = (indexed.events ?? []).filter((e: any) => (e.name === "harvested" || e.name === "oneTimeHarvested") && e.data.stream === streamC0?.stream).reduce((a: bigint, e: any) => a + BigInt(e.data.gross), 0n);
+      // the Sky refreshes after new events; wait for the row to carry every harvest the indexer holds
+      const cRow = await waitFor("Sky attribution of C", async () => { const sky = await (await fetch(`http://127.0.0.1:${API}/api/sky`)).json(); const row = sky.streams.find((s: any) => s.baseMint === mintC.publicKey.toBase58()); return row && row.realized30dLamports === harvestedC0.toString() ? row : null; }, 180_000, 10_000);
       step("indexer", { events: [...new Set(indexed.events.map((e: any) => e.name))], reconciliation: indexed.data.reconciliation, skyC: cRow ? { custody: cRow.custody, eligible: cRow.eligible, realized30d: cRow.realized30dLamports, vault: cRow.vault } : null });
       expect(indexed.data.reconciliation.matches).true;
       expect(cRow?.vault).eq(cv.vault.toBase58());
+      const streamC = (indexed.streams ?? []).find((x: any) => String(x.data.pool) === dammC.toBase58());
+      const harvestedC = (indexed.events ?? []).filter((e: any) => (e.name === "harvested" || e.name === "oneTimeHarvested") && e.data.stream === streamC?.stream).reduce((a: bigint, e: any) => a + BigInt(e.data.gross), 0n);
+      expect(cRow.realized30dLamports).eq(harvestedC.toString());
+      expect(harvestedC > 0n).true;
       expect(Number(await tokenBalance(connection, ata(stMint.publicKey, keeper.publicKey)))).gte(0);
       record.finishedAt = new Date().toISOString();
       fs.writeFileSync(file, JSON.stringify(record, null, 2));

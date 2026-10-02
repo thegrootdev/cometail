@@ -23,11 +23,13 @@ export function capToQ64(solPerToken: string, tokenDecimals: number): BN | null 
   return q.isZero() ? null : q;
 }
 
-/** Q64 lamports per raw unit -> SOL per whole token, as a display string (truncated, never rounded up). */
+/** Q64 lamports per raw unit -> SOL per whole token, as a display string with `digits` decimals,
+ *  rounded to nearest (the stored value is a floor of the input, so this shows the input back). */
 export function q64ToCap(q64: BN | string, tokenDecimals: number, digits = 9): string {
   const q = new BN(q64.toString());
   // sol per token = q / 2^64 * 10^decimals / 1e9; print with `digits` decimals by scaling first
-  const scaled = q.mul(new BN(10).pow(new BN(tokenDecimals + digits))).div(LAMPORTS_PER_SOL).div(Q64);
+  const den = LAMPORTS_PER_SOL.mul(Q64);
+  const scaled = q.mul(new BN(10).pow(new BN(tokenDecimals + digits))).add(den.divn(2)).div(den);
   const s = scaled.toString().padStart(digits + 1, "0");
   const int = s.slice(0, -digits), frac = s.slice(-digits).replace(/0+$/, "");
   return frac ? `${int}.${frac}` : int;
