@@ -1,13 +1,14 @@
 import { PublicKey } from "@solana/web3.js";
+import { utils } from "@coral-xyz/anchor";
 // Event indexer: follows the vault program's transaction history, decodes Anchor events and
 // stores them together with a snapshot of every vault and its streams, for the site's pages.
 import { Connection } from "@solana/web3.js";
 import { VAULT_PROGRAM_ID } from "@cometail/client";
-import { Chain , isDefault } from "./chain";
+import { Chain , isDefault , Decoded , DAMM_V2_PROGRAM_ID } from "./chain";
 import { isCrossed } from "./ladder";
 import { binArrayIndex, readBinView, unfilledAmount } from "./chain";
 import { getMint, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
-import { EventRow, Store, plain } from "./store";
+import { EventRow, Store, TradeRow, plain } from "./store";
 import { log, parseEvents } from "./tx";
 
 /** Public RPC endpoints throttle; a read is retried a few times with backoff before the pass fails. */
@@ -19,13 +20,75 @@ async function retry<T>(what: string, fn: () => Promise<T>, attempts = 8): Promi
   throw new Error(`${what}: ${String((last as Error)?.message ?? last)}`);
 }
 
+/** Anchor's event-instruction discriminator: sha256("anchor:event")[..8]. */
+const EVENT_IX_DISCRIMINATOR = Buffer.from("e445a52e51cb9a1d", "hex");
+
 export class Indexer {
   constructor(readonly chain: Chain, readonly store: Store) {}
 
   /** One pass; returns how many events were newly indexed. */
   async pass(): Promise<number> {
     const added = await this.indexEvents();
-    await this.snapshot();
+    const vaults = await this.chain.vaults(); // throws on an RPC failure: nothing is pruned on a partial read
+    await this.indexTrades(vaults);
+    await this.snapshot(vaults);
+    return added;
+  }
+
+  /** Swaps on each vault's graduated stream-token pool (cp-amm EvtSwap2), one cursor per pool, at most
+   *  three pages of signatures per pool per pass; the trader is the transaction's fee payer. Trade
+   *  direction 1 is quote in, stream token out: a purchase of the stream token. */
+  private async indexTrades(vaults: Decoded[]): Promise<number> {
+    let added = 0;
+    const conn: Connection = this.chain.connection;
+    for (const v of vaults) {
+      const pool: PublicKey | undefined = v.account.dammPool;
+      if (!pool || isDefault(pool)) continue;
+      const poolKey = pool.toBase58(), vaultKey = v.pubkey.toBase58();
+      try {
+        const until = (await this.store.getCursorFor(poolKey)) ?? undefined;
+        const sigs: { signature: string; slot: number; blockTime: number | null }[] = [];
+        let before: string | undefined;
+        for (let page = 0; page < 3; page++) {
+          const got = await retry("pool signatures", () => conn.getSignaturesForAddress(pool, { before, until, limit: 1000 }, "confirmed"));
+          sigs.push(...got.map((s) => ({ signature: s.signature, slot: s.slot, blockTime: s.blockTime ?? null })));
+          if (got.length < 1000) break;
+          before = got[got.length - 1].signature;
+        }
+        sigs.reverse();
+        for (const s of sigs) {
+          let tx = null as Awaited<ReturnType<Connection["getTransaction"]>>;
+          for (let i = 0; i < 5 && !tx; i++) {
+            if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
+            tx = await retry(`transaction ${s.signature}`, () => conn.getTransaction(s.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
+          }
+          if (!tx) { log("pool transaction not available yet; this pool resumes next pass", { pool: poolKey, signature: s.signature }); break; }
+          if (tx.meta?.err) { await this.store.insertTrades([], poolKey, s.signature); continue; }
+          // cp-amm emits through a self-CPI: the event is the data of an inner instruction to the
+          // program itself, the Anchor event-instruction discriminator then the event (not a log line)
+          const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined });
+          const trader = keys.get(0)?.toBase58() ?? "";
+          const rows: TradeRow[] = [];
+          let idx = 0;
+          for (const inner of tx.meta?.innerInstructions ?? []) for (const ix of inner.instructions) {
+            const pid = keys.get(ix.programIdIndex);
+            if (!pid || !pid.equals(DAMM_V2_PROGRAM_ID)) continue;
+            const data = Buffer.from(utils.bytes.bs58.decode(ix.data));
+            if (data.length < 16 || !data.subarray(0, 8).equals(EVENT_IX_DISCRIMINATOR)) continue;
+            let ev: { name: string; data: any } | null = null;
+            try { ev = this.chain.damm.coder.events.decode(data.subarray(8).toString("base64")); } catch { continue; }
+            if (!ev || ev.name.toLowerCase() !== "evtswap2") continue;
+            const d: any = ev.data;
+            if (!d.pool || !new PublicKey(d.pool).equals(pool)) continue;
+            const buy = Number(d.tradeDirection) === 1;
+            rows.push({ signature: s.signature, idx: idx++, slot: s.slot, blockTime: s.blockTime, pool: poolKey, vault: vaultKey, trader, buy, amountIn: String(d.swapResult?.includedFeeInputAmount ?? "0"), amountOut: String(d.swapResult?.outputAmount ?? "0") });
+          }
+          await this.store.insertTrades(rows, poolKey, s.signature);
+          added += rows.length;
+          if (rows.length) log("indexed trades", { pool: poolKey, signature: s.signature, trades: rows.length });
+        }
+      } catch (e) { log("trade index failed for a pool; it resumes next pass", { pool: poolKey, error: String((e as Error).message ?? e) }); }
+    }
     return added;
   }
 
@@ -138,9 +201,8 @@ export class Indexer {
     } catch (e) { log("live position read failed", { error: String((e as Error).message ?? e) }); return null; }
   }
 
-  private async snapshot(): Promise<void> {
+  private async snapshot(vaults: Decoded[]): Promise<void> {
     this.poolTotals.clear();
-    const vaults = await this.chain.vaults(); // throws on an RPC failure: nothing is pruned on a partial read
     const harvestEvents = await this.store.listEventsSince(["harvested", "oneTimeHarvested"], 0);
     const routed = await this.store.listEventsSince(["routed"], 0);
     const settled = await this.store.listEventsSince(["settled"], 0);

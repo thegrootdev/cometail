@@ -5,6 +5,9 @@ import { BN } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 
 export interface EventRow { signature: string; idx: number; slot: number; blockTime: number | null; name: string; vault: string | null; data: any }
+/** One swap on a vault's graduated stream-token pool (cp-amm EvtSwap2). `buy` is a purchase of the
+ *  stream token with the quote; amounts are the pool's input and output in raw units. */
+export interface TradeRow { signature: string; idx: number; slot: number; blockTime: number | null; pool: string; vault: string; trader: string; buy: boolean; amountIn: string; amountOut: string }
 export interface SkyRow {
   pool: string; config: string; baseMint: string; quoteMint: string; creator: string; custody: "wallet" | "program" | "unknown";
   progress: number; eligible: boolean; reasons: string[]; creatorPct: number; partnerPct: number; creatorFeePct: number;
@@ -26,6 +29,11 @@ export interface Store {
   getCursor(): Promise<string | null>;
   setCursor(signature: string): Promise<void>;
   insertEvents(rows: EventRow[], cursor: string): Promise<void>;
+  /** A cursor per indexed address (the stream-token pools), separate from the program cursor. */
+  getCursorFor(key: string): Promise<string | null>;
+  insertTrades(rows: TradeRow[], key: string, cursor: string): Promise<void>;
+  /** Trades, newest first, of one vault or all. */
+  listTrades(vault: string | null, limit: number): Promise<TradeRow[]>;
   upsertVault(vault: string, data: any): Promise<void>;
   upsertStream(stream: string, vault: string, data: any): Promise<void>;
   /** After a complete snapshot: drop streams of the vault that are no longer on chain (withdrawn). */
@@ -46,7 +54,7 @@ export interface Store {
 
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
@@ -84,8 +92,10 @@ class PgStore implements Store {
       create table if not exists vaults (vault text primary key, data jsonb not null, updated_at bigint not null);
       create table if not exists streams (stream text primary key, vault text not null, data jsonb not null, updated_at bigint not null);
       create table if not exists sky (pool text primary key, data jsonb not null, updated_at bigint not null);
-      create table if not exists meta (key text primary key, value text not null);`);
-    await this.ensureVersion(async () => { await this.pool.query("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky"); });
+      create table if not exists meta (key text primary key, value text not null);
+      create table if not exists cursors (key text primary key, signature text not null);
+      create table if not exists trades (signature text not null, idx int not null, slot bigint not null, block_time bigint, pool text not null, vault text not null, trader text not null, buy boolean not null, amount_in text not null, amount_out text not null, primary key (signature, idx));`);
+    await this.ensureVersion(async () => { await this.pool.query("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky; delete from cursors; delete from trades"); });
   }
   private async ensureVersion(wipe: () => Promise<void>) {
     const r = await this.pool.query("select value from meta where key = 'schema'");
@@ -104,6 +114,20 @@ class PgStore implements Store {
     return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
   }
   async getCursor() { const r = await this.pool.query("select signature from cursor where id = 1"); return r.rows[0]?.signature ?? null; }
+  async getCursorFor(key: string) { const r = await this.pool.query("select signature from cursors where key = $1", [key]); return r.rows[0]?.signature ?? null; }
+  async insertTrades(rows: TradeRow[], key: string, cursor: string) {
+    const c = await this.pool.connect();
+    try {
+      await c.query("begin");
+      for (const r of rows) await c.query("insert into trades (signature, idx, slot, block_time, pool, vault, trader, buy, amount_in, amount_out) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict do nothing", [r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.buy, r.amountIn, r.amountOut]);
+      await c.query("insert into cursors (key, signature) values ($1, $2) on conflict (key) do update set signature = $2", [key, cursor]);
+      await c.query("commit");
+    } catch (e) { await c.query("rollback"); throw e; } finally { c.release(); }
+  }
+  async listTrades(vault: string | null, limit: number) {
+    const r = vault ? await this.pool.query("select * from trades where vault = $1 order by slot desc, idx desc limit $2", [vault, limit]) : await this.pool.query("select * from trades order by slot desc, idx desc limit $1", [limit]);
+    return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), pool: x.pool, vault: x.vault, trader: x.trader, buy: x.buy, amountIn: x.amount_in, amountOut: x.amount_out }));
+  }
   async setCursor(s: string) { await this.pool.query("insert into cursor (id, signature) values (1, $1) on conflict (id) do update set signature = $1", [s]); }
   async insertEvents(rows: EventRow[], cursor: string) {
     const c = await this.pool.connect();
@@ -142,12 +166,14 @@ class SqliteStore implements Store {
       create table if not exists vaults (vault text primary key, data text not null, updated_at integer not null);
       create table if not exists streams (stream text primary key, vault text not null, data text not null, updated_at integer not null);
       create table if not exists sky (pool text primary key, data text not null, claimable text not null, updated_at integer not null);
-      create table if not exists meta (key text primary key, value text not null);`);
+      create table if not exists meta (key text primary key, value text not null);
+      create table if not exists cursors (key text primary key, signature text not null);
+      create table if not exists trades (signature text not null, idx integer not null, slot integer not null, block_time integer, pool text not null, vault text not null, trader text not null, buy integer not null, amount_in text not null, amount_out text not null, primary key (signature, idx));`);
     const r = this.db.prepare("select value from meta where key = 'schema'").get();
     const have = r ? Number(r.value) : 0;
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      this.db.exec("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky");
+      this.db.exec("delete from events; delete from cursor; delete from vaults; delete from streams; delete from sky; delete from cursors; delete from trades");
       this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
     }
   }
@@ -167,6 +193,20 @@ class SqliteStore implements Store {
     return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
   }
   async getCursor() { const r = this.db.prepare("select signature from cursor where id = 1").get(); return r ? r.signature : null; }
+  async getCursorFor(key: string) { const r = this.db.prepare("select signature from cursors where key = ?").get(key); return r ? r.signature : null; }
+  async insertTrades(rows: TradeRow[], key: string, cursor: string) {
+    this.db.exec("begin");
+    try {
+      const ins = this.db.prepare("insert or ignore into trades (signature, idx, slot, block_time, pool, vault, trader, buy, amount_in, amount_out) values (?,?,?,?,?,?,?,?,?,?)");
+      for (const r of rows) ins.run(r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.buy ? 1 : 0, r.amountIn, r.amountOut);
+      this.db.prepare("insert into cursors (key, signature) values (?, ?) on conflict (key) do update set signature = excluded.signature").run(key, cursor);
+      this.db.exec("commit");
+    } catch (e) { this.db.exec("rollback"); throw e; }
+  }
+  async listTrades(vault: string | null, limit: number) {
+    const rows = vault ? this.db.prepare("select * from trades where vault = ? order by slot desc, idx desc limit ?").all(vault, limit) : this.db.prepare("select * from trades order by slot desc, idx desc limit ?").all(limit);
+    return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, pool: x.pool, vault: x.vault, trader: x.trader, buy: !!x.buy, amountIn: x.amount_in, amountOut: x.amount_out }));
+  }
   async setCursor(s: string) { this.db.prepare("insert into cursor (id, signature) values (1, ?) on conflict (id) do update set signature = excluded.signature").run(s); }
   async insertEvents(rows: EventRow[], cursor: string) {
     this.db.exec("begin");

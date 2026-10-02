@@ -51,15 +51,15 @@ async function refuseIfTaken(host: string, port: number): Promise<void> {
  *  burns, refunds) by its depositor. A line whose owner cannot be resolved yet (an event before its
  *  vault's snapshot, a program-held launch without a vault record) is "unattributed", never
  *  independent, and the document says so. One-time proceeds (migration surplus, one-time claims)
- *  are reported apart from recurring income. Stream-token buyers are not indexed (DAMM v2 swaps are
- *  outside the event stream), so that line is null. */
+ *  are reported apart from recurring income. Stream-token buyers come from the trade index of every
+ *  vault's graduated pool. */
 export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set<string>) {
   type Cls = "independent" | "demo" | "unattributed";
   const cls = (actor: string | undefined | null): Cls => (!actor ? "unattributed" : demo.has(actor) ? "demo" : "independent");
   const triple = () => ({ independent: 0n, demo: 0n, unattributed: 0n });
   const counts = () => ({ independent: 0, demo: 0, unattributed: 0 });
   const str = (p: Record<Cls, bigint>) => ({ independent: p.independent.toString(), demo: p.demo.toString(), unattributed: p.unattributed.toString() });
-  const [vaults, streams, sky, recurringEvents, oneTimeEvents, settled] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested"], 0), store.listEventsSince(["oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0)]);
+  const [vaults, streams, sky, recurringEvents, oneTimeEvents, settled, trades] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested"], 0), store.listEventsSince(["oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0), store.listTrades(null, 1_000_000)]);
   const vaultClass = new Map<string, Cls>(vaults.map((v) => [v.vault, cls(v.data?.depositor ? String(v.data.depositor) : null)]));
   const ofVault = (vault: string | null | undefined): Cls => (vault && vaultClass.get(vault)) || "unattributed";
   const own = new Map(streams.map((s) => [s.stream, !!s.data.isOwn]));
@@ -87,6 +87,16 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     refunded[c] += BigInt(v.data?.accounting?.refundedPrincipal ?? 0);
   }
   for (const e of settled) { const c = ofVault(e.vault); const b = BigInt(e.data.burned ?? 0); if (b > 0n) fills[c]++; burned[c] += b; }
+  // buyers of stream tokens: distinct traders of purchases on the vaults' graduated pools, by the
+  // trader's own class (the fee payer is always known), with the quote they paid
+  const buyerSets = { independent: new Set<string>(), demo: new Set<string>() };
+  const buyVolume = triple(); let buys = 0, sells = 0;
+  for (const t of trades) {
+    if (!t.buy) { sells++; continue; }
+    buys++;
+    const c = cls(t.trader); if (c === "unattributed") continue;
+    buyerSets[c].add(t.trader); buyVolume[c] += BigInt(t.amountIn);
+  }
   const unattributed = launches.unattributed > 0 || fills.unattributed > 0 || [launchFees, recurring.external, recurring.own, oneTime.external, oneTime.own, depth, refunded, burned].some((t) => t.unattributed > 0n);
   // DBC books the trading fee net of its 20% protocol share, so the flat 1% curve fee implies
   // volume = net fee x 125; still an estimate, subject to per-trade rounding
@@ -96,7 +106,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     incomplete: unattributed || unknownBins > 0 || unavailableLadders > 0,
     notes: [
       "independent and demo are decided by the actor that owns each line: launches by creator (a vault-held launch by its depositor), vaults by depositor; owners not yet resolved are unattributed, never independent",
-      "stream-token buyers are not indexed (DAMM v2 swaps are outside the event stream), so buyers is null",
+      "buyers are the distinct fee payers of stream-token purchases on the vaults' graduated pools (cp-amm EvtSwap2), classified by the buyer wallet; sells are counted but not attributed",
       "launch volume is an estimate: the flat 1% curve fee, booked by DBC net of its 20% protocol share, implies net fee x 125",
       "bid depth is the unfilled principal of every resting bin from the bin arrays, the same accounting settle applies",
       ...(unknownBins > 0 ? [`${unknownBins} bin(s) could not be read; their depth is not counted`] : []),
@@ -106,7 +116,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     recurringIncomeLamports: { external: str(recurring.external), own: str(recurring.own) },
     oneTimeProceedsLamports: { external: str(oneTime.external), own: str(oneTime.own) },
     depositors: { independent: depositors.independent.size, demo: depositors.demo.size },
-    buyers: null,
+    buyers: { distinct: { independent: buyerSets.independent.size, demo: buyerSets.demo.size }, buyVolumeLamports: str(buyVolume), purchases: buys, sales: sells },
     bidDepthLamports: str(depth),
     fillsAndBurns: { settledWithBurn: fills, burnedSt: str(burned) },
     refundedPrincipalLamports: str(refunded),
@@ -145,7 +155,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       if (m) {
         const vault = await store.getVault(m[1]);
         if (!vault) return send(404, { error: "no such vault" });
-        return send(200, { ...vault, streams: await store.listStreams(m[1]), events: await store.listEvents(m[1], limit) });
+        return send(200, { ...vault, streams: await store.listStreams(m[1]), events: await store.listEvents(m[1], limit), trades: await store.listTrades(m[1], limit) });
       }
       if (url.pathname === "/api/events") return send(200, { events: await store.listEvents(url.searchParams.get("vault"), limit) });
       if (url.pathname === "/api/metrics") return send(200, await metrics(store, new Set(opts.demoActors ?? []), new Set(opts.plainConfigs ?? [])), { "cache-control": "public, max-age=60" });

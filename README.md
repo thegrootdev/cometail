@@ -107,7 +107,9 @@ numbers with independent actors apart from the demo set (`COMETAIL_DEMO_ACTORS`)
 and their fee volume by creator, recurring external and own income apart from one-time proceeds,
 depositors, bid depth (unfilled principal from the bin arrays), fills and burns and refunded
 principal by vault depositor; anything whose owner is not yet resolved is reported as
-unattributed, never independent; stream-token buyers are not indexed.
+unattributed, never independent. Stream-token buyers come from a trade index: every swap on a
+vault's graduated pool (cp-amm `EvtSwap2`, one cursor per pool) is stored with its fee payer, and
+the vault detail lists them.
 
 ## Running the site
 
