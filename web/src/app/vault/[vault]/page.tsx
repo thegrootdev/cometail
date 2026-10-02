@@ -164,6 +164,31 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                   tone="plain"
                 />
               </div>
+              {v.live?.ladder && (
+                <div className="mt-5">
+                  <div className="caption">{vaultPage.depth}</div>
+                  {(() => {
+                    const bins = (v.live.ladder.orders as any[]).flatMap((o: any) => o.bins as any[]).sort((a: any, b: any) => b.price - a.price);
+                    return bins.length === 0 ? (
+                      <p className="mt-2 text-sm text-starlight/60">{vaultPage.noBins}</p>
+                    ) : (
+                      <ul className="ladder-bins">
+                        {bins.map((b: any) => (
+                          <li key={b.id}>
+                            <span>{Number(b.price).toPrecision(4)} SOL/token</span>
+                            <span className={b.crossed ? "text-dust" : "text-ion"}>
+                              {sol(String(b.amount))} · {b.crossed ? vaultPage.crossed : vaultPage.resting}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    );
+                  })()}
+                  <p className="caption mt-3">
+                    {vaultPage.poolPrice}: {Number(v.live.ladder.activePrice).toPrecision(4)} SOL/token · {ago(Math.floor(v.live.updatedAt / 1000))}
+                  </p>
+                </div>
+              )}
             </Card>
           </div>
           {STATUS(v) === "open" && (
@@ -203,6 +228,11 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                     </a>
                   </span>
                   <span className="text-starlight/60">
+                    {s.live?.lockedSharePct != null && (
+                      <>
+                        {s.live.lockedSharePct}% {vaultPage.lockedShare} ·{" "}
+                      </>
+                    )}
                     harvested {sol(str(s.harvested))}
                   </span>
                 </li>

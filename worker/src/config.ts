@@ -40,6 +40,8 @@ export interface Config {
   skyEveryPasses: number;
   /** DBC configs whose complete curves the keeper migrates (the protocol's plain-launch configs). */
   migrateConfigs: PublicKey[];
+  /** Wallets that belong to the team or the demo (depositors, creators, buyers); /api/metrics reports them apart from independent actors. */
+  demoActors: string[];
   dryRun: boolean;
   cuPriceMicroLamports: number;
 }
@@ -88,6 +90,7 @@ export function loadConfig(): Config {
     skyConfigs: env("COMETAIL_SKY_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
     skyEveryPasses: Math.max(1, num("COMETAIL_SKY_EVERY_PASSES", 4)),
     migrateConfigs: env("COMETAIL_MIGRATE_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
+    demoActors: env("COMETAIL_DEMO_ACTORS", "").split(",").map((s) => s.trim()).filter(Boolean),
     dryRun: env("COMETAIL_DRY_RUN", "0") === "1",
     cuPriceMicroLamports: num("COMETAIL_CU_PRICE", 0),
   };

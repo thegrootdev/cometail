@@ -1346,3 +1346,22 @@ body:before {
     max-height: 70vh;
   }
 }
+
+/* The vault's standing bids, bin by bin. */
+.ladder-bins {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.ladder-bins li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--panel-deep);
+  font-weight: 700;
+}

@@ -81,6 +81,7 @@ COMETAIL_API_PORT=8841                # indexer mode: the read API the site uses
 COMETAIL_SKY_CONFIGS=                 # comma-separated DBC configs the Sky scan is limited to (empty = every pool)
 COMETAIL_SKY_EVERY_PASSES=4           # scan the Sky every N indexer passes
 COMETAIL_MIGRATE_CONFIGS=             # keeper mode: DBC configs whose complete curves the keeper migrates (the plain-launch configs)
+COMETAIL_DEMO_ACTORS=                 # indexer mode: team and demo wallets, reported apart from independent actors by /api/metrics
 ```
 
 The keeper's order per vault is migrate, register positions, cash out, harvest, create and
@@ -99,7 +100,12 @@ claimable backlog, realized curve income; for every migrated pool, one row per p
 locked DAMM v2 position with the NFT holder and its custody, the position's share of the pool's
 permanent liquidity, pending quote fees, quote fees claimed so far, and whether the program's
 size rule would admit it, keyed by the position address with `kind: "position"`), and serves `/api/sky`, `/api/vaults`,
-`/api/vaults/:vault` and `/api/events` for the site.
+`/api/vaults/:vault`, `/api/events` and `/api/metrics` for the site. Vault rows carry a live
+view (the standing bids bin by bin with prices and the pool's active price) and stream rows the
+registered position's share of its pool's locked liquidity. `/api/metrics` reports the submission
+numbers with independent actors apart from the demo set (`COMETAIL_DEMO_ACTORS`): plain launches
+and their fee volume by creator, external and own income, depositors, bid depth, fills and burns
+and refunded principal by vault depositor; stream-token buyers are not indexed.
 
 ## Running the site
 

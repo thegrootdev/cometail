@@ -60,6 +60,12 @@ export const vaultPage = {
   income: "Income in",
   cashout: "Cash-out",
   ladder: "Buyback ladder",
+  depth: "Standing bids, by price",
+  resting: "resting",
+  crossed: "crossed, settling",
+  poolPrice: "Pool price now",
+  noBins: "No bins resting right now.",
+  lockedShare: "of the locked liquidity",
   ladderBody:
     "Standing bids below price, funded by harvested fees. Whatever they fill is burned.",
   burned: "Burned so far",

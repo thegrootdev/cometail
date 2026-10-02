@@ -4,6 +4,7 @@
 //   GET /api/vaults/:vault          one vault with its streams and latest events
 //   GET /api/events?vault=&limit=   events, newest first
 //   GET /api/health
+//   GET /api/metrics                the submission metrics, independent actors apart from the demo set
 // It binds to the loopback interface and expects a reverse proxy in front for TLS. CORS is
 // limited to the configured origins, and each client address gets a token bucket; the
 // client address is taken from X-Forwarded-For only when the connection comes from loopback.
@@ -12,7 +13,7 @@ import net from "net";
 import { Store } from "./store";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[] }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -43,6 +44,49 @@ async function refuseIfTaken(host: string, port: number): Promise<void> {
     s.setTimeout(2_000, () => { s.destroy(); resolve(false); });
   });
   if (taken) throw new Error(`API port ${host}:${port} is already in use by another process; refusing to start`);
+}
+
+/** The metrics of PLAN 8.7, each independent-versus-demo by the actor that owns it: a launch by its
+ *  creator, a vault (its income, bids, fills, burns, refunds) by its depositor. Stream-token buyers
+ *  are not indexed (DAMM v2 swaps are outside the event stream), so that line is null. */
+export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set<string>) {
+  type Cls = "independent" | "demo";
+  const cls = (actor: string): Cls => (demo.has(actor) ? "demo" : "independent");
+  const pair = () => ({ independent: 0n, demo: 0n });
+  const str = (p: { independent: bigint; demo: bigint }) => ({ independent: p.independent.toString(), demo: p.demo.toString() });
+  const [vaults, streams, sky, harvests, settled] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested", "oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0)]);
+  const vaultClass = new Map(vaults.map((v) => [v.vault, cls(String(v.data.depositor))]));
+  const own = new Map(streams.map((s) => [s.stream, !!s.data.isOwn]));
+  const launches = { independent: 0, demo: 0 }, launchFees = pair();
+  // a launch whose creator rights sit in a vault shows the vault PDA as its creator: it belongs to
+  // that vault's depositor
+  for (const r of sky) if ((r.kind ?? "curve") === "curve" && plainConfigs.has(r.config)) { const c = (r.vault && vaultClass.get(r.vault)) || cls(r.creator); launches[c]++; launchFees[c] += BigInt(r.tradingFeeLamports); }
+  const external = pair(), ownIncome = pair();
+  for (const e of harvests) { const c = vaultClass.get(e.vault ?? "") ?? "independent"; (own.get(String(e.data.stream)) ? ownIncome : external)[c] += BigInt(e.data.gross ?? 0); }
+  const depositors = { independent: new Set<string>(), demo: new Set<string>() };
+  const depth = pair(), refunded = pair(), burned = pair(), fills = { independent: 0, demo: 0 };
+  for (const v of vaults) {
+    const c = vaultClass.get(v.vault)!;
+    depositors[c].add(String(v.data.depositor));
+    depth[c] += BigInt(v.data.live?.ladder?.restingLamports ?? 0);
+    refunded[c] += BigInt(v.data.accounting?.refundedPrincipal ?? 0);
+  }
+  for (const e of settled) { const c = vaultClass.get(e.vault ?? "") ?? "independent"; const b = BigInt(e.data.burned ?? 0); if (b > 0n) fills[c]++; burned[c] += b; }
+  return {
+    generatedAt: Date.now(), demoActors: [...demo],
+    notes: [
+      "independent and demo are decided by the actor that owns each line: launches by creator, vaults by depositor",
+      "stream-token buyers are not indexed (DAMM v2 swaps are outside the event stream), so buyers is null",
+      "launch volume is an estimate from the flat 1% curve fee",
+    ],
+    plainLaunches: { count: launches, tradingFeeLamports: str(launchFees), volumeEstimateLamports: str({ independent: launchFees.independent * 100n, demo: launchFees.demo * 100n }) },
+    externalIncomeLamports: str(external), ownIncomeLamports: str(ownIncome),
+    depositors: { independent: depositors.independent.size, demo: depositors.demo.size },
+    buyers: null,
+    bidDepthLamports: str(depth),
+    fillsAndBurns: { settledWithBurn: fills, burnedSt: str(burned) },
+    refundedPrincipalLamports: str(refunded),
+  };
 }
 
 export async function startApi(store: Store, opts: ApiOptions): Promise<http.Server> {
@@ -80,6 +124,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         return send(200, { ...vault, streams: await store.listStreams(m[1]), events: await store.listEvents(m[1], limit) });
       }
       if (url.pathname === "/api/events") return send(200, { events: await store.listEvents(url.searchParams.get("vault"), limit) });
+      if (url.pathname === "/api/metrics") return send(200, await metrics(store, new Set(opts.demoActors ?? []), new Set(opts.plainConfigs ?? [])), { "cache-control": "public, max-age=60" });
       send(404, { error: "not found" });
     } catch (e) {
       log("api error", { path: url.pathname, error: String((e as Error).message ?? e) });
