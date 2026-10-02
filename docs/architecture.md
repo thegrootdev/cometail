@@ -86,7 +86,9 @@ current permanently locked total of the pool: its NFT sits in DAMM v2's own acco
 that NFT, owned by the vault with no delegate; it carries only permanently locked liquidity;
 and it holds at least half of the total when the creator's configured share exceeds the
 partner's, or at least half of the creator's share otherwise, and never more than nine
-eighths of the creator's share. These rules admit positions of a specified current size;
+eighths of the creator's share. The nine-eighths upper bound applies only to external
+positions; own positions require only the lower half-share bound. These rules admit
+positions of a specified current size;
 they do not establish creator or partner identity or migration provenance. At the initial
 migration shares the smaller partner position is excluded, and the larger one is excluded
 when it is more than an eighth larger than the creator's; later permanent locks change the
