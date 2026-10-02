@@ -29,7 +29,9 @@ Devnet build in progress: the program has its accounts and first instructions, t
 harness runs the Meteora paths against the live binaries, the site is a scaffold.
 Nothing here is on mainnet yet. The economics, the authority
 model and every disclosure are written down in `docs/` before the code that implements
-them; the release gates in `docs/release-gates.md` have to pass before anything ships.
+them; the release gates in `docs/release-gates.md` have to pass before anything ships, and
+`docs/deploy.md` says how the program is built for size and deployed with a program-data
+account no larger than the binary.
 
 ## Running it
 

@@ -3,9 +3,15 @@ members = ["programs/*"]
 resolver = "2"
 
 [profile.release]
+# Size first: program-data rent on mainnet is paid per byte, and every instruction here is
+# far below the compute limit.
+opt-level = "z"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
+debug = false
+strip = true
+panic = "abort"
 
 [profile.release.build-override]
 opt-level = 3
