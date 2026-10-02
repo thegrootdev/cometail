@@ -91,7 +91,15 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
   const vaultOfPool = new Map<string, string>();
   // a vault's stream record per registered position: realized income and custody for position rows
   const streamOfPosition = new Map<string, { stream: string; vault: string }>();
-  if (store) for (const s of await store.listAllStreams()) { vaultOfPool.set(String(s.data.pool), s.vault); if (s.data.position) streamOfPosition.set(String(s.data.position), { stream: s.stream, vault: s.vault }); }
+  // one display owner per stream: a rights stream keeps the DBC pool as its key even after it
+  // registers its migrated position (streams.rs register_stream_position; deposit.rs bundled
+  // migrated deposits), so it stays on the curve row; only a deposited DAMM v2 position
+  // (kind dammV2Position) is a position row's stream
+  if (store) for (const s of await store.listAllStreams()) {
+    vaultOfPool.set(String(s.data.pool), s.vault);
+    const kind = s.data.kind && typeof s.data.kind === "object" ? Object.keys(s.data.kind)[0] : String(s.data.kind ?? "");
+    if (s.data.position && kind === "dammV2Position") streamOfPosition.set(String(s.data.position), { stream: s.stream, vault: s.vault });
+  }
   const rows: SkyRow[] = [];
   const positionWork: { curve: { pubkey: PublicKey; state: any }; cfg: any; quoteMint: PublicKey; dammPool: string; configReasons: string[] }[] = [];
   for (const p of pools) {
@@ -163,19 +171,21 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
       const holders = new Map<string, PublicKey>();
       const nftReasons = new Map<string, string>();
       for (const x of found) {
+        const k = x.position.toBase58();
         const info = nftInfos.get(x.nftAccount.toBase58());
-        if (!info) { nftReasons.set(x.position.toBase58(), "position NFT account missing"); continue; }
+        if (!info) { nftReasons.set(k, "position NFT account missing"); continue; }
+        // the canonical NFT account must be a token account holding exactly the position's NFT;
+        // only then is its authority the holder (an empty account's authority proves nothing)
+        if (!(info.owner.equals(TOKEN_2022_PROGRAM_ID) || info.owner.equals(TOKEN_PROGRAM_ID)) || info.data.length < AccountLayout.span) { nftReasons.set(k, "position NFT account empty or wrong mint"); continue; }
         const acc = AccountLayout.decode(info.data);
-        holders.set(x.position.toBase58(), new PublicKey(acc.owner));
-        // the canonical NFT account must hold exactly the position's NFT, undelegated: an empty
-        // account's authority is not proof of ownership (eligibility.rs, custody)
-        if (!new PublicKey(acc.mint).equals(x.state.nftMint) || acc.amount !== 1n) nftReasons.set(x.position.toBase58(), "position NFT account empty or wrong mint");
-        else if (acc.delegateOption !== 0) nftReasons.set(x.position.toBase58(), "position NFT delegated");
+        if (!new PublicKey(acc.mint).equals(x.state.nftMint) || acc.amount !== 1n) { nftReasons.set(k, "position NFT account empty or wrong mint"); continue; }
+        holders.set(k, new PublicKey(acc.owner));
+        if (acc.delegateOption !== 0) nftReasons.set(k, "position NFT delegated");
       }
       const holderInfos = await accounts(conn, [...new Set([...holders.values()].map((h) => h.toBase58()))].map((k) => new PublicKey(k)));
       const quoteIsB = (poolState.tokenBMint as PublicKey).equals(w.quoteMint);
       const sidesOk = (poolState.tokenAMint as PublicKey).equals(w.curve.state.baseMint) && quoteIsB;
-      const poolFeeModeOk = Number(poolState.collectFeeMode) === 1;
+      const poolFeeModeOk = [1, 2].includes(Number(poolState.collectFeeMode)); // OnlyB or Compounding (eligibility.rs check_damm_pool)
       const total = BigInt(poolState.permanentLockLiquidity.toString());
       const c = BigInt(Number(w.cfg.creatorPermanentLockedLiquidityPercentage)), pp = BigInt(Number(w.cfg.partnerPermanentLockedLiquidityPercentage));
       for (const x of found) {
@@ -189,7 +199,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
         if (custody !== "wallet") reasons.push(custody === "program" ? "position NFT held by a program" : "position NFT holder unknown");
         const nftReason = nftReasons.get(x.position.toBase58()); if (nftReason) reasons.push(nftReason);
         // principal: only permanently locked liquidity, nothing unlocked or vesting (eligibility.rs:114-117)
-        if (BigInt(x.state.unlockedLiquidity.toString()) !== 0n || BigInt(x.state.vestedLiquidity.toString()) !== 0n) reasons.push("position has unlocked or vesting liquidity");
+        if (BigInt(x.state.vestedLiquidity.toString()) !== 0n || BigInt(x.state.unlockedLiquidity.toString()) > 3n) reasons.push("position has unlocked or vesting liquidity"); // MAX_UNLOCKED_DUST = 3
         if (!positionSizeOk(a, total, c, pp)) reasons.push("position outside the size rule");
         let pending = 0n;
         try { const f = getUnClaimLpFee(poolState, x.state); pending = BigInt((quoteIsB ? f.feeTokenB : f.feeTokenA).toString()); } catch { reasons.push("pending fees unreadable"); }
