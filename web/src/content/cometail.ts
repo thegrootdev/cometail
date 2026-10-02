@@ -11,7 +11,11 @@ export const product = {
   protocolTicker: "$TAIL",
   streamTickerPrefix: "t",
   builtOn: "Built on Meteora",
-  x: "",
+  socialX: "COMETAIL on X",
+  socialGithub: "COMETAIL on GitHub",
+  x: "https://x.com/cometailfun",
+  xHandle: "@cometailfun",
+  github: "https://github.com/thegrootdev/cometail",
   devnetBadge: "Devnet",
   clusterNote:
     "This deployment runs on Solana devnet with test tokens. Nothing here has value.",

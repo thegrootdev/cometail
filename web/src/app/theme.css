@@ -1365,3 +1365,99 @@ body:before {
   background: var(--panel-deep);
   font-weight: 700;
 }
+
+/* Social links: icon pills in the sticker language, pressed on tap. */
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.social-pills {
+  display: inline-flex;
+  gap: 10px;
+}
+.social-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: var(--outline) solid var(--ink);
+  background: var(--panel);
+  color: #fff;
+  box-shadow: 0 5px 0 var(--ink);
+  transform: translateY(0);
+  transition:
+    transform 0.08s,
+    box-shadow 0.08s,
+    background 0.15s;
+}
+.social-pill svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+.social-pill:hover {
+  background: var(--ion);
+  color: var(--ink);
+}
+.social-pill:active {
+  transform: translateY(5px);
+  box-shadow: 0 0 0 var(--ink);
+}
+.social-pill:focus-visible {
+  outline: 3px solid var(--dust);
+  outline-offset: 3px;
+}
+.mobile-nav .social-compact {
+  align-self: center;
+  gap: 8px;
+  margin-left: 4px;
+}
+.mobile-nav .social-compact .social-pill {
+  width: 36px;
+  height: 36px;
+  box-shadow: 0 3px 0 var(--ink);
+}
+.mobile-nav .social-compact .social-pill:active {
+  transform: translateY(3px);
+}
+.mobile-nav .social-compact .social-pill svg {
+  width: 16px;
+  height: 16px;
+}
+@media (max-width: 760px) {
+  .site-footer {
+    gap: 14px;
+  }
+  .footer-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+@media (max-width: 760px) {
+  /* the phone menu: four tabs and the two social pills in a fifth, narrow column */
+  .mobile-nav {
+    grid-template-columns: repeat(4, 1fr) auto;
+    align-items: center;
+    column-gap: 4px;
+  }
+  .mobile-nav .social-compact {
+    display: inline-flex;
+    flex-direction: row;
+    gap: 6px;
+    padding: 0 2px 0 6px;
+    border-left: 2px solid var(--ink);
+  }
+  .mobile-nav .social-compact .social-pill {
+    display: inline-flex;
+    flex-direction: row;
+    padding: 0;
+    width: 34px;
+    height: 34px;
+    color: #fff;
+    font-size: 0;
+  }
+}
