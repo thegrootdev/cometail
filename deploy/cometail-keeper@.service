@@ -6,10 +6,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=%i
-WorkingDirectory=/opt/cometail/worker
+WorkingDirectory=/opt/cometail/repo/worker
 EnvironmentFile=/etc/cometail/worker.env
+Environment=PATH=/opt/cometail/bin:/usr/bin:/bin
 Environment=COMETAIL_MODE=keeper
-ExecStart=/opt/cometail/node /opt/cometail/worker/node_modules/.bin/tsx src/index.ts
+# tsx by its real entry point: the .bin shim is a shell script, not something node runs
+ExecStart=/opt/cometail/bin/node /opt/cometail/repo/worker/node_modules/tsx/dist/cli.mjs src/index.ts
 Restart=always
 RestartSec=10
 NoNewPrivileges=true

@@ -77,7 +77,7 @@ COMETAIL_STALE_ORDER_SECONDS=86400    # resting bins older than this are cancell
 COMETAIL_DRY_RUN=1                    # simulate everything, send nothing
 COMETAIL_ALERT_WEBHOOK=               # optional JSON webhook for failures
 DATABASE_URL=postgres://... | sqlite:/path/to/file.sqlite   # indexer mode: Postgres in production, SQLite anywhere
-COMETAIL_API_PORT=8787                # indexer mode: the read API the site uses (0 = off)
+COMETAIL_API_PORT=8841                # indexer mode: the read API the site uses (0 = off); the worker refuses to start if the port is taken
 COMETAIL_SKY_CONFIGS=                 # comma-separated DBC configs the Sky scan is limited to (empty = every pool)
 COMETAIL_SKY_EVERY_PASSES=4           # scan the Sky every N indexer passes
 COMETAIL_MIGRATE_CONFIGS=             # keeper mode: DBC configs whose complete curves the keeper migrates (the plain-launch configs)

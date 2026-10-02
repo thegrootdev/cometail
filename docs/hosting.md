@@ -32,24 +32,32 @@ DNS at the registrar:
 ## Worker on the box
 
 Files in `deploy/`: the Caddyfile, two systemd template units (the instance name is the
-service user), and the environment example. The checkout is reached through `/opt/cometail`
-(a symlink to the service user's clone) and node through `/opt/cometail/node`, so no unit
-names a home directory. The real environment file holds the RPC key and lives at
+service user), and the environment example. The checkout is reached through
+`/opt/cometail/repo` (a symlink to the service user's clone) and node through
+`/opt/cometail/bin` (a symlink to its node directory), so no unit names a home directory. The real environment file holds the RPC key and lives at
 `/etc/cometail/worker.env`, root-owned and readable by the service user only, outside the
 repository. The keeper key stays in `keys/devnet/` (ignored by git).
+
+The API listens on `127.0.0.1:8841` and that port belongs to the worker alone: Caddy forwards
+every `/api/*` request there, so anything else answering on it would be published. The worker
+refuses to start (exit status 2, which the unit does not restart) when something already
+answers on the port, and the post-install check below proves that only the worker is behind
+`/api/`.
 
 As root, once (Ubuntu 24.04), from a sudo shell of the service user so `$SUDO_USER` and
 `$HOME` name that user and its clone:
 
 ```
 # the checkout and node, by neutral paths
-ln -sfn "$(getent passwd "$SUDO_USER" | cut -d: -f6)/cometail" /opt/cometail
-ln -sfn "$(sudo -u "$SUDO_USER" -i bash -lc 'command -v node')" /opt/cometail/node
-sudo -u "$SUDO_USER" mkdir -p /opt/cometail/.local
+mkdir -p /opt/cometail
+ln -sfn "$(getent passwd "$SUDO_USER" | cut -d: -f6)/cometail" /opt/cometail/repo
+ln -sfn "$(dirname "$(sudo -u "$SUDO_USER" -i bash -lc 'command -v node')")" /opt/cometail/bin
+sudo -u "$SUDO_USER" mkdir -p /opt/cometail/repo/.local
+/opt/cometail/bin/node --version   # must print v22.x
 
 # the environment file: root-owned, readable by the service user only
 mkdir -p /etc/cometail
-install -m 640 -o root -g "$SUDO_USER" /opt/cometail/deploy/worker.env.example /etc/cometail/worker.env
+install -m 640 -o root -g "$SUDO_USER" /opt/cometail/repo/deploy/worker.env.example /etc/cometail/worker.env
 # edit /etc/cometail/worker.env: COMETAIL_RPC_URL (the keyed devnet RPC)
 
 # Caddy from its official repository
@@ -57,15 +65,15 @@ apt-get install -y debian-keyring debian-archive-keyring apt-transport-https cur
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
 apt-get update && apt-get install -y caddy
-install -m 644 /opt/cometail/deploy/Caddyfile /etc/caddy/Caddyfile
+install -m 644 /opt/cometail/repo/deploy/Caddyfile /etc/caddy/Caddyfile
 mkdir -p /var/log/caddy && chown caddy:caddy /var/log/caddy
 caddy validate --config /etc/caddy/Caddyfile
 systemctl enable --now caddy
 systemctl reload caddy
 
 # the two worker services
-install -m 644 /opt/cometail/deploy/cometail-keeper@.service /etc/systemd/system/cometail-keeper@.service
-install -m 644 /opt/cometail/deploy/cometail-indexer@.service /etc/systemd/system/cometail-indexer@.service
+install -m 644 /opt/cometail/repo/deploy/cometail-keeper@.service /etc/systemd/system/cometail-keeper@.service
+install -m 644 /opt/cometail/repo/deploy/cometail-indexer@.service /etc/systemd/system/cometail-indexer@.service
 systemctl daemon-reload
 systemctl enable --now "cometail-indexer@$SUDO_USER" "cometail-keeper@$SUDO_USER"
 
@@ -75,6 +83,11 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
 ufw status verbose
+
+# post-install check, once api.cometail.fun resolves (Caddy fetches the certificate on the
+# first request): only the worker answers behind /api/
+test "$(curl -s -o /dev/null -w '%{http_code}' https://api.cometail.fun/api/state)" = 404 && echo "state: 404, nothing else behind /api/" || echo "state: NOT 404, stop and check what listens on 8841"
+curl -sf https://api.cometail.fun/api/health | grep -q '"service":"cometail-indexer"' && echo "health: answered by the worker" || echo "health: not the worker, stop and check"
 ```
 
 Checks:
@@ -82,8 +95,9 @@ Checks:
 ```
 systemctl status caddy "cometail-indexer@$SUDO_USER" "cometail-keeper@$SUDO_USER" --no-pager
 journalctl -u "cometail-indexer@$SUDO_USER" -n 20 --no-pager
-curl -s https://api.cometail.fun/api/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/api/health   # reachable only on the box
+curl -s https://api.cometail.fun/api/health                                   # {"ok":true,"service":"cometail-indexer",...}
+curl -s -o /dev/null -w '%{http_code}\n' https://api.cometail.fun/api/state   # 404
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8841/api/health     # reachable only on the box
 ```
 
 Updating: `git pull` in the clone (the owner pushes; the box only pulls), then

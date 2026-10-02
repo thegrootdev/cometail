@@ -10,7 +10,7 @@ api.cometail.fun {
 	}
 	@notApi not path /api/*
 	respond @notApi 404
-	reverse_proxy 127.0.0.1:8787 {
+	reverse_proxy 127.0.0.1:8841 {
 		header_up X-Forwarded-For {remote_host}
 	}
 	log {

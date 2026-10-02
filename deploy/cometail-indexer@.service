@@ -6,11 +6,15 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=%i
-WorkingDirectory=/opt/cometail/worker
+WorkingDirectory=/opt/cometail/repo/worker
 EnvironmentFile=/etc/cometail/worker.env
+Environment=PATH=/opt/cometail/bin:/usr/bin:/bin
 Environment=COMETAIL_MODE=indexer
-ExecStart=/opt/cometail/node /opt/cometail/worker/node_modules/.bin/tsx src/index.ts
-Restart=always
+# tsx by its real entry point: the .bin shim is a shell script, not something node runs
+ExecStart=/opt/cometail/bin/node /opt/cometail/repo/worker/node_modules/tsx/dist/cli.mjs src/index.ts
+# exit status 2: the API port is already taken on the box; fix that, do not restart into it
+Restart=on-failure
+RestartPreventExitStatus=2
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true

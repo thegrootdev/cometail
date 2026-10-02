@@ -8,6 +8,7 @@
 // limited to the configured origins, and each client address gets a token bucket; the
 // client address is taken from X-Forwarded-For only when the connection comes from loopback.
 import http from "http";
+import net from "net";
 import { Store } from "./store";
 import { log } from "./tx";
 
@@ -29,7 +30,23 @@ class Buckets {
   }
 }
 
-export function startApi(store: Store, opts: ApiOptions): http.Server {
+/**
+ * Nothing else may answer on the API port: the proxy in front forwards every /api/* request
+ * there, so a stranger on the port would be published. The worker refuses to start when the
+ * port already answers or cannot be bound.
+ */
+async function refuseIfTaken(host: string, port: number): Promise<void> {
+  const taken = await new Promise<boolean>((resolve) => {
+    const s = net.connect({ host, port });
+    s.once("connect", () => { s.destroy(); resolve(true); });
+    s.once("error", () => resolve(false));
+    s.setTimeout(2_000, () => { s.destroy(); resolve(false); });
+  });
+  if (taken) throw new Error(`API port ${host}:${port} is already in use by another process; refusing to start`);
+}
+
+export async function startApi(store: Store, opts: ApiOptions): Promise<http.Server> {
+  await refuseIfTaken(opts.host, opts.port);
   const buckets = new Buckets(opts.ratePerMinute, Math.max(10, Math.ceil(opts.ratePerMinute / 2)));
   const allowOrigin = (req: http.IncomingMessage): string | null => {
     const o = req.headers.origin;
@@ -53,7 +70,7 @@ export function startApi(store: Store, opts: ApiOptions): http.Server {
       const client = forwarded || remote;
       if (!buckets.take(client)) return send(429, { error: "rate limited" }, { "retry-after": "10" });
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 200)));
-      if (url.pathname === "/api/health") return send(200, { ok: true, time: Date.now() });
+      if (url.pathname === "/api/health") return send(200, { ok: true, service: "cometail-indexer", time: Date.now() });
       if (url.pathname === "/api/sky") return send(200, { streams: await store.listSky(limit) });
       if (url.pathname === "/api/vaults") return send(200, { vaults: await store.listVaults() });
       const m = url.pathname.match(/^\/api\/vaults\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
@@ -69,6 +86,10 @@ export function startApi(store: Store, opts: ApiOptions): http.Server {
       send(500, { error: "internal" });
     }
   });
-  server.listen(opts.port, opts.host, () => log("api listening", { host: opts.host, port: opts.port, origins: opts.origins, ratePerMinute: opts.ratePerMinute }));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, opts.host, () => { server.off("error", reject); resolve(); });
+  });
+  log("api listening", { host: opts.host, port: opts.port, origins: opts.origins, ratePerMinute: opts.ratePerMinute });
   return server;
 }

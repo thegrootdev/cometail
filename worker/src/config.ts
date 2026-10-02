@@ -27,7 +27,7 @@ export interface Config {
   /** Resting bins older than this are cancelled so the income can be re-laddered near the market. */
   staleOrderSeconds: number;
   databaseUrl: string | null;
-  /** The read API for the site (indexer mode); 0 disables it. Binds to `apiHost` (loopback by default: a reverse proxy terminates TLS). */
+  /** The read API for the site (indexer mode); 0 disables it. Binds to `apiHost` (loopback by default: a reverse proxy terminates TLS). The port must be the worker's alone: it refuses to start when something already answers there. */
   apiPort: number;
   apiHost: string;
   /** Origins allowed by CORS on the API. */
