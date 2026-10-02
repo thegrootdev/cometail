@@ -17,7 +17,15 @@ export function PageHeader({
   art?: "mascot" | "launch" | "sell";
 }) {
   return (
-    <div className="page-heading">
+    <div className={`page-heading ${art ? "has-mascot" : ""}`}>
+      <div className="page-heading-main">
+        <div className="eyebrow">
+          <span />
+          {eyebrow}
+        </div>
+        <h1>{title}</h1>
+        {body && <p>{body}</p>}
+      </div>
       {art && (
         <img
           className="page-mascot"
@@ -27,14 +35,6 @@ export function PageHeader({
           height="200"
         />
       )}
-      <div>
-        <div className="eyebrow">
-          <span />
-          {eyebrow}
-        </div>
-        <h1>{title}</h1>
-        {body && <p>{body}</p>}
-      </div>
       {children && <div className="page-heading-side">{children}</div>}
     </div>
   );

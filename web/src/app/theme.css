@@ -1048,3 +1048,189 @@ body .wallet-adapter-dropdown-list-item {
   font-family: var(--font-body);
   font-weight: 700;
 }
+
+/* Review corrections (spikes/19-comet-universe/REVIEW.txt). */
+/* 5. Stars stay behind the words: a dark mask over the top of the sky, and chart labels get
+   an ink backing. */
+body:before {
+  background:
+    linear-gradient(180deg, #0d1538e6 0, #0d153880 32%, transparent 58%),
+    radial-gradient(ellipse at 15% 20%, #ff8fb14d, transparent 45%),
+    radial-gradient(ellipse at 85% 75%, #5bc8ff40, transparent 45%),
+    radial-gradient(ellipse at 70% 15%, #8f7bff40, transparent 40%),
+    url("/art/stars-tile.png") repeat,
+    linear-gradient(180deg, var(--space-top), var(--space-bottom));
+}
+.atlas-svg text {
+  paint-order: stroke;
+  stroke: var(--ink);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.atlas-empty-overlay {
+  background: #0b122699;
+}
+.atlas-empty-overlay .data-state {
+  background: var(--panel) !important;
+  border: var(--outline) solid var(--ink) !important;
+  padding: 26px !important;
+}
+/* 2. The wallet modal: the old rules carried !important, so these do too. */
+body .wallet-adapter-modal-overlay {
+  background: #0b1226b3 !important;
+}
+body .wallet-adapter-modal-wrapper {
+  background: var(--panel) !important;
+  border: var(--outline) solid var(--ink) !important;
+  border-radius: 28px !important;
+  box-shadow: var(--shadow-dust) !important;
+}
+body .wallet-adapter-modal-title {
+  font-family: var(--font-display) !important;
+  font-size: 30px !important;
+  font-weight: 600 !important;
+  padding: 40px 36px 16px !important;
+  color: #fff !important;
+}
+body .wallet-adapter-modal-list .wallet-adapter-button {
+  background: var(--panel-deep) !important;
+  border: var(--outline) solid var(--ink) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 0 var(--ink);
+}
+body .wallet-adapter-modal-list .wallet-adapter-button:hover {
+  background: #1b2458 !important;
+  border-color: var(--ink) !important;
+}
+body .wallet-adapter-modal-button-close {
+  background: var(--dust) !important;
+  border: 2px solid var(--ink) !important;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+body .wallet-adapter-modal-button-close svg {
+  fill: var(--ink) !important;
+}
+body .wallet-adapter-dropdown-list {
+  background: var(--panel) !important;
+  border: var(--outline) solid var(--ink) !important;
+}
+/* 3. Page headings: the title group keeps the flexible column, the mascot a fixed one. */
+.page-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.page-heading-main {
+  grid-column: 1;
+}
+.page-heading-side {
+  grid-column: 1;
+}
+.page-mascot {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: clamp(120px, 14vw, 180px);
+  justify-self: end;
+  align-self: center;
+}
+/* Smaller: the launch fee is income-colored; crop controls get room. */
+.creation-fee,
+.hero-footnote {
+  color: var(--dust);
+  font-weight: 800;
+  font-size: 14px;
+}
+.crop-controls label {
+  font: 800 13px var(--font-body);
+  color: #c9d2f2;
+  margin-bottom: 10px;
+}
+.crop-controls input[type="range"] {
+  height: 30px;
+  width: 100%;
+}
+.crop-actions {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+@media (max-width: 760px) {
+  /* 1. chapter clearance after the padding shorthand */
+  .chapter {
+    padding-top: 68px;
+  }
+  /* 4. copy and actions first on phones; the full art follows in its 4:5 crop */
+  .hero-art {
+    order: 0;
+    max-height: none;
+  }
+  /* 3. a smaller mascot beside the title group */
+  .page-heading {
+    grid-template-columns: minmax(0, 1fr) 96px;
+    column-gap: 12px;
+  }
+  .page-mascot {
+    width: 96px;
+    grid-column: 2;
+    grid-row: 1;
+    order: 0;
+    justify-self: end;
+    align-self: start;
+  }
+  .page-heading-side {
+    grid-column: 1 / span 2;
+  }
+  /* 6. the stream catalogue becomes cards with every value in full */
+  .table-scroll {
+    overflow: visible;
+  }
+  .stream-table,
+  .stream-table tbody,
+  .stream-table tr {
+    display: block;
+    width: 100%;
+    border-spacing: 0;
+  }
+  .stream-table thead {
+    display: none;
+  }
+  .stream-table tr {
+    margin: 0 0 14px;
+    padding: 6px 14px;
+    background: var(--panel-deep);
+    border: var(--outline) solid var(--ink);
+    border-radius: 16px;
+    box-shadow: 3px 3px 0 var(--ink);
+  }
+  .stream-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-bottom: 1px solid #ffffff14 !important;
+    border-radius: 0 !important;
+    text-align: right;
+    white-space: normal;
+  }
+  .stream-table td:last-child {
+    border-bottom: 0 !important;
+    justify-content: flex-end;
+  }
+  .stream-table td:before {
+    content: attr(data-label);
+    font-weight: 800;
+    font-size: 13px;
+    color: #c9d2f2;
+    text-align: left;
+    flex: none;
+  }
+  .stream-table td:last-child:before {
+    content: none;
+  }
+  .upload-crop {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}

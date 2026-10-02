@@ -40,14 +40,14 @@ export function Shell({
       </a>
       <header className="site-header">
         <Link href="/" className="brand-link" aria-label={product.name}>
+          <img src="/brand/symbol.svg" alt="" width="36" height="36" />
           <img
-            className="brand-mascot"
-            src="/art/mascot.png"
-            alt=""
-            width="44"
-            height="44"
+            className="wordmark"
+            src="/brand/wordmark.svg"
+            alt={product.name}
+            width="150"
+            height="30"
           />
-          <span className="wordmark">{product.name}</span>
         </Link>
         <nav className="desktop-nav" aria-label={copy.menu}>
           {links.map((l) => (
@@ -103,8 +103,8 @@ export function Shell({
 export type Sticker = "planet" | "coin" | "flame" | "telescope";
 function stickerFor(title?: string): Sticker {
   const t = (title ?? "").toLowerCase();
-  if (/income|fee|cash|money|trade|buy/.test(t)) return "coin";
   if (/buyback|ladder|burn|bid/.test(t)) return "flame";
+  if (/income|fee|cash|money|trade|buy/.test(t)) return "coin";
   if (/stream|sky|vault|position|tail/.test(t)) return "telescope";
   return "planet";
 }

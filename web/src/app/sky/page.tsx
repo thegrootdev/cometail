@@ -79,7 +79,7 @@ export default function SkyPage() {
             <tbody>
               {shown.map((s) => (
                 <tr key={s.pool}>
-                  <td>
+                  <td data-label={copy.source}>
                     <Link className="token-cell" href={`/token/${s.baseMint}`}>
                       <TokenAvatar seed={s.baseMint} />
                       <span>
@@ -90,18 +90,18 @@ export default function SkyPage() {
                       </span>
                     </Link>
                   </td>
-                  <td>
+                  <td data-label={copy.stage}>
                     <Badge tone={s.progress === 3 ? "gold" : "ion"}>
                       {wizard.stages[s.progress] ?? s.progress}
                     </Badge>
                   </td>
-                  <td className="money">{sol(s.claimableLamports)}</td>
-                  <td>
+                  <td className="money" data-label={copy.accrued}>{sol(s.claimableLamports)}</td>
+                  <td data-label={copy.harvested}>
                     {s.realized30dLamports === null
                       ? "—"
                       : sol(s.realized30dLamports)}
                   </td>
-                  <td>
+                  <td data-label={copy.eligibility}>
                     {s.eligible ? (
                       <Badge tone="gold">{copy.eligible}</Badge>
                     ) : (
