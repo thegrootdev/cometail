@@ -69,7 +69,10 @@ COMETAIL_LADDER_BINS=5 COMETAIL_LADDER_NEAR_BPS=200 COMETAIL_LADDER_FAR_BPS=2000
 COMETAIL_STALE_ORDER_SECONDS=86400    # resting bins older than this are cancelled and re-laddered
 COMETAIL_DRY_RUN=1                    # simulate everything, send nothing
 COMETAIL_ALERT_WEBHOOK=               # optional JSON webhook for failures
-DATABASE_URL=postgres://...           # indexer mode only
+DATABASE_URL=postgres://... | sqlite:/path/to/file.sqlite   # indexer mode: Postgres in production, SQLite anywhere
+COMETAIL_API_PORT=8787                # indexer mode: the read API the site uses (0 = off)
+COMETAIL_SKY_CONFIGS=                 # comma-separated DBC configs the Sky scan is limited to (empty = every pool)
+COMETAIL_SKY_EVERY_PASSES=4           # scan the Sky every N indexer passes
 ```
 
 The keeper's order per vault is migrate, register positions, cash out, harvest, settle, route.
@@ -77,3 +80,23 @@ Every write is simulated first and a rejected simulation is logged and skipped, 
 safe to run against a vault whose policy says no. Ladders spread their bins across a band 2% to 20% away
 from the market (nearest bins weighted most) and drop any bin outside the price cap; ladders wider than twelve bins
 go out as v0 transactions with a per-vault address lookup table.
+
+The indexer follows the program's transactions into the store, snapshots every vault and
+stream, scans the Sky (every DBC pool joined to its config: custody, eligibility, progress,
+claimable backlog, realized curve income), and serves `/api/sky`, `/api/vaults`,
+`/api/vaults/:vault` and `/api/events` for the site.
+
+## Running the site
+
+`pnpm dev:web`. Copy `web/.env.local.example` to `web/.env.local` and point
+`NEXT_PUBLIC_RPC_URL` and `NEXT_PUBLIC_API_URL` at the cluster and the worker's API; the
+devnet addresses are the defaults in `web/src/lib/addresses.ts`. Pages: the Sky, launch,
+token, sell-your-tail wizard, vault, portfolio. Every line of copy is in
+`web/src/content/cometail.ts`.
+
+## Devnet
+
+`tests/devnet/setup.ts` creates the treasury, the four configs and the protocol and funds
+the actor keys; `tests/devnet/e2e.ts` runs the whole lifecycle with the keeper and the
+indexer in-process on devnet-only small-threshold configs (see the file headers for the
+commands). Addresses live in `configs/devnet.json`; keys never leave `keys/devnet/`.

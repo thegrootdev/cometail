@@ -20,6 +20,8 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  // The Meteora SDKs type their accounts from IDLs, which reach the pages as `any`.
+  { rules: { "@typescript-eslint/no-explicit-any": "warn", "@next/next/no-img-element": "off" } },
 ];
 
 export default eslintConfig;

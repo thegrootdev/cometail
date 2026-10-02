@@ -52,10 +52,10 @@ async function vaultPass(ctx: KeeperContext, protocol: any, entry: Decoded): Pro
   // 1. the vault's own curve: migrate when the curve is complete, then register and cash out
   const ownPool = await chain.dbcPool(vault.dbcPool);
   if (ownPool) {
-    if (ownPool.migrationProgress === DBC_PROGRESS.lockedVesting) {
+    // the presets carry no vesting, so a complete curve (PostBondingCurve) migrates directly; a
+    // config with vesting would sit in LockedVesting after its locker and migrate from there
+    if (ownPool.migrationProgress === DBC_PROGRESS.postBonding || ownPool.migrationProgress === DBC_PROGRESS.lockedVesting) {
       await migrate(ctx, vault.dbcPool, ownPool);
-    } else if (ownPool.migrationProgress === DBC_PROGRESS.postBonding) {
-      log("curve complete but a locker is required first (presets carry no vesting; manual)", { vault: vaultPk });
     }
     const after = await chain.dbcPool(vault.dbcPool);
     if (after && after.migrationProgress === DBC_PROGRESS.createdPool && isDefault(vault.ownPosition)) {

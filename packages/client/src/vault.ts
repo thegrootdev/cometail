@@ -1,5 +1,5 @@
 // Instruction builders for the COMETAIL vault program. Pure: no RPC, no signing.
-import { AnchorProvider, BN, Idl, Program, Wallet } from "@coral-xyz/anchor";
+import { AnchorProvider, BN, Idl, Program } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, AuthorityType, createSetAuthorityInstruction, getAssociatedTokenAddressSync, NATIVE_MINT } from "@solana/spl-token";
 import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, DLMM_PROGRAM_ID, deriveProtocol, deriveVault, SEEDS } from "./ids";
@@ -8,8 +8,10 @@ import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, DLMM_PROGRAM_ID, deriveProtocol, de
 export const VAULT_IDL = require("../idl/cometail_vault.json") as Idl;
 export const VAULT_PROGRAM_ID = new PublicKey((VAULT_IDL as any).address);
 
+/** The builders never sign, so the provider carries a wallet that refuses to (works in browsers too). */
+const NO_WALLET = { publicKey: Keypair.generate().publicKey, signTransaction: async () => { throw new Error("read-only wallet"); }, signAllTransactions: async () => { throw new Error("read-only wallet"); } };
 export function vaultProgram(connection?: Connection): Program {
-  const provider = new AnchorProvider(connection ?? new Connection("http://127.0.0.1:8899"), new Wallet(Keypair.generate()), {});
+  const provider = new AnchorProvider(connection ?? new Connection("http://127.0.0.1:8899"), NO_WALLET as never, {});
   return new Program(VAULT_IDL, provider);
 }
 

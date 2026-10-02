@@ -10,5 +10,11 @@
   "admin": "3eBuya2rggMkpqJC4jM9vJo2u91njEWTuH7AV4RnNNEC",
   "keeper": "A4iqXrFHjjpDzKbzHgwpeCMbYVFSdVeK5eHkpLe32gKz",
   "treasury": "JdMo3ektR8etAHpYMiCMZnkPAoJ5djhf1eGaJBMni9H",
-  "protocol": "3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR"
+  "protocol": "3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR",
+  "e2e": {
+    "plain": "8aoFV3oVKVBuJsh7vnEKhUhR8C5D48HsjLHoVZt6WsBF",
+    "stream-25": "FhErNG8JK8hXM8PdkwGsfnr8jqxGuQmEWLSYjDtFGuXk",
+    "stream-50": "6CQ4fXLaSeR3UvgTUAffbetDuzXU4JUMjfG2KcFJFsuz",
+    "stream-75": "H53ojWBqXmxbtcCLVzA2YRveaNvdL1CKS11Kcwxg1Psd"
+  }
 }
