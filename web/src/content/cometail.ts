@@ -12,6 +12,8 @@ export const product = {
   streamTickerPrefix: "t",
   builtOn: "Built on Meteora",
   x: "",
+  devnetBadge: "Devnet",
+  clusterNote: "This deployment runs on Solana devnet with test tokens. Nothing here has value.",
 } as const;
 
 export const nav = {

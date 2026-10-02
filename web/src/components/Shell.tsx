@@ -2,6 +2,7 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { nav, product } from "@/content/cometail";
+import { CLUSTER } from "@/lib/addresses";
 
 const WalletButton = dynamic(() => import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton), { ssr: false });
 
@@ -12,6 +13,7 @@ export function Shell({ children, wide = false }: { children: React.ReactNode; w
         <Link href="/" className="flex items-center gap-3">
           <img src="/brand/symbol.svg" alt="" width={36} height={36} />
           <span className="text-lg font-extrabold tracking-[0.2em]">{product.name}</span>
+          {CLUSTER !== "mainnet-beta" && <span className="rounded-full border border-dust px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-dust" title={product.clusterNote}>{CLUSTER === "devnet" ? product.devnetBadge : CLUSTER}</span>}
         </Link>
         <nav className="flex items-center gap-5 text-sm text-starlight/80">
           <Link href="/sky">{nav.sky}</Link>

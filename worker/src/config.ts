@@ -27,8 +27,13 @@ export interface Config {
   /** Resting bins older than this are cancelled so the income can be re-laddered near the market. */
   staleOrderSeconds: number;
   databaseUrl: string | null;
-  /** The read API for the site (indexer mode); 0 disables it. */
+  /** The read API for the site (indexer mode); 0 disables it. Binds to `apiHost` (loopback by default: a reverse proxy terminates TLS). */
   apiPort: number;
+  apiHost: string;
+  /** Origins allowed by CORS on the API. */
+  apiOrigins: string[];
+  /** Requests per minute per client address on the API. */
+  apiRatePerMinute: number;
   /** DBC configs the Sky scan is limited to; empty scans every pool of the program. */
   skyConfigs: PublicKey[];
   /** Run the Sky scan every this many indexer passes. */
@@ -77,6 +82,9 @@ export function loadConfig(): Config {
     staleOrderSeconds: num("COMETAIL_STALE_ORDER_SECONDS", 86_400),
     databaseUrl: process.env.DATABASE_URL || null,
     apiPort: num("COMETAIL_API_PORT", 0),
+    apiHost: env("COMETAIL_API_HOST", "127.0.0.1"),
+    apiOrigins: env("COMETAIL_API_ORIGINS", "https://cometail.fun").split(",").map((s) => s.trim()).filter(Boolean),
+    apiRatePerMinute: num("COMETAIL_API_RATE_PER_MINUTE", 120),
     skyConfigs: env("COMETAIL_SKY_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
     skyEveryPasses: Math.max(1, num("COMETAIL_SKY_EVERY_PASSES", 4)),
     migrateConfigs: env("COMETAIL_MIGRATE_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),

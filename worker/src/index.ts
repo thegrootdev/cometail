@@ -30,7 +30,7 @@ async function main() {
     const store = openStore(cfg.databaseUrl);
     await store.init();
     const indexer = new Indexer(chain, store);
-    const api = cfg.apiPort > 0 ? startApi(store, cfg.apiPort) : null;
+    const api = cfg.apiPort > 0 ? startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute }) : null;
     let passes = 0;
     while (!stopping) {
       let added = 0;

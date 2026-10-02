@@ -1,0 +1,20 @@
+# api.cometail.fun: TLS from Let's Encrypt, then straight to the worker's read API on loopback.
+# The API itself limits CORS to cometail.fun and rate-limits per client address.
+api.cometail.fun {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+	@notApi not path /api/*
+	respond @notApi 404
+	reverse_proxy 127.0.0.1:8787 {
+		header_up X-Forwarded-For {remote_host}
+	}
+	log {
+		output file /var/log/caddy/api.cometail.fun.log
+		format json
+	}
+}

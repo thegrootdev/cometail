@@ -66,7 +66,7 @@ describe("devnet end-to-end, second vault", () => {
       // the worker, as deployed: keeper loop and indexer loop with the API
       // devnet scope: half-SOL curves, so the routing threshold is 0.001 SOL here instead of the planned 0.1 SOL
       procs.push(worker("keeper", { COMETAIL_MIGRATE_CONFIGS: plainCfg.toBase58(), COMETAIL_DUST_LAMPORTS: "100000", COMETAIL_MIN_ROUTE_LAMPORTS: "1000000", COMETAIL_LADDER_BINS: "3", COMETAIL_LADDER_FAR_BPS: "6000" }));
-      procs.push(worker("indexer", { DATABASE_URL: `sqlite:${dbFile}`, COMETAIL_API_PORT: String(API), COMETAIL_SKY_CONFIGS: [plainCfg, ...streamCfgs].map((k) => k.toBase58()).join(","), COMETAIL_SKY_EVERY_PASSES: "3", COMETAIL_POLL_MS: "20000" }));
+      procs.push(worker("indexer", { DATABASE_URL: `sqlite:${dbFile}`, COMETAIL_API_PORT: String(API), COMETAIL_API_RATE_PER_MINUTE: "6000", COMETAIL_SKY_CONFIGS: [plainCfg, ...streamCfgs].map((k) => k.toBase58()).join(","), COMETAIL_SKY_EVERY_PASSES: "3", COMETAIL_POLL_MS: "20000" }));
       await waitFor("api", async () => (await fetch(`http://127.0.0.1:${API}/api/health`)).ok, 60_000, 2_000);
 
       let resumed: { vault: PublicKey; stMint: PublicKey; pair: PublicKey; mintC: PublicKey; dammC: PublicKey } | null = null;

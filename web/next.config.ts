@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // the client package is TypeScript source in the workspace
+  transpilePackages: ["@cometail/client"],
 };
 
 export default nextConfig;
