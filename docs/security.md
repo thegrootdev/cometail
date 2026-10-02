@@ -22,8 +22,9 @@
   rejected at deposit.
 - Accept a client's word for anything it can read from the chain: eligibility, ownership,
   provenance of the vault's own streams, which position may register as a migrated
-  creator position (custody plus a size policy, since the chain records no role),
-  order ownership, fill state.
+  creator position (canonical custody plus exact size rules against the current
+  permanently locked total; the chain records no role, so the program promises a size,
+  not an identity), order ownership, fill state.
 - Launch a vault whose streams were all withdrawn: the count of open streams, not the
   number ever created, gates the launch.
 - Bind a DLMM pair chosen by a stranger, or one whose base fee is above 1%.

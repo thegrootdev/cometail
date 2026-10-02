@@ -175,33 +175,28 @@ fn mul_ge(a: u128, b: u128, c: u128, d: u128) -> bool {
     mul_wide(a, b) >= mul_wide(c, d)
 }
 
-/// The creator-side position of a migrated DBC pool, proven structurally instead of by a
-/// share of a moving total:
-/// 1. the NFT sits in cp-amm's PDA account for its mint, owned by the vault with no
-///    delegate. Only the migration or the previous holder (SetAuthority) can put it there,
-///    and a vault-owned position cannot gain locked liquidity without the vault's signature
-///    (`cpamm/state/position.rs:546-564`, `ix_permanent_lock_position.rs:48-51`,
-///    `ix_add_liquidity.rs:97`).
-/// 2. it carries only permanently locked liquidity (no withdrawable principal).
-/// 3. its size, measured against the pool's permanently locked total T
-///    (`pool.permanent_lock_liquidity`, `cpamm/state/pool.rs:166`; `add_liquidity` leaves it
-///    unchanged, `pool.rs:888-904`; only permanent locks raise it, `pool.rs:1070-1076`). The
-///    chain records no role for a migrated position (both are plain cp-amm positions,
-///    `ix_create_position.rs:18-46`), so this is a size policy, stated exactly:
-///    - external streams, creator share C above the partner's P: the position must hold a
-///      majority of T (`2A >= T`). The partner position (P/(C+P) < 1/2) never qualifies; the
-///      creator position (A = T0*C/(C+P)) qualifies until newly locked liquidity exceeds
-///      T0*(C-P)/(C+P), 60% of the migration at 80/20.
-///    - external streams, C <= P: at least half the creator's share (`2A(C+P) >= TC`,
-///      liveness until newly locked liquidity exceeds T0) and at most nine eighths of it
-///      (`8A(C+P) <= 9TC`): the partner position, bigger by P/C, is refused unless P/C <= 9/8,
-///      in which case it is at most an eighth larger than the creator's and never smaller.
-///    - the vault's own position (`register_own_position`): the lower bound only. The
-///      partner there is the protocol itself, and the own registration is on the path to
-///      Live, so it keeps the widest liveness margin.
-///    Rounding: the migration floors each distribution (`dbc/state/config.rs:951-992`) and the
-///    second position's liquidity is recomputed from the leftover amounts, so the shares are
-///    exact to within a few units; the bounds above sit far from those margins.
+/// Admission of a migrated creator position: canonical custody, no principal, and exact size
+/// rules against the CURRENT permanently locked total T of the pool. The chain records no
+/// role for a migrated position (both are ordinary cp-amm positions in cp-amm's own NFT
+/// account for their mint, `ix_create_position.rs:18-46`), so these rules admit positions of
+/// a specified current size; they do not establish creator/partner identity or migration
+/// provenance.
+/// 1. custody: the NFT sits in cp-amm's PDA account for its mint, owned by the vault with no
+///    delegate. Only the holder can put it there (the migration re-authorizes it,
+///    `migrate_damm_v2_initialize_pool.rs:326-346, 657-662`; a previous owner hands it over
+///    with SetAuthority), and a vault-owned position cannot gain locked liquidity without the
+///    vault's signature (`cpamm/state/position.rs:546-564`, `ix_permanent_lock_position.rs:48-51`).
+/// 2. principal: only permanently locked liquidity (plus rounding dust).
+/// 3. size, with A the position's permanent liquidity, T = `pool.permanent_lock_liquidity`
+///    (`cpamm/state/pool.rs:166`; unchanged by `add_liquidity`, `pool.rs:888-904`; raised by
+///    permanent locks, `pool.rs:1070-1076`), C and P the config's creator and partner
+///    permanent percentages: external streams with C > P require 2A >= T; with C <= P they
+///    require 2A(C+P) >= TC; every external stream also requires 8A(C+P) <= 9TC; the vault's
+///    own position requires only 2A(C+P) >= TC. At unchanged initial migration shares the
+///    smaller partner position is excluded for C > P, and the larger one for C <= P when
+///    P/C > 9/8. Later permanent locks change T and therefore which positions qualify; with
+///    an unchanged genuine creator position A0, registration stays possible while T <= 2A0
+///    (external, C > P) or TC <= 2A0(C+P) (otherwise), subject to the external upper bound.
 pub fn check_creator_position(
     pool: &cp_amm::accounts::Pool,
     pos: &cp_amm::accounts::Position,
