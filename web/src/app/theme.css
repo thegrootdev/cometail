@@ -1411,23 +1411,6 @@ body:before {
   outline: 3px solid var(--dust);
   outline-offset: 3px;
 }
-.mobile-nav .social-compact {
-  align-self: center;
-  gap: 8px;
-  margin-left: 4px;
-}
-.mobile-nav .social-compact .social-pill {
-  width: 36px;
-  height: 36px;
-  box-shadow: 0 3px 0 var(--ink);
-}
-.mobile-nav .social-compact .social-pill:active {
-  transform: translateY(3px);
-}
-.mobile-nav .social-compact .social-pill svg {
-  width: 16px;
-  height: 16px;
-}
 @media (max-width: 760px) {
   .site-footer {
     gap: 14px;
@@ -1437,27 +1420,58 @@ body:before {
     justify-content: space-between;
   }
 }
+
+/* The phone footer: the signature, then the two social pills and the Meteora badge in one
+   row with room for thumbs. */
 @media (max-width: 760px) {
-  /* the phone menu: four tabs and the two social pills in a fifth, narrow column */
-  .mobile-nav {
-    grid-template-columns: repeat(4, 1fr) auto;
-    align-items: center;
-    column-gap: 4px;
+  .site-footer {
+    display: grid;
+    gap: 18px;
+    padding: 26px 18px 100px;
   }
-  .mobile-nav .social-compact {
-    display: inline-flex;
-    flex-direction: row;
+  .site-footer > div {
+    display: grid;
     gap: 6px;
-    padding: 0 2px 0 6px;
-    border-left: 2px solid var(--ink);
   }
-  .mobile-nav .social-compact .social-pill {
-    display: inline-flex;
-    flex-direction: row;
-    padding: 0;
-    width: 34px;
-    height: 34px;
-    color: #fff;
-    font-size: 0;
+  .footer-right {
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
   }
+  .social-pills {
+    gap: 12px;
+  }
+  .social-pill {
+    width: 48px;
+    height: 48px;
+  }
+  .social-pill svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* A notice above a form: storage not connected, or the readiness check in progress. */
+.form-notice {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: var(--outline) solid var(--ink);
+  border-radius: 16px;
+  background: var(--dust);
+  color: var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  font-weight: 700;
+}
+.form-notice strong {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+}
+.form-notice-quiet {
+  background: var(--panel-deep);
+  color: #c9d2f2;
+  box-shadow: none;
+  border-style: dashed;
 }

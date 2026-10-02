@@ -1,4 +1,6 @@
 "use client";
+import { friendlyError } from "@/lib/errors";
+import { StorageNotice } from "./Experience";
 // An Open vault seen by its depositor: withdraw any stream, or finish the launch. This is the
 // resume path for a wizard that stopped between transactions.
 import { useMemo, useState } from "react";
@@ -24,7 +26,7 @@ import {
   experience as c,
 } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
-import { useTx } from "@/lib/hooks";
+import { useTx , useStorageReady } from "@/lib/hooks";
 import { short } from "@/lib/format";
 
 const KIND = (s: any) => (s?.kind ? Object.keys(s.kind)[0] : "");
@@ -67,6 +69,8 @@ export function OpenVaultActions({
   const [image, setImage] = useState<TokenImage | null>(null);
   const [description, setDescription] = useState("");
   const [preparing, setPreparing] = useState(false);
+  const storage = useStorageReady();
+  const blocked = storage.checked && !storage.ready;
   const [error, setError] = useState<string | null>(null);
   const [preset, setPreset] = useState(Number(v.preset ?? 1));
   const isDepositor = !!(
@@ -131,7 +135,7 @@ export function OpenVaultActions({
     onChange();
   };
   const launch = async () => {
-    if (!image || !publicKey || preparing) return;
+    if (!image || !publicKey || preparing || blocked) return;
     setPreparing(true);
     setError(null);
     try {
@@ -162,7 +166,7 @@ export function OpenVaultActions({
       await run(async () => new Transaction().add(L.ix), [stMint], 400_000);
       onChange();
     } catch (e) {
-      setError(e instanceof Error ? e.message : c.launchFailure);
+      setError(friendlyError(e, c.launchFailure));
     } finally {
       setPreparing(false);
     }
@@ -251,10 +255,12 @@ export function OpenVaultActions({
             {p.label}
           </button>
         ))}
+        <StorageNotice storage={storage} />
         <button
           onClick={launch}
           disabled={
             !image ||
+            blocked ||
             preparing ||
             !name.trim() ||
             !symbol.trim() ||

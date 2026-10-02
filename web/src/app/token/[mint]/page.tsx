@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/errors";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
 import { use, useState } from "react";
@@ -14,7 +15,7 @@ import {
   BackToSky,
 } from "@/components/Experience";
 import { Shell, Card, Stat, ConnectWallet } from "@/components/Shell";
-import { tokenPage, experience as c } from "@/content/cometail";
+import { tokenPage, experience as c, failures } from "@/content/cometail";
 import { EXPLORER } from "@/lib/addresses";
 import {
   claimCreatorFeesTx,
@@ -148,7 +149,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         setQuote(side === "buy" ? `${units(r.out, dec)} tokens` : sol(r.out));
       }
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : c.failed);
+      setActionError(friendlyError(e, failures.actionFailed));
     } finally {
       setQuoting(false);
     }
@@ -190,7 +191,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       }
       reload();
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : c.failed);
+      setActionError(friendlyError(e, failures.actionFailed));
     }
   };
   return (

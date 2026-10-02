@@ -1,4 +1,6 @@
 "use client";
+import { friendlyError } from "./errors";
+import { failures } from "@/content/cometail";
 import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { ComputeBudgetProgram, Keypair, Transaction } from "@solana/web3.js";
@@ -113,7 +115,7 @@ export function useTx() {
         setStatus({
           state: "error",
           signature,
-          message: String(e?.message ?? e).slice(0, 300),
+          message: friendlyError(e, failures.txFailed),
         });
         return null;
       }
@@ -121,4 +123,25 @@ export function useTx() {
     [connection, sendTransaction, publicKey],
   );
   return { run, status, connected: !!publicKey, publicKey };
+}
+
+export interface StorageReadiness { checked: boolean; ready: boolean; storage: string; imaging: boolean }
+/** Whether token identities can be saved on this deployment: the site's own /api/metadata GET.
+ *  Anything but a JSON "ready" answer counts as not ready, so the page says so before the form. */
+export function useStorageReady(): StorageReadiness {
+  const [state, setState] = useState<StorageReadiness>({ checked: false, ready: false, storage: "unknown", imaging: false });
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/metadata", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+        const j = await r.json();
+        if (live) setState({ checked: true, ready: !!j.ready, storage: String(j.storage ?? "unknown"), imaging: !!j.imaging });
+      } catch {
+        if (live) setState({ checked: true, ready: false, storage: "unknown", imaging: false });
+      }
+    })();
+    return () => { live = false; };
+  }, []);
+  return state;
 }

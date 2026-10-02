@@ -1,4 +1,5 @@
 "use client";
+import { friendlyError } from "@/lib/errors";
 // "Sell your tail": scan the wallet for streams it owns, pick, choose a preset, launch.
 // One transaction per step so a wallet shows exactly what each signature does; the vault
 // link appears as soon as the vault exists, and the vault page can withdraw or finish later.
@@ -16,7 +17,7 @@ import {
   IdentityPreview,
   type TokenImage,
 } from "@/components/TokenIdentity";
-import { DataState, PageHeader } from "@/components/Experience";
+import { DataState, PageHeader , StorageNotice } from "@/components/Experience";
 import { uploadIdentity } from "@/lib/upload";
 import { wizard, splits, product, experience as c } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
@@ -34,7 +35,7 @@ import {
   nftAccountReasons,
   positionReasons,
 } from "@/lib/eligibility";
-import { useLoad, useTx } from "@/lib/hooks";
+import { useLoad, useTx , useStorageReady } from "@/lib/hooks";
 import { capToQ64, q64ToCap } from "@/lib/q64";
 import { short, sol } from "@/lib/format";
 
@@ -179,6 +180,8 @@ function Wizard() {
   const [image, setImage] = useState<TokenImage | null>(null);
   const [description, setDescription] = useState("");
   const [preparing, setPreparing] = useState(false);
+  const storage = useStorageReady();
+  const blocked = storage.checked && !storage.ready;
   const [capSol, setCapSol] = useState("0.01");
   const [log, setLog] = useState<string[]>([]);
   const [vaultKey, setVaultKey] = useState<string | null>(null);
@@ -198,7 +201,7 @@ function Wizard() {
     !vaultKey;
 
   const launch = async () => {
-    if (!publicKey || !capQ64 || !image || preparing) return;
+    if (!publicKey || !capQ64 || !image || preparing || blocked) return;
     setPreparing(true);
     try {
       const { uri } = await uploadIdentity({
@@ -339,7 +342,7 @@ function Wizard() {
     } catch (e) {
       setLog((l) => [
         ...l,
-        `${wizard.stopped} ${String((e as Error).message)}`,
+        `${wizard.stopped} ${friendlyError(e, c.launchFailure)}`,
       ]);
     } finally {
       setPreparing(false);
@@ -454,7 +457,7 @@ function Wizard() {
                   <button
                     key={p.key}
                     onClick={() => setPreset(i)}
-                    disabled={!!vaultKey || preparing}
+                    disabled={!!vaultKey || preparing || blocked}
                     aria-pressed={preset === i}
                     className={`rounded-xl border p-3 text-left ${preset === i ? "border-dust" : "border-starlight/15"}`}
                   >
@@ -467,7 +470,8 @@ function Wizard() {
               </div>
             </Card>
             <Card title={wizard.step3}>
-              <fieldset disabled={preparing || !!vaultKey}>
+              <StorageNotice storage={storage} />
+              <fieldset disabled={preparing || !!vaultKey || blocked}>
                 <label className="block text-sm">
                   {wizard.name}
                   <input

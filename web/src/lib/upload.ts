@@ -1,7 +1,8 @@
 "use client";
 import { PublicKey } from "@solana/web3.js";
 import { metadataProofMessage } from "./metadata-proof";
-import { experience as copy } from "@/content/cometail";
+import { experience as copy, failures } from "@/content/cometail";
+import { DesignedError } from "./errors";
 export async function uploadIdentity(a: {
   name: string;
   symbol: string;
@@ -10,7 +11,7 @@ export async function uploadIdentity(a: {
   owner: PublicKey;
   signMessage: ((message: Uint8Array) => Promise<Uint8Array>) | undefined;
 }) {
-  if (!a.signMessage) throw new Error(copy.messageRequired);
+  if (!a.signMessage) throw new DesignedError(copy.messageRequired);
   const encoder = new TextEncoder();
   if (
     !a.name.trim() ||
@@ -18,7 +19,7 @@ export async function uploadIdentity(a: {
     encoder.encode(a.name.trim()).length > 32 ||
     encoder.encode(a.symbol.trim()).length > 10
   )
-    throw new Error(copy.identityLimit);
+    throw new DesignedError(copy.identityLimit);
   const hash = await crypto.subtle.digest(
     "SHA-256",
     await a.image.arrayBuffer(),
@@ -46,7 +47,9 @@ export async function uploadIdentity(a: {
     body,
     signal: AbortSignal.timeout(45_000),
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? copy.uploadUnavailable);
+  // an HTML error page, a proxy page or an empty body is not an answer from the route
+  let result: { uri?: string; image?: string; error?: string };
+  try { result = await response.json(); } catch { throw new DesignedError(failures.serviceBadResponse); }
+  if (!response.ok || typeof result.uri !== "string" || typeof result.image !== "string") throw new DesignedError(typeof result.error === "string" && result.error ? result.error : copy.uploadUnavailable);
   return result as { uri: string; image: string };
 }

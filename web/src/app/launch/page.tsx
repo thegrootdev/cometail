@@ -1,11 +1,12 @@
 "use client";
+import { friendlyError } from "@/lib/errors";
 import { useState } from "react";
 import Link from "next/link";
 import { Keypair } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
 import { Shell, Card, ConnectWallet } from "@/components/Shell";
-import { PageHeader } from "@/components/Experience";
+import { PageHeader , StorageNotice } from "@/components/Experience";
 import {
   LogoUpload,
   IdentityPreview,
@@ -14,7 +15,7 @@ import {
 import { plainLaunch, experience as c } from "@/content/cometail";
 import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
-import { useTx } from "@/lib/hooks";
+import { useTx , useStorageReady } from "@/lib/hooks";
 import { EXPLORER } from "@/lib/addresses";
 
 export default function LaunchPage() {
@@ -29,6 +30,8 @@ export default function LaunchPage() {
   const [mint, setMint] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const storage = useStorageReady();
+  const blocked = storage.checked && !storage.ready;
   const valid =
     !!image &&
     new TextEncoder().encode(name.trim()).length > 0 &&
@@ -40,6 +43,7 @@ export default function LaunchPage() {
   const submit = async () => {
     if (!valid || !image || !publicKey || busy) return;
     setPreparing(true);
+    if (blocked) return;
     setError(null);
     try {
       const { uri } = await uploadIdentity({
@@ -69,7 +73,7 @@ export default function LaunchPage() {
       );
       if (sig) setMint(kp.publicKey.toBase58());
     } catch (e) {
-      setError(e instanceof Error ? e.message : c.launchFailure);
+      setError(friendlyError(e, c.launchFailure));
     } finally {
       setPreparing(false);
     }
@@ -84,7 +88,8 @@ export default function LaunchPage() {
       />
       <div className="launch-layout">
         <Card title={c.identity}>
-          <fieldset disabled={busy || !!mint} className="identity-fields">
+          <StorageNotice storage={storage} />
+          <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
             <div className="form-row">
               <label className="field">
                 {c.name}

@@ -1,10 +1,25 @@
 import { NextResponse } from "next/server";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { PublicKey } from "@solana/web3.js";
-import sharp from "sharp";
 import { objectStorage } from "@/lib/server/storage";
 import { metadataProofMessage, MetadataIntent } from "@/lib/metadata-proof";
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/** The image library, loaded when needed: a native-module failure on the host becomes a designed
+ *  503 instead of a crashed route. */
+async function imaging() {
+  try { return (await import("sharp")).default; } catch (e) { console.error("sharp unavailable", e); return null; }
+}
+
+/** What the launch pages check before the form: is storage configured and is the image library loadable? */
+export async function GET() {
+  const provider = process.env.COMETAIL_STORAGE_PROVIDER;
+  const local = provider === "local" && process.env.NODE_ENV !== "production";
+  const r2 = provider === "r2" && !!process.env.R2_ACCOUNT_ID && !!process.env.R2_ACCESS_KEY_ID && !!process.env.R2_SECRET_ACCESS_KEY && !!process.env.R2_BUCKET && /^https:\/\//.test(process.env.COMETAIL_MEDIA_ORIGIN ?? "");
+  const image = !!(await imaging());
+  return NextResponse.json({ ready: (local || r2) && image, storage: r2 ? "r2" : local ? "local" : "unconfigured", imaging: image }, { headers: { "cache-control": "no-store" } });
+}
 const MAX_BODY = 6 * 1024 * 1024;
 const recent = new Map<string, { count: number; until: number }>();
 function fail(error: string, status = 400) {
@@ -100,6 +115,8 @@ export async function POST(request: Request) {
       recent.set(key, quota);
     }
     const storage = objectStorage();
+    const sharp = await imaging();
+    if (!sharp) return fail("Image processing isn’t available on this deployment right now. Nothing was sent to the chain. Try again later.", 503);
     const decoder = sharp(bytes, {
       limitInputPixels: 16777216,
       animated: false,

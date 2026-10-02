@@ -21,6 +21,26 @@ export const product = {
     "This deployment runs on Solana devnet with test tokens. Nothing here has value.",
 } as const;
 
+/** What the user reads when something fails. Raw error text never reaches the page. */
+export const failures = {
+  serviceBadResponse:
+    "The upload service didn’t answer properly, so nothing was sent to the chain. Try again in a minute. If it keeps happening, tell us on X.",
+  imagingNotReady:
+    "Image processing isn’t available on this deployment right now. Nothing was sent to the chain. Try again later.",
+  storageNotReadyTitle: "Launching is paused on this deployment",
+  storageNotReadyBody:
+    "Image storage isn’t connected yet, so token identities can’t be saved. Browsing, trading and vault actions still work. Check back soon.",
+  storageChecking: "Checking that uploads are ready…",
+  walletRejected: "You declined in your wallet. Nothing was sent.",
+  notEnoughSol: "Not enough SOL in this wallet for the transaction and its fees. Add SOL and try again.",
+  txExpired:
+    "The network didn’t confirm in time. Check your wallet’s activity before trying again, so you don’t send it twice.",
+  busy: "The network is busy right now. Wait a moment and try again.",
+  quoteFailed: "That amount can’t be filled at the moment. Try a smaller amount.",
+  txFailed: "The transaction didn’t go through. Nothing was charged beyond network fees. Try again, and tell us on X if it keeps failing.",
+  actionFailed: "That didn’t work. Try again in a moment.",
+} as const;
+
 export const nav = {
   launch: "Launch a token",
   sell: "Sell your tail",

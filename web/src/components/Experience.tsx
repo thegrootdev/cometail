@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { experience as copy } from "@/content/cometail";
+import { experience as copy, failures } from "@/content/cometail";
+import type { StorageReadiness } from "@/lib/hooks";
 export function PageHeader({
   eyebrow,
   title,
@@ -121,6 +122,18 @@ export function DataState({
     </div>
   );
 }
+/** Shown above a launch form while uploads are being checked or when storage is not connected. */
+export function StorageNotice({ storage }: { storage: StorageReadiness }) {
+  if (!storage.checked) return <p className="form-notice form-notice-quiet" role="status">{failures.storageChecking}</p>;
+  if (storage.ready) return null;
+  return (
+    <div className="form-notice" role="status">
+      <strong>{failures.storageNotReadyTitle}</strong>
+      <span>{failures.storageNotReadyBody}</span>
+    </div>
+  );
+}
+
 export function TokenAvatar({
   seed,
   image,
