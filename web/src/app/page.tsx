@@ -31,8 +31,8 @@ export default function Home() {
         </div>
         <div className="hero-art">
           <picture>
-            <source media="(max-width: 760px)" srcSet="/art/hero-mobile.png" />
-            <img src="/art/hero.png" alt="" width="1600" height="900" />
+            <source media="(max-width: 760px)" srcSet="/art/hero-mobile.webp" />
+            <img src="/art/hero.webp" alt="" width="1600" height="900" />
           </picture>
           <span className="art-caption">{copy.illustration}</span>
         </div>
@@ -43,7 +43,7 @@ export default function Home() {
           <article
             className="chapter"
             key={c.number}
-            style={{ "--sticker": `url(/art/sticker-${["planet", "coin", "flame"][i % 3]}.png)` } as React.CSSProperties}
+            style={{ "--sticker": `url(/art/sticker-${["planet", "coin", "flame"][i % 3]}.webp)` } as React.CSSProperties}
           >
             <span className="micro">{c.number} /</span>
             <h3>{c.title}</h3>

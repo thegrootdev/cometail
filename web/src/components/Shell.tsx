@@ -28,10 +28,10 @@ export function Shell({
 }) {
   const path = usePathname();
   const links = [
-    { href: "/sky", label: nav.sky, icon: "/art/sticker-telescope.png" },
-    { href: "/launch", label: nav.launch, icon: "/art/sticker-planet.png" },
-    { href: "/sell", label: nav.sell, icon: "/art/sticker-coin.png" },
-    { href: "/portfolio", label: nav.portfolio, icon: "/art/sticker-flame.png" },
+    { href: "/sky", label: nav.sky, icon: "/art/sticker-telescope.webp" },
+    { href: "/launch", label: nav.launch, icon: "/art/sticker-planet.webp" },
+    { href: "/sell", label: nav.sell, icon: "/art/sticker-coin.webp" },
+    { href: "/portfolio", label: nav.portfolio, icon: "/art/sticker-flame.webp" },
   ];
   return (
     <div className="site-frame">
@@ -123,7 +123,7 @@ export function Card({
   return (
     <section
       className={`panel ${className}`}
-      style={{ "--sticker": `url(/art/sticker-${sticker}.png)` } as React.CSSProperties}
+      style={{ "--sticker": `url(/art/sticker-${sticker}.webp)` } as React.CSSProperties}
     >
       {title && <h2 className="panel-heading">{title}</h2>}
       {children}

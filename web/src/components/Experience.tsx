@@ -29,7 +29,7 @@ export function PageHeader({
       {art && (
         <img
           className="page-mascot"
-          src={`/art/${art === "mascot" ? "mascot" : `mascot-${art}`}.png`}
+          src={`/art/${art === "mascot" ? "mascot" : `mascot-${art}`}.webp`}
           alt=""
           width="200"
           height="200"
@@ -62,7 +62,7 @@ export function DataState({
     >
       <img
         className="state-mascot"
-        src="/art/mascot.png"
+        src="/art/mascot.webp"
         alt=""
         width="96"
         height="96"

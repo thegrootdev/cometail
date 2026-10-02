@@ -61,7 +61,7 @@ body:before {
     radial-gradient(ellipse at 15% 20%, #ff8fb14d, transparent 45%),
     radial-gradient(ellipse at 85% 75%, #5bc8ff40, transparent 45%),
     radial-gradient(ellipse at 70% 15%, #8f7bff40, transparent 40%),
-    url("/art/stars-tile.png") repeat,
+    url("/art/stars-tile.webp") repeat,
     linear-gradient(180deg, var(--space-top), var(--space-bottom));
 }
 ::selection {
@@ -200,7 +200,7 @@ strong {
   flex: none;
   width: 40px;
   height: 40px;
-  background: var(--sticker, url("/art/sticker-planet.png")) center/contain no-repeat;
+  background: var(--sticker, url("/art/sticker-planet.webp")) center/contain no-repeat;
   filter: drop-shadow(2px 2px 0 var(--ink));
 }
 .panel-heading.no-sticker:before {
@@ -604,7 +604,7 @@ input[type="range"] {
   left: 22px;
   width: 44px;
   height: 44px;
-  background: var(--sticker, url("/art/sticker-planet.png")) center/contain no-repeat;
+  background: var(--sticker, url("/art/sticker-planet.webp")) center/contain no-repeat;
   filter: drop-shadow(2px 2px 0 var(--ink));
 }
 .chapter .micro {
@@ -651,7 +651,7 @@ input[type="range"] {
   background:
     radial-gradient(ellipse at 20% 30%, #ff8fb12e, transparent 45%),
     radial-gradient(ellipse at 80% 70%, #5bc8ff2e, transparent 45%),
-    url("/art/stars-tile.png") repeat,
+    url("/art/stars-tile.webp") repeat,
     linear-gradient(180deg, #121a4a, #241a62);
 }
 .atlas-legend {
@@ -811,7 +811,7 @@ input[type="range"] {
   width: 64px;
   height: 64px;
   margin: 0 auto 8px;
-  background: url("/art/sticker-telescope.png") center/contain no-repeat;
+  background: url("/art/sticker-telescope.webp") center/contain no-repeat;
 }
 .upload-mark svg {
   display: none;
@@ -926,7 +926,7 @@ body .wallet-adapter-dropdown-list-item {
   border-radius: 12px;
 }
 .wallet-adapter-modal-middle:before {
-  background: url("/art/mascot.png") center/80px no-repeat;
+  background: url("/art/mascot.webp") center/80px no-repeat;
   border: var(--outline) solid var(--ink);
   box-shadow: 3px 3px 0 var(--ink);
   background-color: var(--panel-deep);
@@ -1058,7 +1058,7 @@ body:before {
     radial-gradient(ellipse at 15% 20%, #ff8fb14d, transparent 45%),
     radial-gradient(ellipse at 85% 75%, #5bc8ff40, transparent 45%),
     radial-gradient(ellipse at 70% 15%, #8f7bff40, transparent 40%),
-    url("/art/stars-tile.png") repeat,
+    url("/art/stars-tile.webp") repeat,
     linear-gradient(180deg, var(--space-top), var(--space-bottom));
 }
 .atlas-svg text {
@@ -1318,5 +1318,31 @@ body .wallet-adapter-modal-button-close {
 @media (max-width: 340px) {
   .network-badge {
     display: none;
+  }
+}
+
+/* The owner's star tile is opaque space, so it is the sky itself; the nebula clouds and the
+   mask over the copy sit on top. Tile size is half the source for crisp phones. */
+body:before {
+  background:
+    linear-gradient(180deg, #0d1538e6 0, #0d153880 32%, transparent 58%),
+    radial-gradient(ellipse at 15% 20%, #ff8fb12e, transparent 45%),
+    radial-gradient(ellipse at 85% 75%, #5bc8ff2e, transparent 45%),
+    url("/art/stars-tile.webp") repeat;
+  background-size: auto, auto, auto, 627px 627px;
+}
+.atlas-svg {
+  background:
+    radial-gradient(ellipse at 20% 30%, #ff8fb12e, transparent 45%),
+    url("/art/stars-tile.webp") repeat;
+  background-size: auto, 418px 418px;
+}
+.hero-art {
+  aspect-ratio: 3 / 2;
+}
+@media (max-width: 760px) {
+  .hero-art {
+    aspect-ratio: 2 / 3;
+    max-height: 70vh;
   }
 }
