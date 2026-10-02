@@ -1,55 +1,186 @@
 "use client";
-// The front door: a plain launch on the protocol's config. The creator's wallet is the pool
-// creator, so the tail belongs to it from the first trade.
 import { useState } from "react";
 import Link from "next/link";
 import { Keypair } from "@solana/web3.js";
-import { useConnection } from "@solana/wallet-adapter-react";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
-import { Shell, Card } from "@/components/Shell";
-import { plainLaunch } from "@/content/cometail";
+import { Shell, Card, ConnectWallet } from "@/components/Shell";
+import { PageHeader } from "@/components/Experience";
+import {
+  LogoUpload,
+  IdentityPreview,
+  type TokenImage,
+} from "@/components/TokenIdentity";
+import { plainLaunch, experience as c } from "@/content/cometail";
 import { launchTx } from "@/lib/dbc";
+import { uploadIdentity } from "@/lib/upload";
 import { useTx } from "@/lib/hooks";
 import { EXPLORER } from "@/lib/addresses";
 
 export default function LaunchPage() {
   const { connection } = useConnection();
+  const { signMessage } = useWallet();
   const { run, status, connected, publicKey } = useTx();
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
-  const [uri, setUri] = useState("");
+  const [description, setDescription] = useState("");
+  const [image, setImage] = useState<TokenImage | null>(null);
   const [firstBuy, setFirstBuy] = useState("");
   const [mint, setMint] = useState<string | null>(null);
-  const valid = name.trim().length > 0 && name.length <= 32 && symbol.trim().length > 0 && symbol.length <= 10 && uri.length <= 200;
+  const [preparing, setPreparing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valid =
+    !!image &&
+    new TextEncoder().encode(name.trim()).length > 0 &&
+    new TextEncoder().encode(name.trim()).length <= 32 &&
+    new TextEncoder().encode(symbol.trim().toUpperCase()).length > 0 &&
+    new TextEncoder().encode(symbol.trim().toUpperCase()).length <= 10 &&
+    (!firstBuy || /^\d{1,9}(\.\d{1,9})?$/.test(firstBuy));
+  const busy = preparing || status.state === "sending";
   const submit = async () => {
-    const kp = Keypair.generate();
-    const lamports = firstBuy ? new BN(Math.round(Number(firstBuy) * 1e9)) : undefined;
-    const sig = await run(() => launchTx(connection, { payer: publicKey!, baseMint: kp.publicKey, name: name.trim(), symbol: symbol.trim().toUpperCase(), uri: uri.trim(), firstBuyLamports: lamports }), [kp]);
-    if (sig) setMint(kp.publicKey.toBase58());
+    if (!valid || !image || !publicKey || busy) return;
+    setPreparing(true);
+    setError(null);
+    try {
+      const { uri } = await uploadIdentity({
+        name,
+        symbol: symbol.toUpperCase(),
+        description,
+        image: image.file,
+        owner: publicKey,
+        signMessage,
+      });
+      const kp = Keypair.generate();
+      const [whole, fraction = ""] = (firstBuy || "0").split(".");
+      const lamports = firstBuy
+        ? new BN(whole).mul(new BN(1e9)).add(new BN(fraction.padEnd(9, "0")))
+        : undefined;
+      const sig = await run(
+        () =>
+          launchTx(connection, {
+            payer: publicKey,
+            baseMint: kp.publicKey,
+            name: name.trim(),
+            symbol: symbol.trim().toUpperCase(),
+            uri,
+            firstBuyLamports: lamports,
+          }),
+        [kp],
+      );
+      if (sig) setMint(kp.publicKey.toBase58());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : c.launchFailure);
+    } finally {
+      setPreparing(false);
+    }
   };
   return (
     <Shell>
-      <h1 className="text-4xl font-extrabold">{plainLaunch.title}</h1>
-      <p className="mt-2 max-w-2xl text-starlight/70">{plainLaunch.intro}</p>
-      <div className="mt-6 grid gap-6 md:grid-cols-[2fr_1fr]">
-        <Card>
-          <label className="block text-sm">Name<input value={name} onChange={(e) => setName(e.target.value)} maxLength={32} className="mt-1 w-full rounded-lg border border-starlight/15 bg-night px-3 py-2" placeholder="Comet" /></label>
-          <label className="mt-4 block text-sm">Symbol<input value={symbol} onChange={(e) => setSymbol(e.target.value)} maxLength={10} className="mt-1 w-full rounded-lg border border-starlight/15 bg-night px-3 py-2" placeholder="COMET" /></label>
-          <label className="mt-4 block text-sm">Metadata URL<input value={uri} onChange={(e) => setUri(e.target.value)} maxLength={200} className="mt-1 w-full rounded-lg border border-starlight/15 bg-night px-3 py-2" placeholder="https://…/token.json (name, symbol, image, description)" /></label>
-          <label className="mt-4 block text-sm">First buy, SOL (optional)<input value={firstBuy} onChange={(e) => setFirstBuy(e.target.value)} inputMode="decimal" className="mt-1 w-full rounded-lg border border-starlight/15 bg-night px-3 py-2" placeholder="0" /></label>
-          <button disabled={!valid || !connected || status.state === "sending"} onClick={submit} className="mt-6 rounded-full bg-ion px-6 py-3 font-semibold text-night disabled:opacity-40">
-            {status.state === "sending" ? "Launching…" : plainLaunch.title}
-          </button>
-          {!connected && <p className="mt-3 text-sm text-starlight/60">Connect a wallet to launch.</p>}
-          {status.state === "error" && <p className="mt-3 text-sm text-red-300">{status.message}</p>}
+      <PageHeader
+        eyebrow={c.launchKicker}
+        title={plainLaunch.title}
+        body={c.launchBody}
+      />
+      <div className="launch-layout">
+        <Card title={c.identity}>
+          <fieldset disabled={busy || !!mint} className="identity-fields">
+            <div className="form-row">
+              <label className="field">
+                {c.name}
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  maxLength={32}
+                  placeholder={c.namePlaceholder}
+                  autoComplete="off"
+                />
+              </label>
+              <label className="field">
+                {c.symbol}
+                <input
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                  maxLength={10}
+                  placeholder={c.symbolPlaceholder}
+                  autoComplete="off"
+                />
+              </label>
+            </div>
+            <LogoUpload onChange={setImage} />
+            <label className="field">
+              {c.description}
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder={c.descriptionHint}
+              />
+            </label>
+            <label className="field">
+              {c.firstBuy} <span className="muted">{c.optional}</span>
+              <div className="amount-input">
+                <input
+                  value={firstBuy}
+                  onChange={(e) => setFirstBuy(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="0.00"
+                />
+                <span>SOL</span>
+              </div>
+              <small>
+                {firstBuy && !/^\d{1,9}(\.\d{1,9})?$/.test(firstBuy)
+                  ? c.buyInvalid
+                  : c.firstBuyHint}
+              </small>
+            </label>
+          </fieldset>
+          <div className="form-actions">
+            {connected ? (
+              <button
+                disabled={!valid || busy || !!mint}
+                onClick={submit}
+                className="button button-primary"
+              >
+                {busy
+                  ? status.state === "sending"
+                    ? c.creating
+                    : c.uploading
+                  : c.launchAction}
+                <span aria-hidden>↗</span>
+              </button>
+            ) : (
+              <ConnectWallet />
+            )}
+            <p className="caption">{c.uploadProof}</p>
+          </div>
+          {(error || status.state === "error") && (
+            <p className="form-error" role="alert">
+              {error || status.message}
+            </p>
+          )}
           {status.state === "done" && mint && (
-            <p className="mt-3 text-sm">Launched. <Link href={`/token/${mint}`} className="text-ion">Open the token page</Link> · <a href={EXPLORER("tx", status.signature!)} target="_blank" rel="noreferrer" className="text-starlight/60">transaction</a></p>
+            <div className="success-note" role="status">
+              <strong>{c.launchReady}</strong>
+              <Link href={`/token/${mint}`}>{c.openToken} ↗</Link>
+              <a
+                href={EXPLORER("tx", status.signature!)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {c.transaction}
+              </a>
+            </div>
           )}
         </Card>
-        <Card title="What you get">
-          <p className="text-sm text-starlight/80">{plainLaunch.creationFee}</p>
-          <p className="mt-3 text-sm text-starlight/80">{plainLaunch.lock}</p>
-        </Card>
+        <aside className="preview-column">
+          <IdentityPreview name={name} symbol={symbol} image={image?.preview} />
+          <Card title={c.review}>
+            <p className="creation-fee">{plainLaunch.creationFee}</p>
+            <p className="disclosure-copy">{plainLaunch.intro}</p>
+            <p className="disclosure-copy">{plainLaunch.lock}</p>
+          </Card>
+        </aside>
       </div>
     </Shell>
   );

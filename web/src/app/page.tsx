@@ -1,37 +1,50 @@
 import Link from "next/link";
-import { Comet } from "@/components/Comet";
-import { hero, nav, product } from "@/content/cometail";
-
+import { Shell } from "@/components/Shell";
+import { CometAnatomy, HomeAtlas } from "@/components/Atlas";
+import { experience as copy, hero, plainLaunch } from "@/content/cometail";
 export default function Home() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col px-6">
-      <header className="flex items-center justify-between py-6">
-        <Link href="/" className="flex items-center gap-3">
-          <img src="/brand/symbol.svg" alt="" width={36} height={36} />
-          <span className="text-lg font-extrabold tracking-[0.2em]">{product.name}</span>
-        </Link>
-        <nav className="flex gap-6 text-sm text-starlight/80">
-          <Link href="/sky">{nav.sky}</Link>
-          <Link href="/portfolio">{nav.portfolio}</Link>
-        </nav>
-      </header>
-      <section className="grid flex-1 items-center gap-12 py-16 md:grid-cols-2">
-        <div>
-          <h1 className="text-5xl font-extrabold leading-tight md:text-6xl">{hero.title}</h1>
-          <p className="mt-6 max-w-xl text-lg text-starlight/80">{hero.body}</p>
-          <div className="mt-10 flex flex-wrap gap-4">
-            <Link href="/launch" className="rounded-full bg-ion px-6 py-3 font-semibold text-night">{hero.launch}</Link>
-            <Link href="/sell" className="rounded-full border border-dust px-6 py-3 font-semibold text-dust">{hero.sell}</Link>
+    <Shell wide>
+      <section className="hero">
+        <div className="hero-copy">
+          <div className="eyebrow">
+            <span />
+            {copy.eyebrow}
           </div>
+          <h1>
+            {hero.title.split(". ")[0]}.
+            <br />
+            <em>{hero.title.split(". ")[1]}</em>
+          </h1>
+          <p>{copy.homeBody}</p>
+          <div className="hero-actions">
+            <Link className="button button-primary" href="/launch">
+              {hero.launch}
+              <span>↗</span>
+            </Link>
+            <Link className="button button-secondary" href="/sell">
+              {hero.sell}
+              <span>→</span>
+            </Link>
+          </div>
+          <div className="hero-footnote">{plainLaunch.creationFee}</div>
         </div>
-        <div className="flex justify-center">
-          <Comet intensity={0.6} size={360} />
-        </div>
+        <CometAnatomy />
       </section>
-      <footer className="flex items-center justify-between py-8 text-sm text-starlight/60">
-        <span>{product.domain}</span>
-        <span className="glass rounded-full px-3 py-1">{product.builtOn}</span>
-      </footer>
-    </main>
+      <HomeAtlas />
+      <section className="chapter-grid">
+        {copy.chapters.map((c) => (
+          <article className="chapter" key={c.number}>
+            <span className="micro">{c.number} /</span>
+            <h3>{c.title}</h3>
+            <p>{c.body}</p>
+          </article>
+        ))}
+      </section>
+      <section className="mechanics">
+        <h2>{copy.mechanics}</h2>
+        <p>{copy.mechanicsBody}</p>
+      </section>
+    </Shell>
   );
 }

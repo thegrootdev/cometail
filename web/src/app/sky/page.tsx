@@ -1,79 +1,142 @@
 "use client";
-// The Sky: every fee stream drawn as a comet. Tail length is income; gold is claimable now,
-// blue is realized. Eligible streams carry the "Sell this tail" door.
 import Link from "next/link";
-import { useMemo } from "react";
-import { Shell, Card } from "@/components/Shell";
-import { sky as copy } from "@/content/cometail";
-import { api, SkyStream } from "@/lib/api";
+import { useMemo, useState } from "react";
+import { Shell } from "@/components/Shell";
+import { StarAtlas, AtlasStats, loadSky } from "@/components/Atlas";
+import {
+  PageHeader,
+  DataState,
+  TokenAvatar,
+  Badge,
+} from "@/components/Experience";
+import { experience as copy, sky, wizard } from "@/content/cometail";
 import { useLoad } from "@/lib/hooks";
 import { short, sol } from "@/lib/format";
-
-function hash(s: string): number { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967295; }
-const PROGRESS = ["bonding", "curve complete", "locked vesting", "graduated"];
-
 export default function SkyPage() {
-  const { data, loading } = useLoad(() => api.sky(), [], 30_000);
+  const { data, loading, error, reload } = useLoad(loadSky, [], 30000);
+  const [query, setQuery] = useState(""),
+    [eligible, setEligible] = useState(false);
   const streams = useMemo(() => data?.streams ?? [], [data]);
-  const comets = useMemo(() => {
-    const max = Math.max(1, ...streams.map((s) => Number(s.claimableLamports) + Number(s.realized30dLamports ?? s.realizedEstimateLamports)));
-    return streams.map((s) => {
-      const income = Number(s.claimableLamports) + Number(s.realized30dLamports ?? s.realizedEstimateLamports);
-      const len = 20 + 200 * Math.log1p(income) / Math.log1p(max);
-      const claimableShare = income > 0 ? Number(s.claimableLamports) / income : 0;
-      return { s, x: 60 + hash(s.pool) * 880, y: 40 + hash(s.creator + s.pool) * 420, len, claimableShare };
-    });
-  }, [streams]);
+  const shown = streams.filter(
+    (s) =>
+      (!eligible || s.eligible) &&
+      [s.pool, s.baseMint, s.creator].some((x) =>
+        x.toLowerCase().includes(query.trim().toLowerCase()),
+      ),
+  );
   return (
     <Shell wide>
-      <h1 className="text-4xl font-extrabold">{copy.title}</h1>
-      <p className="mt-2 max-w-2xl text-starlight/70">{copy.body}</p>
-      <Card className="mt-6 overflow-hidden p-0">
-        <svg viewBox="0 0 1000 500" className="h-[420px] w-full" role="img" aria-label="star map of fee streams">
-          <rect width="1000" height="500" fill="#06070B" />
-          {Array.from({ length: 120 }, (_, i) => <circle key={i} cx={hash(`s${i}`) * 1000} cy={hash(`t${i}`) * 500} r={0.6 + hash(`r${i}`) * 1.2} fill="#E8ECF4" opacity={0.25 + hash(`o${i}`) * 0.5} />)}
-          {comets.map(({ s, x, y, len, claimableShare }) => (
-            <g key={s.pool} transform={`translate(${x} ${y}) rotate(-25)`}>
-              <line x1={0} y1={0} x2={-len} y2={0} stroke="#5BC8FF" strokeWidth={3} strokeLinecap="round" opacity={0.55} />
-              <line x1={0} y1={0} x2={-len * claimableShare} y2={0} stroke="#F5C451" strokeWidth={3} strokeLinecap="round" opacity={0.9} />
-              <circle r={4.5} fill={s.eligible ? "#F5C451" : "#E8ECF4"} />
-              <title>{`${short(s.baseMint)} · ${sol(s.claimableLamports)} claimable · ${s.realized30dLamports !== null ? `${sol(s.realized30dLamports)} harvested, 30 days` : `about ${sol(s.realizedEstimateLamports)} earned on the curve`}`}</title>
-            </g>
-          ))}
-        </svg>
-        <div className="flex gap-6 px-5 py-3 text-xs text-starlight/60">
-          <span><span className="mr-1 inline-block h-2 w-5 rounded bg-dust" />{copy.legend.claimable}</span>
-          <span><span className="mr-1 inline-block h-2 w-5 rounded bg-ion/60" />{copy.legend.realized}</span>
-          <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-dust" />eligible for a vault</span>
+      <PageHeader
+        eyebrow={copy.observatory}
+        title={sky.title}
+        body={copy.atlasNote}
+      >
+        <Badge tone="ion">SOLANA / METEORA</Badge>
+      </PageHeader>
+      <StarAtlas
+        streams={shown}
+        loading={loading}
+        error={!!error}
+        onRetry={reload}
+      />
+      {data && <AtlasStats streams={streams} />}
+      <div className="catalogue-header">
+        <h2>{copy.list}</h2>
+        <span className="micro">
+          {shown.length} / {streams.length}
+        </span>
+      </div>
+      <div className="atlas-search">
+        <input
+          aria-label={copy.search}
+          type="search"
+          placeholder={copy.search}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <label>
+          <input
+            type="checkbox"
+            checked={eligible}
+            onChange={(e) => setEligible(e.target.checked)}
+          />
+          {copy.eligible}
+        </label>
+      </div>
+      {shown.length > 0 ? (
+        <div className="table-scroll">
+          <table className="stream-table">
+            <thead>
+              <tr>
+                <th>{copy.source}</th>
+                <th>{copy.stage}</th>
+                <th>{copy.accrued}</th>
+                <th>{copy.harvested}</th>
+                <th>{copy.eligibility}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((s) => (
+                <tr key={s.pool}>
+                  <td>
+                    <Link className="token-cell" href={`/token/${s.baseMint}`}>
+                      <TokenAvatar seed={s.baseMint} />
+                      <span>
+                        <strong>{short(s.baseMint, 5)}</strong>
+                        <small>
+                          {s.custody} / {s.creatorPct}% locked
+                        </small>
+                      </span>
+                    </Link>
+                  </td>
+                  <td>
+                    <Badge tone={s.progress === 3 ? "gold" : "ion"}>
+                      {wizard.stages[s.progress] ?? s.progress}
+                    </Badge>
+                  </td>
+                  <td className="money">{sol(s.claimableLamports)}</td>
+                  <td>
+                    {s.realized30dLamports === null
+                      ? "—"
+                      : sol(s.realized30dLamports)}
+                  </td>
+                  <td>
+                    {s.eligible ? (
+                      <Badge tone="gold">{copy.eligible}</Badge>
+                    ) : (
+                      <span className="muted" title={s.reasons.join("; ")}>
+                        {s.reasons[0] ?? "—"}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <Link
+                      className="text-link"
+                      href={`/token/${s.baseMint}`}
+                      aria-label={`${copy.viewToken} ${s.baseMint}`}
+                    >
+                      ↗
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </Card>
-      <Card title="Streams" className="mt-6">
-        {loading && <p className="text-starlight/60">Scanning…</p>}
-        {!loading && streams.length === 0 && <p className="text-starlight/60">No streams scanned yet.</p>}
-        {streams.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase tracking-wider text-starlight/50">
-                <tr><th className="py-2">Token</th><th>Stage</th><th>Creator rights</th><th className="text-right">Claimable</th><th className="text-right">{copy.legend.realized}</th><th className="text-right">Curve income (estimate)</th><th>Eligible</th><th></th></tr>
-              </thead>
-              <tbody>
-                {streams.map((s: SkyStream) => (
-                  <tr key={s.pool} className="border-t border-starlight/10">
-                    <td className="py-2"><Link href={`/token/${s.baseMint}`} className="text-ion">{short(s.baseMint)}</Link></td>
-                    <td>{PROGRESS[s.progress] ?? s.progress}</td>
-                    <td>{s.custody === "wallet" ? "wallet" : s.custody === "program" ? "program-held" : "unknown"} · {s.creatorPct}% locked</td>
-                    <td className="text-right text-dust">{sol(s.claimableLamports)}</td>
-                    <td className="text-right">{s.realized30dLamports !== null ? sol(s.realized30dLamports) : <span className="text-starlight/40">not in a vault</span>}</td>
-                    <td className="text-right text-starlight/70" title="floor(total trading fee x creator share) minus claimable: at most one lamport per trade above the true accrual">≈ {sol(s.realizedEstimateLamports)}</td>
-                    <td>{s.eligible ? "yes" : <span title={s.reasons.join("; ")} className="text-starlight/50">no</span>}</td>
-                    <td className="text-right">{s.eligible && s.custody === "wallet" && <Link href={`/sell?pool=${s.pool}`} className="rounded-full border border-dust px-3 py-1 text-xs text-dust">Sell this tail</Link>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      ) : !loading && !error && streams.length > 0 ? (
+        <DataState title={copy.noResults} body={copy.noResultsBody}>
+          <button
+            className="button button-secondary"
+            onClick={() => {
+              setQuery("");
+              setEligible(false);
+            }}
+          >
+            {copy.clear}
+          </button>
+        </DataState>
+      ) : null}
     </Shell>
   );
 }

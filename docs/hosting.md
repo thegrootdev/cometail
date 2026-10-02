@@ -68,6 +68,8 @@ apt-get update && apt-get install -y caddy
 install -m 644 /opt/cometail/repo/deploy/Caddyfile /etc/caddy/Caddyfile
 mkdir -p /var/log/caddy && chown caddy:caddy /var/log/caddy
 caddy validate --config /etc/caddy/Caddyfile
+# validate runs as root and creates the access log root-owned, which breaks the reload
+chown -R caddy:caddy /var/log/caddy
 systemctl enable --now caddy
 systemctl reload caddy
 

@@ -1,52 +1,131 @@
 "use client";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
-import { nav, product } from "@/content/cometail";
+import { nav, product, experience as copy } from "@/content/cometail";
 import { CLUSTER } from "@/lib/addresses";
-
-const WalletButton = dynamic(() => import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton), { ssr: false });
-
-export function Shell({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+const WalletButton = dynamic(
+  () =>
+    import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton),
+  {
+    ssr: false,
+    loading: () => (
+      <button className="wallet-placeholder" disabled>
+        {copy.connect}
+      </button>
+    ),
+  },
+);
+export function ConnectWallet() {
+  return <WalletButton />;
+}
+export function Shell({
+  children,
+  wide = false,
+}: {
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  const path = usePathname();
+  const links = [
+    { href: "/sky", label: nav.sky, mark: "✧" },
+    { href: "/launch", label: nav.launch, mark: "↗" },
+    { href: "/sell", label: nav.sell, mark: "⌁" },
+    { href: "/portfolio", label: nav.portfolio, mark: "◌" },
+  ];
   return (
-    <main className={`mx-auto flex min-h-screen ${wide ? "max-w-7xl" : "max-w-6xl"} flex-col px-4 sm:px-6`}>
-      <header className="flex items-center justify-between gap-4 py-6">
-        <Link href="/" className="flex items-center gap-3">
-          <img src="/brand/symbol.svg" alt="" width={36} height={36} />
-          <span className="text-lg font-extrabold tracking-[0.2em]">{product.name}</span>
-          {CLUSTER !== "mainnet-beta" && <span className="rounded-full border border-dust px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-dust" title={product.clusterNote}>{CLUSTER === "devnet" ? product.devnetBadge : CLUSTER}</span>}
+    <div className="site-frame">
+      <a className="skip-link" href="#content">
+        {copy.skip}
+      </a>
+      <header className="site-header">
+        <Link href="/" className="brand-link" aria-label={product.name}>
+          <img src="/brand/symbol.svg" alt="" width="36" height="36" />
+          <img
+            className="wordmark"
+            src="/brand/wordmark.svg"
+            alt={product.name}
+            width="150"
+            height="30"
+          />
         </Link>
-        <nav className="flex items-center gap-5 text-sm text-starlight/80">
-          <Link href="/sky">{nav.sky}</Link>
-          <Link href="/launch" className="hidden sm:inline">{nav.launch}</Link>
-          <Link href="/sell" className="hidden sm:inline">{nav.sell}</Link>
-          <Link href="/portfolio">{nav.portfolio}</Link>
-          <WalletButton className="!rounded-full !bg-ion !text-night !font-semibold !h-10" />
+        <nav className="desktop-nav" aria-label={copy.menu}>
+          {links.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              aria-current={path === l.href ? "page" : undefined}
+            >
+              {l.label}
+            </Link>
+          ))}
         </nav>
+        <div className="header-right">
+          {CLUSTER !== "mainnet-beta" && (
+            <span className="network-badge" title={product.clusterNote}>
+              <i />
+              {CLUSTER === "devnet" ? product.devnetBadge : CLUSTER}
+            </span>
+          )}
+          <ConnectWallet />
+        </div>
       </header>
-      <div className="flex-1">{children}</div>
-      <footer className="flex items-center justify-between py-8 text-sm text-starlight/60">
-        <span>{product.domain}</span>
-        <span className="glass rounded-full px-3 py-1">{product.builtOn}</span>
+      <main id="content" className={`page-content ${wide ? "page-wide" : ""}`}>
+        {children}
+      </main>
+      <footer className="site-footer">
+        <div>
+          <span className="footer-signature">{copy.footer}</span>
+          <span className="micro">{product.domain}</span>
+        </div>
+        <span className="built-on">
+          <span aria-hidden="true">✳</span> {product.builtOn}
+        </span>
       </footer>
-    </main>
+      <nav className="mobile-nav" aria-label={copy.menu}>
+        {links.map((l) => (
+          <Link
+            key={l.href}
+            href={l.href}
+            aria-current={path === l.href ? "page" : undefined}
+          >
+            <span aria-hidden="true">{l.mark}</span>
+            {l.label}
+          </Link>
+        ))}
+      </nav>
+    </div>
   );
 }
-
-export function Card({ title, children, className = "" }: { title?: string; children: React.ReactNode; className?: string }) {
+export function Card({
+  title,
+  children,
+  className = "",
+}: {
+  title?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <section className={`glass rounded-2xl p-5 ${className}`}>
-      {title && <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-starlight/60">{title}</h2>}
+    <section className={`panel ${className}`}>
+      {title && <h2 className="panel-heading">{title}</h2>}
       {children}
     </section>
   );
 }
-
-export function Stat({ label, value, tone = "ion" }: { label: string; value: string; tone?: "ion" | "dust" | "plain" }) {
-  const color = tone === "dust" ? "text-dust" : tone === "ion" ? "text-ion" : "text-starlight";
+export function Stat({
+  label,
+  value,
+  tone = "ion",
+}: {
+  label: string;
+  value: string;
+  tone?: "ion" | "dust" | "plain";
+}) {
   return (
-    <div>
-      <div className="text-xs uppercase tracking-wider text-starlight/50">{label}</div>
-      <div className={`text-xl font-bold ${color}`}>{value}</div>
+    <div className={`stat stat-${tone}`}>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
     </div>
   );
 }
