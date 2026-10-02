@@ -135,6 +135,12 @@ token, sell-your-tail wizard, vault, portfolio. Every line of copy is in
 
 ## Devnet
 
+`tests/devnet/verify-configs.ts` checks a cluster's DBC configs and the protocol account against the
+program's own pins (the three stream presets as `check_stream_config` requires them, the plain config as
+the eligibility routine requires it): `cd tests && RPC=<rpc> CLUSTER=devnet SET=configs node
+../worker/node_modules/tsx/dist/cli.mjs devnet/verify-configs.ts`. It runs before anything launches on a
+new config set.
+
 `tests/devnet/setup.ts` creates the treasury, the four configs and the protocol and funds
 the actor keys. `tests/devnet/e2e.ts` runs a vault with both DBC-rights stream states and
 in-process keeper passes; `tests/devnet/e2e2.ts` runs a second vault with a standalone
