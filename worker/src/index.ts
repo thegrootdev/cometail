@@ -44,6 +44,7 @@ async function main() {
           // the token rows behind /api/tokens follow the Sky's curve rows
           const tokens = await scanTokens(chain, rows, store, new Set(cfg.migrateConfigs.map((k) => k.toBase58())));
           await store.upsertTokens(tokens); await store.pruneTokens(tokens.map((t) => t.mint));
+          await store.setMeta("tokens_scanned_at", String(Date.now()));
           log("token scan", { tokens: tokens.length, graduated: tokens.filter((t) => t.stage === "graduated").length });
         } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
       }

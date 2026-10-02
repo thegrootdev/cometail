@@ -275,9 +275,13 @@ export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Co
   const program = meta.venue === "curve" ? DBC_PROGRAM_ID : DAMM_V2_PROGRAM_ID;
   const coder = meta.venue === "curve" ? chain.dbc.coder : chain.damm.coder;
   const poolIndex = meta.venue === "curve" ? 2 : 1, signerIndex = meta.venue === "curve" ? 9 : 8;
-  const swaps: string[] = [];
+  // one row per swap execution: DBC emits EvtSwap and EvtSwap2 for the same swap (ix_swap.rs), so
+  // every event that follows one swap instruction of the pool, up to the next, belongs to that
+  // execution; EvtSwap2 supplies the amounts when present (included-fee input), EvtSwap otherwise
   const rows: TradeRow[] = [];
   let ordinal = 0;
+  let execution: { signer: string | null; row: TradeRow | null; from2: boolean } | null = null;
+  const close = () => { if (execution?.row) rows.push(execution.row); execution = null; };
   for (const f of flat) {
     const pid = keys.get(f.programIdIndex);
     if (!pid || f.data.length < 8) continue;
@@ -286,7 +290,8 @@ export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Co
     if (!pid.equals(program)) continue;
     if (disc.equals(SWAP_DISCRIMINATOR) || disc.equals(SWAP2_DISCRIMINATOR) || disc.equals(SWAP2_HOOK_DISCRIMINATOR)) {
       const p = keys.get(f.accounts[poolIndex] ?? -1), signer = keys.get(f.accounts[signerIndex] ?? -1);
-      if (p && p.equals(pool) && signer) swaps.push(signer.toBase58());
+      close();
+      if (p && p.equals(pool)) execution = { signer: signer ? signer.toBase58() : null, row: null, from2: false };
       continue;
     }
     if (!disc.equals(EVENT_IX_DISCRIMINATOR) || f.data.length < 16) continue;
@@ -295,13 +300,19 @@ export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Co
     if (!ev || !/^evtswap/i.test(ev.name)) continue;
     const d: any = ev.data;
     if (!d.pool || !new PublicKey(d.pool).equals(pool)) continue;
+    const is2 = /2/.test(ev.name);
+    // an event without a preceding swap instruction of this pool (a route we could not pair) is its own execution
+    if (!execution) execution = { signer: null, row: null, from2: false };
+    if (execution.row && (execution.from2 || !is2)) continue; // a second event of the same execution adds nothing
     const buy = Number(d.tradeDirection) === 1;
     const result = d.swapResult ?? {};
     const input = BigInt(String(result.includedFeeInputAmount ?? result.actualInputAmount ?? d.amountIn ?? 0));
     const output = BigInt(String(result.outputAmount ?? 0));
     const quote = buy ? input : output, base = buy ? output : input;
-    const signer = swaps.shift();
-    rows.push({ signature: meta.signature, idx: ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: signer ?? feePayer, traderKind: signer ? "authority" : "feePayer", buy, amountIn: input.toString(), amountOut: output.toString(), venue: meta.venue, baseAmountRaw: base.toString(), quoteAmountLamports: quote.toString(), executionPriceSol: executionPrice(quote, base, meta.baseDecimals) });
+    execution.row = { signature: meta.signature, idx: execution.row?.idx ?? ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: execution.signer ?? feePayer, traderKind: execution.signer ? "authority" : "feePayer", buy, amountIn: input.toString(), amountOut: output.toString(), venue: meta.venue, baseAmountRaw: base.toString(), quoteAmountLamports: quote.toString(), executionPriceSol: executionPrice(quote, base, meta.baseDecimals) };
+    execution.from2 = is2;
+    if (!execution.signer) close(); // unpaired events never merge with each other
   }
+  close();
   return rows;
 }

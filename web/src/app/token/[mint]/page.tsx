@@ -1,5 +1,6 @@
 "use client";
 import { friendlyError } from "@/lib/errors";
+import { TokenMarket, TokenTrades } from "@/components/Market";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
 import { use, useState } from "react";
@@ -217,6 +218,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           </Link>
         )}
       </div>
+      <TokenMarket mint={mintStr} />
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
       {!loading && !error && !view && (
@@ -225,7 +227,8 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         </DataState>
       )}
       {view && (
-        <div className="mt-6 grid gap-6 md:grid-cols-[3fr_2fr]">
+        <>
+        <div className="token-execution-grid mt-6 grid gap-6 md:grid-cols-[3fr_2fr]">
           <div className="space-y-6">
             <Card title={tokenPage.curve}>
               <p className="text-sm text-starlight/70">
@@ -296,7 +299,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
               )}
             </Card>
           </div>
-          <Card title={tokenPage.trades}>
+          <Card title={tokenPage.trades} className="token-order-entry">
             {!bonding && !graduated && (
               <p className="text-sm text-starlight/60">
                 Trading pauses while the curve migrates.
@@ -388,6 +391,8 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
             )}
           </Card>
         </div>
+        <TokenTrades mint={mintStr} decimals={dec} />
+        </>
       )}
     </Shell>
   );

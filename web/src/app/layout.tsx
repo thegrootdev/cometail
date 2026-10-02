@@ -3,6 +3,7 @@ import { product } from "@/content/cometail";
 import { Providers } from "@/lib/providers";
 import "./globals.css";
 import "./theme.css";
+import "./market.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(product.url),

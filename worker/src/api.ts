@@ -102,9 +102,13 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
   // trader's own class (the fee payer is always known), with the quote they paid
   // only a swap's own signer is a buyer; a purchase known by its fee payer alone (a sponsored or
   // routed swap whose signer could not be paired) is unattributed
+  // PLAN 8.7 buyers are stream-token buyers: trades on the vaults' pools; plain-launch traders are
+  // reported apart so the expanded trade index does not inflate the line
   const buyerSets = { independent: new Set<string>(), demo: new Set<string>(), unattributed: new Set<string>() };
   const buyVolume = triple(); let buys = 0, sells = 0;
+  const launchTraders = { independent: new Set<string>(), demo: new Set<string>(), unattributed: new Set<string>() }; let launchTrades = 0;
   for (const t of trades) {
+    if (!t.vault) { launchTrades++; const c: Cls = t.traderKind === "authority" ? cls(t.trader) : "unattributed"; launchTraders[c].add(t.trader); continue; }
     if (!t.buy) { sells++; continue; }
     buys++;
     const c: Cls = t.traderKind === "authority" ? cls(t.trader) : "unattributed";
@@ -131,6 +135,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     oneTimeProceedsLamports: { external: str(oneTime.external), own: str(oneTime.own) },
     depositors: { independent: depositors.independent.size, demo: depositors.demo.size },
     buyers: { distinct: { independent: buyerSets.independent.size, demo: buyerSets.demo.size, unattributed: buyerSets.unattributed.size }, buyVolumeLamports: str(buyVolume), purchases: buys, sales: sells, poolsPending: catchingUp },
+    launchTraders: { distinct: { independent: launchTraders.independent.size, demo: launchTraders.demo.size, unattributed: launchTraders.unattributed.size }, trades: launchTrades },
     bidDepthLamports: str(depth),
     fillsAndBurns: { settledWithBurn: fills, burnedSt: str(burned) },
     refundedPrincipalLamports: str(refunded),
@@ -166,9 +171,11 @@ async function envelope(store: Store, opts: ApiOptions, data: unknown) {
   const pending = cursors.filter((c) => c.cursor.status !== "ok").length;
   const price = await solUsd();
   const observed = await store.observedSlot();
+  // the time of the last completed token scan, written by the indexer, not the request time
+  const scanned = Number(await store.getMeta("tokens_scanned_at")) || null;
   return {
     schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), observedSlot: observed,
-    coverage: { status: pending > 0 ? "partial" : "complete", pendingPools: pending, lastSuccessfulAtMs: observed ? Date.now() : null },
+    coverage: { status: pending > 0 ? "partial" : scanned ? "complete" : "stale", pendingPools: pending, lastSuccessfulAtMs: scanned },
     solUsd: price ? { value: price.solUsd, source: price.source, observedAtMs: price.at, status: Date.now() - price.at < 10 * 60_000 ? "fresh" : "stale", valuationBasis: (opts.cluster ?? "devnet") === "mainnet-beta" ? "market" : "reference" } : null,
     data,
   };
@@ -222,13 +229,14 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
   if (parts.length === 3) return send(200, await envelope(store, opts, tokenView(t, price?.solUsd ?? null)), { "cache-control": "public, max-age=5" });
   if (parts.length === 4 && parts[3] === "trades") {
     const cursor = url.searchParams.get("cursor");
-    let before: { slot: number; idx: number } | null = null;
-    if (cursor) { const [s, i] = cursor.split(":").map(Number); if (Number.isFinite(s) && Number.isFinite(i)) before = { slot: s, idx: i }; }
+    // the cursor is the full trade key, so two transactions in one slot with the same ordinal page apart
+    let before: { slot: number; idx: number; signature: string } | null = null;
+    if (cursor) { const [s, i, sig] = cursor.split(":"); if (Number.isFinite(Number(s)) && Number.isFinite(Number(i)) && sig) before = { slot: Number(s), idx: Number(i), signature: sig }; }
     const pools = [t.dbcPool, ...(t.dammPool ? [t.dammPool] : [])];
     const trades = await store.listTradesByPools(pools, limit + 1, before);
     const page = trades.slice(0, limit);
     const last = page[page.length - 1];
-    return send(200, await envelope(store, opts, { trades: page.map(tradeView), nextCursor: trades.length > limit && last ? `${last.slot}:${last.idx}` : null }), { "cache-control": "public, max-age=5" });
+    return send(200, await envelope(store, opts, { trades: page.map(tradeView), nextCursor: trades.length > limit && last ? `${last.slot}:${last.idx}:${last.signature}` : null }), { "cache-control": "public, max-age=5" });
   }
   return send(404, { error: "not found" });
 }

@@ -55,7 +55,9 @@ export interface Store {
   /** Trades of the given pools since a unix time (all of them). */
   listTradesSince(pools: string[], sinceUnix: number): Promise<TradeRow[]>;
   /** Trades of the given pools, newest first, before an optional (slot, idx) cursor. */
-  listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number } | null): Promise<TradeRow[]>;
+  listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number; signature: string } | null): Promise<TradeRow[]>;
+  getMeta(key: string): Promise<string | null>;
+  setMeta(key: string, value: string): Promise<void>;
   upsertTokens(rows: TokenRow[]): Promise<void>;
   pruneTokens(keep: string[]): Promise<void>;
   listTokens(): Promise<TokenRow[]>;
@@ -82,7 +84,7 @@ export interface Store {
 
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
@@ -155,11 +157,13 @@ class PgStore implements Store {
     return r.rows.map(pgTrade);
   }
   async listTradesSince(pools: string[], sinceUnix: number) { if (!pools.length) return []; const r = await this.pool.query("select * from trades where pool = any($1) and block_time >= $2", [pools, sinceUnix]); return r.rows.map(pgTrade); }
-  async listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number } | null) {
+  async listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number; signature: string } | null) {
     if (!pools.length) return [];
-    const r = before ? await this.pool.query("select * from trades where pool = any($1) and (slot < $2 or (slot = $2 and idx < $3)) order by slot desc, idx desc limit $4", [pools, before.slot, before.idx, limit]) : await this.pool.query("select * from trades where pool = any($1) order by slot desc, idx desc limit $2", [pools, limit]);
+    const r = before ? await this.pool.query("select * from trades where pool = any($1) and (slot < $2 or (slot = $2 and idx < $3) or (slot = $2 and idx = $3 and signature < $4)) order by slot desc, idx desc, signature desc limit $5", [pools, before.slot, before.idx, before.signature, limit]) : await this.pool.query("select * from trades where pool = any($1) order by slot desc, idx desc, signature desc limit $2", [pools, limit]);
     return r.rows.map(pgTrade);
   }
+  async getMeta(key: string) { const r = await this.pool.query("select value from meta where key = $1", [key]); return r.rows[0]?.value ?? null; }
+  async setMeta(key: string, value: string) { await this.pool.query("insert into meta (key, value) values ($1, $2) on conflict (key) do update set value = $2", [key, value]); }
   async upsertTokens(rows: TokenRow[]) { for (const t of rows) await this.pool.query("insert into tokens (mint, data, volume24h, updated_at) values ($1,$2,$3,$4) on conflict (mint) do update set data = $2, volume24h = $3, updated_at = $4", [t.mint, t, t.volume24hLamports, t.updatedAt]); }
   async pruneTokens(keep: string[]) { await this.pool.query("delete from tokens where not (mint = any($1))", [keep]); }
   async listTokens() { const r = await this.pool.query("select data from tokens"); return r.rows.map((x: any) => x.data); }
@@ -244,12 +248,14 @@ class SqliteStore implements Store {
     return rows.map(sqTrade);
   }
   async listTradesSince(pools: string[], sinceUnix: number) { if (!pools.length) return []; return this.db.prepare(`select * from trades where pool in (${pools.map(() => "?").join(",")}) and block_time >= ?`).all(...pools, sinceUnix).map(sqTrade); }
-  async listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number } | null) {
+  async listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number; signature: string } | null) {
     if (!pools.length) return [];
     const ph = pools.map(() => "?").join(",");
-    const rows = before ? this.db.prepare(`select * from trades where pool in (${ph}) and (slot < ? or (slot = ? and idx < ?)) order by slot desc, idx desc limit ?`).all(...pools, before.slot, before.slot, before.idx, limit) : this.db.prepare(`select * from trades where pool in (${ph}) order by slot desc, idx desc limit ?`).all(...pools, limit);
+    const rows = before ? this.db.prepare(`select * from trades where pool in (${ph}) and (slot < ? or (slot = ? and idx < ?) or (slot = ? and idx = ? and signature < ?)) order by slot desc, idx desc, signature desc limit ?`).all(...pools, before.slot, before.slot, before.idx, before.slot, before.idx, before.signature, limit) : this.db.prepare(`select * from trades where pool in (${ph}) order by slot desc, idx desc, signature desc limit ?`).all(...pools, limit);
     return rows.map(sqTrade);
   }
+  async getMeta(key: string) { const x = this.db.prepare("select value from meta where key = ?").get(key); return x ? x.value : null; }
+  async setMeta(key: string, value: string) { this.db.prepare("insert into meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value").run(key, value); }
   async upsertTokens(rows: TokenRow[]) { const ins = this.db.prepare("insert into tokens (mint, data, volume24h, updated_at) values (?,?,?,?) on conflict (mint) do update set data = excluded.data, volume24h = excluded.volume24h, updated_at = excluded.updated_at"); for (const t of rows) ins.run(t.mint, JSON.stringify(t), t.volume24hLamports, t.updatedAt); }
   async pruneTokens(keep: string[]) { const rows = this.db.prepare("select mint from tokens").all(); const del = this.db.prepare("delete from tokens where mint = ?"); const k = new Set(keep); for (const r of rows) if (!k.has(r.mint)) del.run(r.mint); }
   async listTokens() { return this.db.prepare("select data from tokens").all().map((x: any) => JSON.parse(x.data)); }

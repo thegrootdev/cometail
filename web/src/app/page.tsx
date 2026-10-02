@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
 import { HomeAtlas } from "@/components/Atlas";
+import { MarketDirectory } from "@/components/Market";
 import { experience as copy, hero, plainLaunch } from "@/content/cometail";
 export default function Home() {
   return (
@@ -37,6 +38,7 @@ export default function Home() {
           <span className="art-caption">{copy.illustration}</span>
         </div>
       </section>
+      <MarketDirectory />
       <HomeAtlas />
       <section className="chapter-grid">
         {copy.chapters.map((c, i) => (
