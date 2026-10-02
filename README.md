@@ -108,8 +108,11 @@ and their fee volume by creator, recurring external and own income apart from on
 depositors, bid depth (unfilled principal from the bin arrays), fills and burns and refunded
 principal by vault depositor; anything whose owner is not yet resolved is reported as
 unattributed, never independent. Stream-token buyers come from a trade index: every swap on a
-vault's graduated pool (cp-amm `EvtSwap2`, one cursor per pool) is stored with its fee payer, and
-the vault detail lists them.
+vault's graduated pool (cp-amm `EvtSwap2` paired with its `swap`/`swap2` instruction) is stored
+with the swap's own signer, or with the fee payer marked as such when the pairing is not possible
+(never counted as an independent buyer). Each pool catches up backward in bounded pages with a
+persisted frontier, so no interval is skipped, and a pool still catching up marks the metrics
+incomplete. The vault detail lists the trades.
 
 ## Running the site
 

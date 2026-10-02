@@ -59,7 +59,8 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
   const triple = () => ({ independent: 0n, demo: 0n, unattributed: 0n });
   const counts = () => ({ independent: 0, demo: 0, unattributed: 0 });
   const str = (p: Record<Cls, bigint>) => ({ independent: p.independent.toString(), demo: p.demo.toString(), unattributed: p.unattributed.toString() });
-  const [vaults, streams, sky, recurringEvents, oneTimeEvents, settled, trades] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested"], 0), store.listEventsSince(["oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0), store.listTrades(null, 1_000_000)]);
+  const [vaults, streams, sky, recurringEvents, oneTimeEvents, settled, trades, poolCursors] = await Promise.all([store.listVaults(), store.listAllStreams(), store.listSky(100_000), store.listEventsSince(["harvested"], 0), store.listEventsSince(["oneTimeHarvested"], 0), store.listEventsSince(["settled"], 0), store.listTrades(null, 1_000_000), store.listPoolCursors()]);
+  const catchingUp = poolCursors.filter((c) => c.cursor.tail !== null).length;
   const vaultClass = new Map<string, Cls>(vaults.map((v) => [v.vault, cls(v.data?.depositor ? String(v.data.depositor) : null)]));
   const ofVault = (vault: string | null | undefined): Cls => (vault && vaultClass.get(vault)) || "unattributed";
   const own = new Map(streams.map((s) => [s.stream, !!s.data.isOwn]));
@@ -89,24 +90,27 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
   for (const e of settled) { const c = ofVault(e.vault); const b = BigInt(e.data.burned ?? 0); if (b > 0n) fills[c]++; burned[c] += b; }
   // buyers of stream tokens: distinct traders of purchases on the vaults' graduated pools, by the
   // trader's own class (the fee payer is always known), with the quote they paid
-  const buyerSets = { independent: new Set<string>(), demo: new Set<string>() };
+  // only a swap's own signer is a buyer; a purchase known by its fee payer alone (a sponsored or
+  // routed swap whose signer could not be paired) is unattributed
+  const buyerSets = { independent: new Set<string>(), demo: new Set<string>(), unattributed: new Set<string>() };
   const buyVolume = triple(); let buys = 0, sells = 0;
   for (const t of trades) {
     if (!t.buy) { sells++; continue; }
     buys++;
-    const c = cls(t.trader); if (c === "unattributed") continue;
+    const c: Cls = t.traderKind === "authority" ? cls(t.trader) : "unattributed";
     buyerSets[c].add(t.trader); buyVolume[c] += BigInt(t.amountIn);
   }
-  const unattributed = launches.unattributed > 0 || fills.unattributed > 0 || [launchFees, recurring.external, recurring.own, oneTime.external, oneTime.own, depth, refunded, burned].some((t) => t.unattributed > 0n);
+  const unattributed = launches.unattributed > 0 || fills.unattributed > 0 || buyerSets.unattributed.size > 0 || [launchFees, recurring.external, recurring.own, oneTime.external, oneTime.own, depth, refunded, burned].some((t) => t.unattributed > 0n);
   // DBC books the trading fee net of its 20% protocol share, so the flat 1% curve fee implies
   // volume = net fee x 125; still an estimate, subject to per-trade rounding
   const volume = (t: Record<Cls, bigint>) => str({ independent: t.independent * 125n, demo: t.demo * 125n, unattributed: t.unattributed * 125n });
   return {
     generatedAt: Date.now(), demoActors: [...demo],
-    incomplete: unattributed || unknownBins > 0 || unavailableLadders > 0,
+    incomplete: unattributed || unknownBins > 0 || unavailableLadders > 0 || catchingUp > 0,
     notes: [
       "independent and demo are decided by the actor that owns each line: launches by creator (a vault-held launch by its depositor), vaults by depositor; owners not yet resolved are unattributed, never independent",
-      "buyers are the distinct fee payers of stream-token purchases on the vaults' graduated pools (cp-amm EvtSwap2), classified by the buyer wallet; sells are counted but not attributed",
+      "buyers are the distinct signers of stream-token purchases on the vaults' graduated pools (cp-amm swap / swap2 paired with EvtSwap2), classified by the signer wallet; a purchase known only by its fee payer is unattributed; sells are counted, not attributed",
+      ...(catchingUp > 0 ? [`trade history is still catching up on ${catchingUp} pool(s); buyers and purchases are partial`] : []),
       "launch volume is an estimate: the flat 1% curve fee, booked by DBC net of its 20% protocol share, implies net fee x 125",
       "bid depth is the unfilled principal of every resting bin from the bin arrays, the same accounting settle applies",
       ...(unknownBins > 0 ? [`${unknownBins} bin(s) could not be read; their depth is not counted`] : []),
@@ -116,7 +120,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     recurringIncomeLamports: { external: str(recurring.external), own: str(recurring.own) },
     oneTimeProceedsLamports: { external: str(oneTime.external), own: str(oneTime.own) },
     depositors: { independent: depositors.independent.size, demo: depositors.demo.size },
-    buyers: { distinct: { independent: buyerSets.independent.size, demo: buyerSets.demo.size }, buyVolumeLamports: str(buyVolume), purchases: buys, sales: sells },
+    buyers: { distinct: { independent: buyerSets.independent.size, demo: buyerSets.demo.size, unattributed: buyerSets.unattributed.size }, buyVolumeLamports: str(buyVolume), purchases: buys, sales: sells, poolsCatchingUp: catchingUp },
     bidDepthLamports: str(depth),
     fillsAndBurns: { settledWithBurn: fills, burnedSt: str(burned) },
     refundedPrincipalLamports: str(refunded),

@@ -20,8 +20,10 @@ async function retry<T>(what: string, fn: () => Promise<T>, attempts = 8): Promi
   throw new Error(`${what}: ${String((last as Error)?.message ?? last)}`);
 }
 
-/** Anchor's event-instruction discriminator: sha256("anchor:event")[..8]. */
+/** Anchor's event-instruction tag (EVENT_IX_TAG = 0x1d9acb512ea545e4) serialized little-endian: the first eight bytes of the self-CPI that carries an event. */
 const EVENT_IX_DISCRIMINATOR = Buffer.from("e445a52e51cb9a1d", "hex");
+
+const SWAP_DISCRIMINATOR = Buffer.from("f8c69e91e17587c8", "hex"), SWAP2_DISCRIMINATOR = Buffer.from("414b3f4ceb5b5b88", "hex");
 
 export class Indexer {
   constructor(readonly chain: Chain, readonly store: Store) {}
@@ -35,9 +37,14 @@ export class Indexer {
     return added;
   }
 
-  /** Swaps on each vault's graduated stream-token pool (cp-amm EvtSwap2), one cursor per pool, at most
-   *  three pages of signatures per pool per pass; the trader is the transaction's fee payer. Trade
-   *  direction 1 is quote in, stream token out: a purchase of the stream token. */
+  /** Swaps on each vault's graduated stream-token pool (cp-amm EvtSwap2). Per pool, a bounded
+   *  catch-up: the walk goes backward from the newest signature toward the last fully indexed one in
+   *  at most three pages per pass and persists its frontier (store.PoolCursor); the head moves only
+   *  when the walk reaches its target, so no interval is ever skipped, and a pool with a frontier is
+   *  reported as still catching up. Trades are keyed by (signature, event ordinal, pool), so any order
+   *  and any repeat is safe. The trader is the swap instruction's own signer (cp-amm SwapCtx.payer,
+   *  account 8 of swap / swap2) when the event can be paired with its swap in execution order;
+   *  otherwise the fee payer, marked as such, which the metrics never count as an independent buyer. */
   private async indexTrades(vaults: Decoded[]): Promise<number> {
     let added = 0;
     const conn: Connection = this.chain.connection;
@@ -46,47 +53,38 @@ export class Indexer {
       if (!pool || isDefault(pool)) continue;
       const poolKey = pool.toBase58(), vaultKey = v.pubkey.toBase58();
       try {
-        const until = (await this.store.getCursorFor(poolKey)) ?? undefined;
+        const cur = (await this.store.getPoolCursor(poolKey)) ?? { head: null, tail: null, target: null, newHead: null };
+        const catchingUp = cur.tail !== null;
+        let target = catchingUp ? cur.target : cur.head;
+        let newHead = catchingUp ? cur.newHead : null;
+        let before: string | undefined = catchingUp ? cur.tail! : undefined;
         const sigs: { signature: string; slot: number; blockTime: number | null }[] = [];
-        let before: string | undefined;
+        let reachedTarget = false;
         for (let page = 0; page < 3; page++) {
-          const got = await retry("pool signatures", () => conn.getSignaturesForAddress(pool, { before, until, limit: 1000 }, "confirmed"));
+          const got = await retry("pool signatures", () => conn.getSignaturesForAddress(pool, { before, until: target ?? undefined, limit: 1000 }, "confirmed"));
+          if (!catchingUp && page === 0 && got.length) newHead = got[0].signature;
           sigs.push(...got.map((s) => ({ signature: s.signature, slot: s.slot, blockTime: s.blockTime ?? null })));
-          if (got.length < 1000) break;
+          if (got.length < 1000) { reachedTarget = true; break; }
           before = got[got.length - 1].signature;
         }
-        sigs.reverse();
-        for (const s of sigs) {
+        let stopped = false;
+        for (const s of sigs.slice().reverse()) {
           let tx = null as Awaited<ReturnType<Connection["getTransaction"]>>;
           for (let i = 0; i < 5 && !tx; i++) {
             if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
             tx = await retry(`transaction ${s.signature}`, () => conn.getTransaction(s.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
           }
-          if (!tx) { log("pool transaction not available yet; this pool resumes next pass", { pool: poolKey, signature: s.signature }); break; }
-          if (tx.meta?.err) { await this.store.insertTrades([], poolKey, s.signature); continue; }
-          // cp-amm emits through a self-CPI: the event is the data of an inner instruction to the
-          // program itself, the Anchor event-instruction discriminator then the event (not a log line)
-          const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined });
-          const trader = keys.get(0)?.toBase58() ?? "";
-          const rows: TradeRow[] = [];
-          let idx = 0;
-          for (const inner of tx.meta?.innerInstructions ?? []) for (const ix of inner.instructions) {
-            const pid = keys.get(ix.programIdIndex);
-            if (!pid || !pid.equals(DAMM_V2_PROGRAM_ID)) continue;
-            const data = Buffer.from(utils.bytes.bs58.decode(ix.data));
-            if (data.length < 16 || !data.subarray(0, 8).equals(EVENT_IX_DISCRIMINATOR)) continue;
-            let ev: { name: string; data: any } | null = null;
-            try { ev = this.chain.damm.coder.events.decode(data.subarray(8).toString("base64")); } catch { continue; }
-            if (!ev || ev.name.toLowerCase() !== "evtswap2") continue;
-            const d: any = ev.data;
-            if (!d.pool || !new PublicKey(d.pool).equals(pool)) continue;
-            const buy = Number(d.tradeDirection) === 1;
-            rows.push({ signature: s.signature, idx: idx++, slot: s.slot, blockTime: s.blockTime, pool: poolKey, vault: vaultKey, trader, buy, amountIn: String(d.swapResult?.includedFeeInputAmount ?? "0"), amountOut: String(d.swapResult?.outputAmount ?? "0") });
-          }
-          await this.store.insertTrades(rows, poolKey, s.signature);
+          if (!tx) { log("pool transaction not available yet; this pool resumes next pass", { pool: poolKey, signature: s.signature }); stopped = true; break; }
+          if (tx.meta?.err) continue;
+          const rows = decodeTrades(this.chain, tx, pool, { signature: s.signature, slot: s.slot, blockTime: s.blockTime, vault: vaultKey });
+          await this.store.insertTrades(rows);
           added += rows.length;
           if (rows.length) log("indexed trades", { pool: poolKey, signature: s.signature, trades: rows.length });
         }
+        // the frontier moves only over what was fully processed; a stopped pass keeps it where it was
+        if (stopped) continue;
+        if (reachedTarget) await this.store.setPoolCursor(poolKey, { head: newHead ?? cur.head, tail: null, target: null, newHead: null });
+        else await this.store.setPoolCursor(poolKey, { head: cur.head, tail: before ?? null, target, newHead });
       } catch (e) { log("trade index failed for a pool; it resumes next pass", { pool: poolKey, error: String((e as Error).message ?? e) }); }
     }
     return added;
@@ -230,4 +228,40 @@ export function binPriceSolPerSt(binId: number, binStep: number, stIsX: boolean,
   const raw = Math.pow(1 + binStep / 10_000, binId);
   const yPerX = raw; // token Y raw per token X raw
   return stIsX ? yPerX * Math.pow(10, stDecimals - 9) : (1 / yPerX) * Math.pow(10, stDecimals - 9);
+}
+
+/** The trades of one transaction on one pool. Execution order is the top-level instructions each
+ *  followed by their inner instructions; a swap's event self-CPI follows its swap instruction, so
+ *  the events of a pool pair with the swaps of that pool in order. The ordinal counts every cp-amm
+ *  event in the transaction before any pool filter, so it is stable across pools. */
+export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Connection["getTransaction"]>>>, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string }): TradeRow[] {
+  const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined });
+  const feePayer = keys.get(0)?.toBase58() ?? "";
+  const inner = new Map<number, { programIdIndex: number; accounts: number[]; data: Buffer }[]>();
+  for (const ii of tx.meta?.innerInstructions ?? []) inner.set(ii.index, ii.instructions.map((x) => ({ programIdIndex: x.programIdIndex, accounts: x.accounts, data: Buffer.from(utils.bytes.bs58.decode(x.data)) })));
+  const flat: { programIdIndex: number; accounts: number[]; data: Buffer }[] = [];
+  tx.transaction.message.compiledInstructions.forEach((c, i) => { flat.push({ programIdIndex: c.programIdIndex, accounts: [...c.accountKeyIndexes], data: Buffer.from(c.data) }); for (const x of inner.get(i) ?? []) flat.push(x); });
+  const swaps: string[] = []; // signers of this pool's swaps, in execution order, not yet paired with their event
+  const rows: TradeRow[] = [];
+  let ordinal = 0;
+  for (const f of flat) {
+    const pid = keys.get(f.programIdIndex);
+    if (!pid || !pid.equals(DAMM_V2_PROGRAM_ID) || f.data.length < 8) continue;
+    const disc = f.data.subarray(0, 8);
+    if (disc.equals(SWAP_DISCRIMINATOR) || disc.equals(SWAP2_DISCRIMINATOR)) {
+      const p = keys.get(f.accounts[1] ?? -1), signer = keys.get(f.accounts[8] ?? -1);
+      if (p && p.equals(pool) && signer) swaps.push(signer.toBase58());
+      continue;
+    }
+    if (!disc.equals(EVENT_IX_DISCRIMINATOR) || f.data.length < 16) continue;
+    ordinal++;
+    let ev: { name: string; data: any } | null = null;
+    try { ev = chain.damm.coder.events.decode(f.data.subarray(8).toString("base64")); } catch { continue; }
+    if (!ev || ev.name.toLowerCase() !== "evtswap2") continue;
+    const d: any = ev.data;
+    if (!d.pool || !new PublicKey(d.pool).equals(pool)) continue;
+    const signer = swaps.shift();
+    rows.push({ signature: meta.signature, idx: ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: signer ?? feePayer, traderKind: signer ? "authority" : "feePayer", buy: Number(d.tradeDirection) === 1, amountIn: String(d.swapResult?.includedFeeInputAmount ?? "0"), amountOut: String(d.swapResult?.outputAmount ?? "0") });
+  }
+  return rows;
 }
