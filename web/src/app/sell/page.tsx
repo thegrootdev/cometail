@@ -3,7 +3,7 @@ import { friendlyError } from "@/lib/errors";
 // "Sell your tail": scan the wallet for streams it owns, pick, choose a preset, launch.
 // One transaction per step so a wallet shows exactly what each signature does; the vault
 // link appears as soon as the vault exists, and the vault page can withdraw or finish later.
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
@@ -23,6 +23,7 @@ import { wizard, splits, product, experience as c } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
   dbcClient,
+  dbcState,
   derivedDammPool,
   poolsByCreator,
   MigrationProgress,
@@ -75,7 +76,6 @@ function Wizard() {
   const { connection } = useConnection();
   const { signMessage } = useWallet();
   const { run, status, publicKey } = useTx();
-  const client = useMemo(() => new VaultClientStep6(connection), [connection]);
   const {
     data: streams,
     loading,
@@ -84,7 +84,7 @@ function Wizard() {
   } = useLoad<Stream[]>(async () => {
     if (!publicKey) return [];
     const out: Stream[] = [];
-    const dbc = dbcClient(connection);
+    const dbc = dbcState(connection);
     const amm = cpAmm(connection);
     const [pools, positions] = await Promise.all([
       poolsByCreator(connection, publicKey),
@@ -92,7 +92,7 @@ function Wizard() {
     ]);
     const bundled = new Set<string>();
     for (const { pool, state } of pools) {
-      const config: any = await dbc.state.getPoolConfig(state.config);
+      const config: any = await dbc.getPoolConfig(state.config);
       const reasons = config
         ? dbcRightsReasons(config, state)
         : ["config missing"];
@@ -204,6 +204,7 @@ function Wizard() {
     if (!publicKey || !capQ64 || !image || preparing || blocked) return;
     setPreparing(true);
     try {
+      const client = new VaultClientStep6(connection);
       const { uri } = await uploadIdentity({
         name,
         symbol: `${product.streamTickerPrefix}${symbol.trim().toUpperCase()}`,
@@ -351,12 +352,6 @@ function Wizard() {
 
   return (
     <>
-      <PageHeader
-        art="sell"
-        eyebrow={c.sellKicker}
-        title={wizard.title}
-        body={c.sellBody}
-      />
       {!publicKey && (
         <div className="launch-layout">
           <DataState kind="wallet" title={c.connectTitle} body={wizard.connect}>
@@ -595,6 +590,12 @@ function Wizard() {
 export default function SellPage() {
   return (
     <Shell>
+      <PageHeader
+        art="sell"
+        eyebrow={c.sellKicker}
+        title={wizard.title}
+        body={c.sellBody}
+      />
       <Suspense fallback={<DataState kind="loading" />}>
         <Wizard />
       </Suspense>

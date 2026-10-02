@@ -5,13 +5,13 @@
    sizes are the contract. */
 @font-face {
   font-family: Fredoka;
-  src: url("/fonts/Fredoka.ttf") format("truetype");
+  src: url("/fonts/Fredoka.woff2") format("woff2");
   font-weight: 300 700;
   font-display: swap;
 }
 @font-face {
   font-family: Nunito;
-  src: url("/fonts/Nunito.ttf") format("truetype");
+  src: url("/fonts/Nunito.woff2") format("woff2");
   font-weight: 200 1000;
   font-display: swap;
 }

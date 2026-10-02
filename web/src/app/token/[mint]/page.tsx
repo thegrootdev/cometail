@@ -22,7 +22,7 @@ import {
   claimCreatorFeesTx,
   curveQuote,
   curveSwapTx,
-  dbcClient,
+  dbcState,
   derivedDammPool,
   loadPool,
   readMetadata,
@@ -69,7 +69,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     error,
   } = useLoad(
     async () => {
-      const found = await dbcClient(connection).state.getPoolByBaseMint(mint);
+      const found = await dbcState(connection).getPoolByBaseMint(mint);
       return found ? loadPool(connection, found.publicKey) : null;
     },
     [mintStr],

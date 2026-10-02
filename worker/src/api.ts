@@ -123,7 +123,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
     incomplete: unattributed || unknownBins > 0 || unavailableLadders > 0 || catchingUp > 0,
     notes: [
       "independent and demo are decided by the actor that owns each line: launches by creator (a vault-held launch by its depositor), vaults by depositor; owners not yet resolved are unattributed, never independent",
-      "buyers are the distinct signers of stream-token purchases on the vaults' graduated pools (cp-amm swap / swap2 paired with EvtSwap2), classified by the signer wallet; a purchase known only by its fee payer is unattributed; sells are counted, not attributed",
+      "buyers are the distinct signers of stream-token purchases on the vaults' own pools (the stream token's DBC curve and its graduated DAMM v2 pool), classified by the signer wallet; a purchase known only by its fee payer is unattributed; sells are counted, not attributed; trades of other launches are launchTraders",
       ...(catchingUp > 0 ? [`trade history is pending on ${catchingUp} pool(s) (catching up, interrupted, or never covered); buyers and purchases are partial`] : []),
       "launch volume is an estimate: the flat 1% curve fee, booked by DBC net of its 20% protocol share, implies net fee x 125",
       "bid depth is the unfilled principal of every resting bin from the bin arrays, the same accounting settle applies",

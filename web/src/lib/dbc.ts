@@ -2,12 +2,21 @@
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import BN from "bn.js";
 import { NATIVE_MINT } from "@solana/spl-token";
-import { DynamicBondingCurveClient, SwapMode, deriveDbcPoolAddress, deriveDammV2PoolAddress, getCurrentPoint } from "@meteora-ag/dynamic-bonding-curve-sdk";
+import { DynamicBondingCurveClient, StateService, SwapMode, deriveDbcPoolAddress, deriveDammV2PoolAddress, getCurrentPoint } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { ADDRESSES, DAMM_V2_MIGRATION_CONFIGS } from "./addresses";
 
 export const MigrationProgress = { PreBondingCurve: 0, PostBondingCurve: 1, LockedVesting: 2, CreatedPool: 3 } as const;
 
 export function dbcClient(connection: Connection) { return DynamicBondingCurveClient.create(connection, "confirmed"); }
+
+// Reads need one account coder, not every transaction service. Cache the service, never
+// its account results; each call still fetches current state from the same connection.
+const readers = new WeakMap<Connection, StateService>();
+export function dbcState(connection: Connection) {
+  let reader = readers.get(connection);
+  if (!reader) { reader = new StateService(connection, "confirmed"); readers.set(connection, reader); }
+  return reader;
+}
 
 /** The plain-launch pool of a base mint, and the DAMM v2 pool it migrates into. */
 export function plainPoolOf(baseMint: PublicKey) { return deriveDbcPoolAddress(NATIVE_MINT, baseMint, ADDRESSES.plainConfig); }
@@ -21,11 +30,11 @@ export interface PoolView {
 /** The SDK returns the account as the IDL lays it out: the fields sit under `poolState` since DBC 0.2.0. */
 const inner = (x: any) => (x && x.poolState ? x.poolState : x);
 export async function loadPool(connection: Connection, pool: PublicKey): Promise<PoolView | null> {
-  const client = dbcClient(connection);
-  const raw: any = await client.state.getPool(pool);
+  const client = dbcState(connection);
+  const raw: any = await client.getPool(pool);
   const state: any = inner(raw);
   if (!state) return null;
-  const config: any = await client.state.getPoolConfig(state.config);
+  const config: any = await client.getPoolConfig(state.config);
   return {
     pool, state, raw, config, progress: Number(state.migrationProgress), creator: state.creator, baseMint: state.baseMint, migrationFeeOption: Number(config.migrationFeeOption), decimals: Number(config.tokenDecimal),
     quoteReserve: new BN(state.quoteReserve.toString()), threshold: new BN(config.migrationQuoteThreshold.toString()),
@@ -34,8 +43,8 @@ export async function loadPool(connection: Connection, pool: PublicKey): Promise
   };
 }
 export async function poolsByCreator(connection: Connection, creator: PublicKey): Promise<{ pool: PublicKey; state: any }[]> {
-  const client = dbcClient(connection);
-  const all: any[] = await client.state.getPoolsByCreator(creator);
+  const client = dbcState(connection);
+  const all: any[] = await client.getPoolsByCreator(creator);
   return all.map((a: any) => ({ pool: a.publicKey, state: inner(a.account) }));
 }
 
