@@ -100,8 +100,18 @@ claimable backlog, realized curve income; for every migrated pool, one row per p
 locked DAMM v2 position with the NFT holder and its custody, the position's share of the pool's
 permanent liquidity, pending quote fees, quote fees claimed so far, and whether the program's
 size rule would admit it, keyed by the position address with `kind: "position"`), and serves `/api/sky`, `/api/vaults`,
-`/api/vaults/:vault`, `/api/events`, `/api/prices` (SOL/USD for display, cached, with its source) and
-`/api/metrics` (computed at most every 30 s) for the site. Vault rows carry a live
+`/api/vaults/:vault`, `/api/events`, `/api/prices` (SOL/USD for display, cached, with its source),
+`/api/metrics` (computed at most every 30 s) and the launchpad routes `/api/tokens` (sort by 24 h
+volume or newest, stage and search filters, cursor paging), `/api/tokens/:mint` and
+`/api/tokens/:mint/trades` for the site. Token answers carry an envelope (schema version, cluster,
+generated time, newest indexed slot, coverage with pending pools, SOL/USD with its source and age);
+every number is from the chain or the trade index: price from the pool's sqrt price (the DBC curve
+while bonding, the DAMM v2 pool after), supply from the mint, bonding progress from the pool and its
+config, holders as unique owners of nonzero token accounts (a full read, cached ten minutes), 24 h
+volume as executed WSOL legs with buy and sell counts and a completeness flag from the per-pool
+cursors, FDV as price x total supply x SOL/USD (labelled fdv; market cap is null until a
+circulating definition exists). Unknown is null, never zero. The trade index follows every launch's
+DBC curve and its DAMM v2 pool after graduation (venue curve or damm), plus every vault's pool. Vault rows carry a live
 view (the standing bids bin by bin with prices and the pool's active price) and stream rows the
 registered position's share of its pool's locked liquidity. `/api/metrics` reports the submission
 numbers with independent actors apart from the demo set (`COMETAIL_DEMO_ACTORS`): plain launches

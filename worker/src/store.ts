@@ -7,7 +7,17 @@ import { PublicKey } from "@solana/web3.js";
 export interface EventRow { signature: string; idx: number; slot: number; blockTime: number | null; name: string; vault: string | null; data: any }
 /** One swap on a vault's graduated stream-token pool (cp-amm EvtSwap2). `buy` is a purchase of the
  *  stream token with the quote; amounts are the pool's input and output in raw units. */
-export interface TradeRow { signature: string; idx: number; slot: number; blockTime: number | null; pool: string; vault: string; trader: string; traderKind: "authority" | "feePayer"; buy: boolean; amountIn: string; amountOut: string }
+export interface TradeRow { signature: string; idx: number; slot: number; blockTime: number | null; pool: string; vault: string; trader: string; traderKind: "authority" | "feePayer"; buy: boolean; amountIn: string; amountOut: string;
+  /** "curve" (DBC) or "damm" (DAMM v2); the token and quote legs; the price in SOL per whole token (12 decimals) or null. */
+  venue?: "curve" | "damm"; baseAmountRaw?: string; quoteAmountLamports?: string; executionPriceSol?: string | null }
+/** One launch in scope, for /api/tokens. Unknown values are null. */
+export interface TokenRow {
+  mint: string; decimals: number; name: string; symbol: string; imageUrl: string | null; metadataUri: string | null; metadataStatus: "ok" | "missing" | "unreachable";
+  creator: string; custody: SkyRow["custody"]; config: string; tokenKind: "plain" | "stream"; dbcPool: string; dammPool: string | null; quoteMint: string; vault: string | null;
+  stage: "bonding" | "completed" | "graduated"; priceSol: string | null; priceSource: string | null; priceAtMs: number; totalSupplyRaw: string;
+  quoteRaisedLamports: string; targetLamports: string; progressBps: number | null; holders: number | null; holdersAtMs: number | null;
+  volume24hLamports: string; buys24h: number; sells24h: number; volumeComplete: boolean; createdAtMs: number | null; updatedAt: number;
+}
 /** Where the trade index stands on one pool. `head` is the newest signature whose history is fully
  *  indexed. A catch-up walks backward from the newest signature (`newHead`) toward `head` (`target`)
  *  in bounded pages, continuing from `tail`; only when the walk reaches the target does head move,
@@ -42,6 +52,16 @@ export interface Store {
   insertTrades(rows: TradeRow[]): Promise<void>;
   /** Trades, newest first, of one vault or all. */
   listTrades(vault: string | null, limit: number): Promise<TradeRow[]>;
+  /** Trades of the given pools since a unix time (all of them). */
+  listTradesSince(pools: string[], sinceUnix: number): Promise<TradeRow[]>;
+  /** Trades of the given pools, newest first, before an optional (slot, idx) cursor. */
+  listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number } | null): Promise<TradeRow[]>;
+  upsertTokens(rows: TokenRow[]): Promise<void>;
+  pruneTokens(keep: string[]): Promise<void>;
+  listTokens(): Promise<TokenRow[]>;
+  getToken(mint: string): Promise<TokenRow | null>;
+  /** The newest slot the store has seen (events or trades), null when empty. */
+  observedSlot(): Promise<number | null>;
   upsertVault(vault: string, data: any): Promise<void>;
   upsertStream(stream: string, vault: string, data: any): Promise<void>;
   /** After a complete snapshot: drop streams of the vault that are no longer on chain (withdrawn). */
@@ -62,7 +82,7 @@ export interface Store {
 
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
@@ -101,7 +121,7 @@ class PgStore implements Store {
     const have = r.rows[0] ? Number(r.rows[0].value) : 0;
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades");
+      await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades, tokens");
     }
     await this.pool.query(`
       create table if not exists events (signature text not null, idx int not null, slot bigint not null, block_time bigint, name text not null, vault text, data jsonb not null, primary key (signature, idx));
@@ -111,7 +131,9 @@ class PgStore implements Store {
       create table if not exists streams (stream text primary key, vault text not null, data jsonb not null, updated_at bigint not null);
       create table if not exists sky (pool text primary key, data jsonb not null, updated_at bigint not null);
       create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text, status text not null default 'pending');
-      create table if not exists trades (signature text not null, idx int not null, slot bigint not null, block_time bigint, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy boolean not null, amount_in text not null, amount_out text not null, primary key (signature, idx, pool));`);
+      create table if not exists trades (signature text not null, idx int not null, slot bigint not null, block_time bigint, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy boolean not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
+      create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
+      create table if not exists tokens (mint text primary key, data jsonb not null, volume24h numeric not null, updated_at bigint not null);`);
     if (have !== SCHEMA_VERSION) await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
   }
   async pruneStreams(vault: string, keep: string[]) { await this.pool.query("delete from streams where vault = $1 and not (stream = any($2))", [vault, keep]); }
@@ -126,12 +148,23 @@ class PgStore implements Store {
   async setPoolCursor(key: string, c: PoolCursor) { await this.pool.query("insert into cursors (key, head, tail, target, new_head, status) values ($1,$2,$3,$4,$5,$6) on conflict (key) do update set head = $2, tail = $3, target = $4, new_head = $5, status = $6", [key, c.head, c.tail, c.target, c.newHead, c.status]); }
   async listPoolCursors() { const r = await this.pool.query("select key, head, tail, target, new_head, status from cursors"); return r.rows.map((x: any) => ({ key: x.key, cursor: { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head, status: x.status } })); }
   async insertTrades(rows: TradeRow[]) {
-    for (const r of rows) await this.pool.query("insert into trades (signature, idx, slot, block_time, pool, vault, trader, trader_kind, buy, amount_in, amount_out) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict do nothing", [r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.traderKind, r.buy, r.amountIn, r.amountOut]);
+    for (const r of rows) await this.pool.query("insert into trades (signature, idx, slot, block_time, pool, vault, trader, trader_kind, buy, amount_in, amount_out, venue, base_amount, quote_amount, price) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) on conflict do nothing", [r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.traderKind, r.buy, r.amountIn, r.amountOut, r.venue ?? null, r.baseAmountRaw ?? null, r.quoteAmountLamports ?? null, r.executionPriceSol ?? null]);
   }
   async listTrades(vault: string | null, limit: number) {
     const r = vault ? await this.pool.query("select * from trades where vault = $1 order by slot desc, idx desc limit $2", [vault, limit]) : await this.pool.query("select * from trades order by slot desc, idx desc limit $1", [limit]);
-    return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: x.buy, amountIn: x.amount_in, amountOut: x.amount_out }));
+    return r.rows.map(pgTrade);
   }
+  async listTradesSince(pools: string[], sinceUnix: number) { if (!pools.length) return []; const r = await this.pool.query("select * from trades where pool = any($1) and block_time >= $2", [pools, sinceUnix]); return r.rows.map(pgTrade); }
+  async listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number } | null) {
+    if (!pools.length) return [];
+    const r = before ? await this.pool.query("select * from trades where pool = any($1) and (slot < $2 or (slot = $2 and idx < $3)) order by slot desc, idx desc limit $4", [pools, before.slot, before.idx, limit]) : await this.pool.query("select * from trades where pool = any($1) order by slot desc, idx desc limit $2", [pools, limit]);
+    return r.rows.map(pgTrade);
+  }
+  async upsertTokens(rows: TokenRow[]) { for (const t of rows) await this.pool.query("insert into tokens (mint, data, volume24h, updated_at) values ($1,$2,$3,$4) on conflict (mint) do update set data = $2, volume24h = $3, updated_at = $4", [t.mint, t, t.volume24hLamports, t.updatedAt]); }
+  async pruneTokens(keep: string[]) { await this.pool.query("delete from tokens where not (mint = any($1))", [keep]); }
+  async listTokens() { const r = await this.pool.query("select data from tokens"); return r.rows.map((x: any) => x.data); }
+  async getToken(mint: string) { const r = await this.pool.query("select data from tokens where mint = $1", [mint]); return r.rows[0]?.data ?? null; }
+  async observedSlot() { const r = await this.pool.query("select greatest((select max(slot) from events), (select max(slot) from trades)) as s"); return r.rows[0]?.s === null || r.rows[0]?.s === undefined ? null : Number(r.rows[0].s); }
   async setCursor(s: string) { await this.pool.query("insert into cursor (id, signature) values (1, $1) on conflict (id) do update set signature = $1", [s]); }
   async insertEvents(rows: EventRow[], cursor: string) {
     const c = await this.pool.connect();
@@ -168,7 +201,7 @@ class SqliteStore implements Store {
     const have = r ? Number(r.value) : 0;
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists trades");
+      this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists trades; drop table if exists tokens");
     }
     this.db.exec(`
       create table if not exists events (signature text not null, idx integer not null, slot integer not null, block_time integer, name text not null, vault text, data text not null, primary key (signature, idx));
@@ -178,7 +211,9 @@ class SqliteStore implements Store {
       create table if not exists streams (stream text primary key, vault text not null, data text not null, updated_at integer not null);
       create table if not exists sky (pool text primary key, data text not null, claimable text not null, updated_at integer not null);
       create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text, status text not null default 'pending');
-      create table if not exists trades (signature text not null, idx integer not null, slot integer not null, block_time integer, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy integer not null, amount_in text not null, amount_out text not null, primary key (signature, idx, pool));`);
+      create table if not exists trades (signature text not null, idx integer not null, slot integer not null, block_time integer, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy integer not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
+      create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
+      create table if not exists tokens (mint text primary key, data text not null, volume24h text not null, updated_at integer not null);`);
     if (have !== SCHEMA_VERSION) this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
   }
   async pruneStreams(vault: string, keep: string[]) {
@@ -201,13 +236,25 @@ class SqliteStore implements Store {
   async setPoolCursor(key: string, c: PoolCursor) { this.db.prepare("insert into cursors (key, head, tail, target, new_head, status) values (?,?,?,?,?,?) on conflict (key) do update set head = excluded.head, tail = excluded.tail, target = excluded.target, new_head = excluded.new_head, status = excluded.status").run(key, c.head, c.tail, c.target, c.newHead, c.status); }
   async listPoolCursors() { return this.db.prepare("select key, head, tail, target, new_head, status from cursors").all().map((x: any) => ({ key: x.key, cursor: { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head, status: x.status } })); }
   async insertTrades(rows: TradeRow[]) {
-    const ins = this.db.prepare("insert or ignore into trades (signature, idx, slot, block_time, pool, vault, trader, trader_kind, buy, amount_in, amount_out) values (?,?,?,?,?,?,?,?,?,?,?)");
-    for (const r of rows) ins.run(r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.traderKind, r.buy ? 1 : 0, r.amountIn, r.amountOut);
+    const ins = this.db.prepare("insert or ignore into trades (signature, idx, slot, block_time, pool, vault, trader, trader_kind, buy, amount_in, amount_out, venue, base_amount, quote_amount, price) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    for (const r of rows) ins.run(r.signature, r.idx, r.slot, r.blockTime, r.pool, r.vault, r.trader, r.traderKind, r.buy ? 1 : 0, r.amountIn, r.amountOut, r.venue ?? null, r.baseAmountRaw ?? null, r.quoteAmountLamports ?? null, r.executionPriceSol ?? null);
   }
   async listTrades(vault: string | null, limit: number) {
     const rows = vault ? this.db.prepare("select * from trades where vault = ? order by slot desc, idx desc limit ?").all(vault, limit) : this.db.prepare("select * from trades order by slot desc, idx desc limit ?").all(limit);
-    return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: !!x.buy, amountIn: x.amount_in, amountOut: x.amount_out }));
+    return rows.map(sqTrade);
   }
+  async listTradesSince(pools: string[], sinceUnix: number) { if (!pools.length) return []; return this.db.prepare(`select * from trades where pool in (${pools.map(() => "?").join(",")}) and block_time >= ?`).all(...pools, sinceUnix).map(sqTrade); }
+  async listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number } | null) {
+    if (!pools.length) return [];
+    const ph = pools.map(() => "?").join(",");
+    const rows = before ? this.db.prepare(`select * from trades where pool in (${ph}) and (slot < ? or (slot = ? and idx < ?)) order by slot desc, idx desc limit ?`).all(...pools, before.slot, before.slot, before.idx, limit) : this.db.prepare(`select * from trades where pool in (${ph}) order by slot desc, idx desc limit ?`).all(...pools, limit);
+    return rows.map(sqTrade);
+  }
+  async upsertTokens(rows: TokenRow[]) { const ins = this.db.prepare("insert into tokens (mint, data, volume24h, updated_at) values (?,?,?,?) on conflict (mint) do update set data = excluded.data, volume24h = excluded.volume24h, updated_at = excluded.updated_at"); for (const t of rows) ins.run(t.mint, JSON.stringify(t), t.volume24hLamports, t.updatedAt); }
+  async pruneTokens(keep: string[]) { const rows = this.db.prepare("select mint from tokens").all(); const del = this.db.prepare("delete from tokens where mint = ?"); const k = new Set(keep); for (const r of rows) if (!k.has(r.mint)) del.run(r.mint); }
+  async listTokens() { return this.db.prepare("select data from tokens").all().map((x: any) => JSON.parse(x.data)); }
+  async getToken(mint: string) { const x = this.db.prepare("select data from tokens where mint = ?").get(mint); return x ? JSON.parse(x.data) : null; }
+  async observedSlot() { const x = this.db.prepare("select max(s) as s from (select max(slot) as s from events union all select max(slot) as s from trades)").get(); return x && x.s !== null && x.s !== undefined ? Number(x.s) : null; }
   async setCursor(s: string) { this.db.prepare("insert into cursor (id, signature) values (1, ?) on conflict (id) do update set signature = excluded.signature").run(s); }
   async insertEvents(rows: EventRow[], cursor: string) {
     this.db.exec("begin");
@@ -234,3 +281,6 @@ class SqliteStore implements Store {
   async listSky(limit: number) { return this.db.prepare("select data from sky order by claimable desc limit ?").all(limit).map((x: any) => JSON.parse(x.data)); }
   async close() { this.db.close(); }
 }
+
+function pgTrade(x: any): TradeRow { return { signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: x.buy, amountIn: x.amount_in, amountOut: x.amount_out, venue: x.venue ?? undefined, baseAmountRaw: x.base_amount ?? undefined, quoteAmountLamports: x.quote_amount ?? undefined, executionPriceSol: x.price ?? null }; }
+function sqTrade(x: any): TradeRow { return { signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: !!x.buy, amountIn: x.amount_in, amountOut: x.amount_out, venue: x.venue ?? undefined, baseAmountRaw: x.base_amount ?? undefined, quoteAmountLamports: x.quote_amount ?? undefined, executionPriceSol: x.price ?? null }; }

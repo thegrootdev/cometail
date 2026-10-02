@@ -1,10 +1,11 @@
 import { PublicKey } from "@solana/web3.js";
+import { executionPrice } from "./tokens";
 import { utils } from "@coral-xyz/anchor";
 // Event indexer: follows the vault program's transaction history, decodes Anchor events and
 // stores them together with a snapshot of every vault and its streams, for the site's pages.
 import { Connection } from "@solana/web3.js";
 import { VAULT_PROGRAM_ID } from "@cometail/client";
-import { Chain , isDefault , Decoded , DAMM_V2_PROGRAM_ID } from "./chain";
+import { Chain , isDefault , Decoded , DAMM_V2_PROGRAM_ID , DBC_PROGRAM_ID } from "./chain";
 import { isCrossed } from "./ladder";
 import { binArrayIndex, readBinView, unfilledAmount } from "./chain";
 import { getMint, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
@@ -23,7 +24,9 @@ async function retry<T>(what: string, fn: () => Promise<T>, attempts = 8): Promi
 /** Anchor's event-instruction tag (EVENT_IX_TAG = 0x1d9acb512ea545e4) serialized little-endian: the first eight bytes of the self-CPI that carries an event. */
 const EVENT_IX_DISCRIMINATOR = Buffer.from("e445a52e51cb9a1d", "hex");
 
-const SWAP_DISCRIMINATOR = Buffer.from("f8c69e91e17587c8", "hex"), SWAP2_DISCRIMINATOR = Buffer.from("414b3f4ceb5b5b88", "hex");
+const SWAP_DISCRIMINATOR = Buffer.from("f8c69e91e17587c8", "hex"), SWAP2_DISCRIMINATOR = Buffer.from("414b3f4ceb5b5b88", "hex"), SWAP2_HOOK_DISCRIMINATOR = Buffer.from("b75d992818e6c297", "hex");
+/** A pool the trade index follows: the DBC curve of a launch, or a DAMM v2 pool after graduation. */
+export interface TradePool { pool: PublicKey; venue: "curve" | "damm"; vault: string | null; baseDecimals: number }
 
 export class Indexer {
   constructor(readonly chain: Chain, readonly store: Store) {}
@@ -32,12 +35,30 @@ export class Indexer {
   async pass(): Promise<number> {
     const added = await this.indexEvents();
     const vaults = await this.chain.vaults(); // throws on an RPC failure: nothing is pruned on a partial read
-    await this.indexTrades(vaults);
+    await this.indexTrades(await this.tradePools(vaults));
     await this.snapshot(vaults);
     return added;
   }
 
-  /** Swaps on each vault's graduated stream-token pool (cp-amm EvtSwap2). Per pool, a bounded
+  /** The pools to follow: every launch's DBC curve and, once graduated, its DAMM v2 pool (token rows),
+   *  plus every vault's stream-token pool. */
+  private async tradePools(vaults: Decoded[]): Promise<TradePool[]> {
+    const out = new Map<string, TradePool>();
+    for (const t of await this.store.listTokens()) {
+      out.set(t.dbcPool, { pool: new PublicKey(t.dbcPool), venue: "curve", vault: t.vault, baseDecimals: t.decimals });
+      if (t.dammPool && t.stage === "graduated") out.set(t.dammPool, { pool: new PublicKey(t.dammPool), venue: "damm", vault: t.vault, baseDecimals: t.decimals });
+    }
+    for (const v of vaults) {
+      const pool: PublicKey | undefined = v.account.dammPool;
+      if (!pool || isDefault(pool) || out.has(pool.toBase58())) continue;
+      let decimals = 6;
+      try { decimals = await this.stDecimals(v.account.stMint); } catch { /* keep the default */ }
+      out.set(pool.toBase58(), { pool, venue: "damm", vault: v.pubkey.toBase58(), baseDecimals: decimals });
+    }
+    return [...out.values()];
+  }
+
+  /** Swaps on every followed pool (DBC EvtSwap* on curves, cp-amm EvtSwap2 on DAMM v2). Per pool, a bounded
    *  catch-up: the walk goes backward from the newest signature toward the last fully indexed one in
    *  at most three pages per pass and persists its frontier (store.PoolCursor); the head moves only
    *  when the walk reaches its target, so no interval is ever skipped, and a pool with a frontier is
@@ -45,13 +66,12 @@ export class Indexer {
    *  and any repeat is safe. The trader is the swap instruction's own signer (cp-amm SwapCtx.payer,
    *  account 8 of swap / swap2) when the event can be paired with its swap in execution order;
    *  otherwise the fee payer, marked as such, which the metrics never count as an independent buyer. */
-  private async indexTrades(vaults: Decoded[]): Promise<number> {
+  private async indexTrades(pools: TradePool[]): Promise<number> {
     let added = 0;
     const conn: Connection = this.chain.connection;
-    for (const v of vaults) {
-      const pool: PublicKey | undefined = v.account.dammPool;
-      if (!pool || isDefault(pool)) continue;
-      const poolKey = pool.toBase58(), vaultKey = v.pubkey.toBase58();
+    for (const tp of pools) {
+      const pool = tp.pool;
+      const poolKey = pool.toBase58(), vaultKey = tp.vault ?? "";
       try {
         // a known pool always has a cursor row; it is pending until a catch-up completes, and a pass
         // interrupted by an unavailable transaction or an error sets it pending again without losing
@@ -81,7 +101,7 @@ export class Indexer {
           }
           if (!tx) { log("pool transaction not available yet; this pool resumes next pass", { pool: poolKey, signature: s.signature }); stopped = true; break; }
           if (tx.meta?.err) continue;
-          const rows = decodeTrades(this.chain, tx, pool, { signature: s.signature, slot: s.slot, blockTime: s.blockTime, vault: vaultKey });
+          const rows = decodeTrades(this.chain, tx, pool, { signature: s.signature, slot: s.slot, blockTime: s.blockTime, vault: vaultKey, venue: tp.venue, baseDecimals: tp.baseDecimals });
           await this.store.insertTrades(rows);
           added += rows.length;
           if (rows.length) log("indexed trades", { pool: poolKey, signature: s.signature, trades: rows.length });
@@ -240,36 +260,48 @@ export function binPriceSolPerSt(binId: number, binStep: number, stIsX: boolean,
 
 /** The trades of one transaction on one pool. Execution order is the top-level instructions each
  *  followed by their inner instructions; a swap's event self-CPI follows its swap instruction, so
- *  the events of a pool pair with the swaps of that pool in order. The ordinal counts every cp-amm
- *  event in the transaction before any pool filter, so it is stable across pools. */
-export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Connection["getTransaction"]>>>, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string }): TradeRow[] {
+ *  the events of a pool pair with the swaps of that pool in order. The ordinal counts every event
+ *  instruction of either Meteora program in the transaction before any pool filter, so it is
+ *  stable across pools. DBC: swap / swap2 / swap2_with_transfer_hook with the pool at account 2 and
+ *  the signer at 9, events EvtSwap (actual input) and EvtSwap2 (included-fee input). cp-amm: swap /
+ *  swap2 with the pool at 1 and the signer at 8, EvtSwap2. Direction 1 is quote in, token out. */
+export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Connection["getTransaction"]>>>, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string; venue: "curve" | "damm"; baseDecimals: number }): TradeRow[] {
   const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined });
   const feePayer = keys.get(0)?.toBase58() ?? "";
   const inner = new Map<number, { programIdIndex: number; accounts: number[]; data: Buffer }[]>();
   for (const ii of tx.meta?.innerInstructions ?? []) inner.set(ii.index, ii.instructions.map((x) => ({ programIdIndex: x.programIdIndex, accounts: x.accounts, data: Buffer.from(utils.bytes.bs58.decode(x.data)) })));
   const flat: { programIdIndex: number; accounts: number[]; data: Buffer }[] = [];
   tx.transaction.message.compiledInstructions.forEach((c, i) => { flat.push({ programIdIndex: c.programIdIndex, accounts: [...c.accountKeyIndexes], data: Buffer.from(c.data) }); for (const x of inner.get(i) ?? []) flat.push(x); });
-  const swaps: string[] = []; // signers of this pool's swaps, in execution order, not yet paired with their event
+  const program = meta.venue === "curve" ? DBC_PROGRAM_ID : DAMM_V2_PROGRAM_ID;
+  const coder = meta.venue === "curve" ? chain.dbc.coder : chain.damm.coder;
+  const poolIndex = meta.venue === "curve" ? 2 : 1, signerIndex = meta.venue === "curve" ? 9 : 8;
+  const swaps: string[] = [];
   const rows: TradeRow[] = [];
   let ordinal = 0;
   for (const f of flat) {
     const pid = keys.get(f.programIdIndex);
-    if (!pid || !pid.equals(DAMM_V2_PROGRAM_ID) || f.data.length < 8) continue;
+    if (!pid || f.data.length < 8) continue;
     const disc = f.data.subarray(0, 8);
-    if (disc.equals(SWAP_DISCRIMINATOR) || disc.equals(SWAP2_DISCRIMINATOR)) {
-      const p = keys.get(f.accounts[1] ?? -1), signer = keys.get(f.accounts[8] ?? -1);
+    if (disc.equals(EVENT_IX_DISCRIMINATOR) && (pid.equals(DBC_PROGRAM_ID) || pid.equals(DAMM_V2_PROGRAM_ID))) ordinal++;
+    if (!pid.equals(program)) continue;
+    if (disc.equals(SWAP_DISCRIMINATOR) || disc.equals(SWAP2_DISCRIMINATOR) || disc.equals(SWAP2_HOOK_DISCRIMINATOR)) {
+      const p = keys.get(f.accounts[poolIndex] ?? -1), signer = keys.get(f.accounts[signerIndex] ?? -1);
       if (p && p.equals(pool) && signer) swaps.push(signer.toBase58());
       continue;
     }
     if (!disc.equals(EVENT_IX_DISCRIMINATOR) || f.data.length < 16) continue;
-    ordinal++;
     let ev: { name: string; data: any } | null = null;
-    try { ev = chain.damm.coder.events.decode(f.data.subarray(8).toString("base64")); } catch { continue; }
-    if (!ev || ev.name.toLowerCase() !== "evtswap2") continue;
+    try { ev = coder.events.decode(f.data.subarray(8).toString("base64")); } catch { continue; }
+    if (!ev || !/^evtswap/i.test(ev.name)) continue;
     const d: any = ev.data;
     if (!d.pool || !new PublicKey(d.pool).equals(pool)) continue;
+    const buy = Number(d.tradeDirection) === 1;
+    const result = d.swapResult ?? {};
+    const input = BigInt(String(result.includedFeeInputAmount ?? result.actualInputAmount ?? d.amountIn ?? 0));
+    const output = BigInt(String(result.outputAmount ?? 0));
+    const quote = buy ? input : output, base = buy ? output : input;
     const signer = swaps.shift();
-    rows.push({ signature: meta.signature, idx: ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: signer ?? feePayer, traderKind: signer ? "authority" : "feePayer", buy: Number(d.tradeDirection) === 1, amountIn: String(d.swapResult?.includedFeeInputAmount ?? "0"), amountOut: String(d.swapResult?.outputAmount ?? "0") });
+    rows.push({ signature: meta.signature, idx: ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: signer ?? feePayer, traderKind: signer ? "authority" : "feePayer", buy, amountIn: input.toString(), amountOut: output.toString(), venue: meta.venue, baseAmountRaw: base.toString(), quoteAmountLamports: quote.toString(), executionPriceSol: executionPrice(quote, base, meta.baseDecimals) });
   }
   return rows;
 }

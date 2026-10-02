@@ -5,16 +5,20 @@
 //   GET /api/events?vault=&limit=   events, newest first
 //   GET /api/health
 //   GET /api/prices                 SOL/USD for display, with its source and age
+//   GET /api/tokens?sort=volume24h|newest&stage=bonding|graduated|all&q=&limit=&cursor=   launches in scope
+//   GET /api/tokens/:mint            one launch
+//   GET /api/tokens/:mint/trades?limit=&cursor=   its trades, newest first
+//   Token answers carry an envelope: schemaVersion, cluster, generatedAtMs, observedSlot, coverage, solUsd, data.
 //   GET /api/metrics                the submission metrics, independent actors apart from the demo set
 // It binds to the loopback interface and expects a reverse proxy in front for TLS. CORS is
 // limited to the configured origins, and each client address gets a token bucket; the
 // client address is taken from X-Forwarded-For only when the connection comes from loopback.
 import http from "http";
 import net from "net";
-import { Store } from "./store";
+import { Store, TokenRow, TradeRow } from "./store";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[] }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -156,6 +160,79 @@ export async function solUsd(): Promise<{ solUsd: number; source: string; at: nu
 }
 
 
+/** The envelope every token answer carries: what the numbers are, how complete they are, and the SOL price used for USD columns. */
+async function envelope(store: Store, opts: ApiOptions, data: unknown) {
+  const cursors = await store.listPoolCursors();
+  const pending = cursors.filter((c) => c.cursor.status !== "ok").length;
+  const price = await solUsd();
+  const observed = await store.observedSlot();
+  return {
+    schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), observedSlot: observed,
+    coverage: { status: pending > 0 ? "partial" : "complete", pendingPools: pending, lastSuccessfulAtMs: observed ? Date.now() : null },
+    solUsd: price ? { value: price.solUsd, source: price.source, observedAtMs: price.at, status: Date.now() - price.at < 10 * 60_000 ? "fresh" : "stale", valuationBasis: (opts.cluster ?? "devnet") === "mainnet-beta" ? "market" : "reference" } : null,
+    data,
+  };
+}
+function tokenView(t: TokenRow, solUsd: number | null) {
+  const supply = BigInt(t.totalSupplyRaw);
+  let fdvUsd: string | null = null;
+  if (t.priceSol && solUsd) {
+    // price (12 decimals) x whole tokens x SOL/USD, kept as a decimal string with 2 places
+    const price = BigInt(Math.round(Number(t.priceSol) * 1e12));
+    const whole = supply / 10n ** BigInt(t.decimals);
+    const usd = (price * whole * BigInt(Math.round(solUsd * 100))) / 10n ** 12n;
+    fdvUsd = (Number(usd) / 100).toFixed(2);
+  }
+  return {
+    identity: { mint: t.mint, decimals: t.decimals, name: t.name, symbol: t.symbol, imageUrl: t.imageUrl, metadataUri: t.metadataUri, metadataStatus: t.metadataStatus, creator: t.creator, custody: t.custody, createdAtMs: t.createdAtMs, dbcPool: t.dbcPool, dammPool: t.dammPool, quoteMint: t.quoteMint, tokenKind: t.tokenKind, config: t.config, vault: t.vault, stage: t.stage },
+    market: { priceSol: t.priceSol, priceSource: t.priceSource, priceAtMs: t.priceAtMs, totalSupplyRaw: t.totalSupplyRaw, circulatingSupplyRaw: null, fdvUsd, marketCapUsd: null, valuationBasis: "fdv" },
+    volume24h: { lamports: t.volume24hLamports, buys: t.buys24h, sells: t.sells24h, windowEndMs: t.updatedAt, windowStartMs: t.updatedAt - 24 * 3600_000, complete: t.volumeComplete, status: t.volumeComplete ? "complete" : "partial" },
+    holders: { count: t.holders, countedAtMs: t.holdersAtMs, status: t.holders === null ? "missing" : "ok", definition: "unique owners of token accounts with a nonzero balance of the mint, excluding the pools' own vaults; addresses, not people" },
+    bonding: { progressBps: t.progressBps, quoteRaisedLamports: t.quoteRaisedLamports, targetLamports: t.targetLamports, migrationStage: t.stage === "graduated" ? "graduated" : t.stage === "completed" ? "completed" : "bonding" },
+    updatedAtMs: t.updatedAt,
+  };
+}
+function tradeView(t: TradeRow) {
+  return { id: `${t.signature}:${t.idx}:${t.pool}`, signature: t.signature, ordinal: t.idx, slot: t.slot, blockTimeSec: t.blockTime, pool: t.pool, venue: t.venue ?? null, side: t.buy ? "buy" : "sell", baseAmountRaw: t.baseAmountRaw ?? null, quoteAmountLamports: t.quoteAmountLamports ?? null, executionPriceSol: t.executionPriceSol ?? null, trader: t.trader, traderKind: t.traderKind };
+}
+async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
+  const price = await solUsd();
+  const parts = url.pathname.split("/").filter(Boolean); // api, tokens, [mint], [trades]
+  if (parts.length === 2) {
+    const sort = url.searchParams.get("sort") === "newest" ? "newest" : "volume24h";
+    const stage = url.searchParams.get("stage") ?? "all";
+    const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    let rows = await store.listTokens();
+    if (stage === "bonding") rows = rows.filter((t) => t.stage !== "graduated");
+    else if (stage === "graduated") rows = rows.filter((t) => t.stage === "graduated");
+    if (q) rows = rows.filter((t) => [t.mint, t.name, t.symbol, t.creator].some((x) => x.toLowerCase().includes(q)));
+    rows.sort((a, b) => sort === "newest" ? (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0) || b.updatedAt - a.updatedAt : (BigInt(b.volume24hLamports) > BigInt(a.volume24hLamports) ? 1 : BigInt(b.volume24hLamports) < BigInt(a.volume24hLamports) ? -1 : a.mint.localeCompare(b.mint)));
+    const cursor = url.searchParams.get("cursor");
+    let start = 0;
+    if (cursor) { const i = rows.findIndex((t) => t.mint === cursor); start = i >= 0 ? i + 1 : 0; }
+    const page = rows.slice(start, start + limit);
+    const next = start + limit < rows.length ? page[page.length - 1]?.mint ?? null : null;
+    return send(200, await envelope(store, opts, { tokens: page.map((t) => tokenView(t, price?.solUsd ?? null)), total: rows.length, nextCursor: next, sort, stage }), { "cache-control": "public, max-age=5" });
+  }
+  const mint = parts[2];
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) return send(404, { error: "no such token" });
+  const t = await store.getToken(mint);
+  if (!t) return send(404, { error: "no such token" });
+  if (parts.length === 3) return send(200, await envelope(store, opts, tokenView(t, price?.solUsd ?? null)), { "cache-control": "public, max-age=5" });
+  if (parts.length === 4 && parts[3] === "trades") {
+    const cursor = url.searchParams.get("cursor");
+    let before: { slot: number; idx: number } | null = null;
+    if (cursor) { const [s, i] = cursor.split(":").map(Number); if (Number.isFinite(s) && Number.isFinite(i)) before = { slot: s, idx: i }; }
+    const pools = [t.dbcPool, ...(t.dammPool ? [t.dammPool] : [])];
+    const trades = await store.listTradesByPools(pools, limit + 1, before);
+    const page = trades.slice(0, limit);
+    const last = page[page.length - 1];
+    return send(200, await envelope(store, opts, { trades: page.map(tradeView), nextCursor: trades.length > limit && last ? `${last.slot}:${last.idx}` : null }), { "cache-control": "public, max-age=5" });
+  }
+  return send(404, { error: "not found" });
+}
+
 export async function startApi(store: Store, opts: ApiOptions): Promise<http.Server> {
   await refuseIfTaken(opts.host, opts.port);
   const buckets = new Buckets(opts.ratePerMinute, Math.max(10, Math.ceil(opts.ratePerMinute / 2)));
@@ -191,6 +268,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         return send(200, { ...vault, streams: await store.listStreams(m[1]), events: await store.listEvents(m[1], limit), trades: await store.listTrades(m[1], limit) });
       }
       if (url.pathname === "/api/events") return send(200, { events: await store.listEvents(url.searchParams.get("vault"), limit) });
+      if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return tokenRoutes(store, opts, url, send);
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {
         // the whole store is read for this document: computed at most once per 30 s, shared by every caller

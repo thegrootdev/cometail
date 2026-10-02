@@ -8,6 +8,7 @@ import { loadConfig } from "./config";
 import { Indexer } from "./indexer";
 import { startApi } from "./api";
 import { scanSky } from "./sky";
+import { scanTokens } from "./tokens";
 import { openStore } from "./store";
 import { keeperPass } from "./keeper";
 import { LookupTables } from "./lut";
@@ -31,14 +32,20 @@ async function main() {
     await store.init();
     const indexer = new Indexer(chain, store);
     // exit status 2 = the API port is taken; the service unit does not restart on it
-    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()) }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
+    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
     let passes = 0;
     while (!stopping) {
       let added = 0;
       try { added = await indexer.pass(); } catch (e) { log("indexer pass failed", { error: String((e as Error).message ?? e) }); }
       // the Sky refreshes on its schedule, and right away when new events change what it shows
       if (added > 0 || passes % cfg.skyEveryPasses === 0) {
-        try { const rows = await scanSky(chain, cfg.skyConfigs, store); await store.upsertSky(rows); await store.pruneSky(rows.map((r) => r.pool)); } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
+        try {
+          const rows = await scanSky(chain, cfg.skyConfigs, store); await store.upsertSky(rows); await store.pruneSky(rows.map((r) => r.pool));
+          // the token rows behind /api/tokens follow the Sky's curve rows
+          const tokens = await scanTokens(chain, rows, store, new Set(cfg.migrateConfigs.map((k) => k.toBase58())));
+          await store.upsertTokens(tokens); await store.pruneTokens(tokens.map((t) => t.mint));
+          log("token scan", { tokens: tokens.length, graduated: tokens.filter((t) => t.stage === "graduated").length });
+        } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
       }
       passes++;
       if (process.env.COMETAIL_ONCE === "1") break;

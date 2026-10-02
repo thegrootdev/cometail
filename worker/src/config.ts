@@ -42,6 +42,8 @@ export interface Config {
   migrateConfigs: PublicKey[];
   /** Wallets that belong to the team or the demo (depositors, creators, buyers); /api/metrics reports them apart from independent actors. */
   demoActors: string[];
+  /** Cluster name reported by the API envelope. */
+  cluster: string;
   dryRun: boolean;
   cuPriceMicroLamports: number;
 }
@@ -91,6 +93,7 @@ export function loadConfig(): Config {
     skyEveryPasses: Math.max(1, num("COMETAIL_SKY_EVERY_PASSES", 4)),
     migrateConfigs: env("COMETAIL_MIGRATE_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
     demoActors: env("COMETAIL_DEMO_ACTORS", "").split(",").map((s) => s.trim()).filter(Boolean),
+    cluster: env("COMETAIL_CLUSTER", "devnet"),
     dryRun: env("COMETAIL_DRY_RUN", "0") === "1",
     cuPriceMicroLamports: num("COMETAIL_CU_PRICE", 0),
   };
