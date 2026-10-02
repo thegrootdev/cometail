@@ -95,7 +95,10 @@ go out as v0 transactions with a per-vault address lookup table.
 
 The indexer follows the program's transactions into the store, snapshots every vault and
 stream, scans the Sky (every DBC pool joined to its config: custody, eligibility, progress,
-claimable backlog, realized curve income), and serves `/api/sky`, `/api/vaults`,
+claimable backlog, realized curve income; for every migrated pool, one row per permanently
+locked DAMM v2 position with the NFT holder and its custody, the position's share of the pool's
+permanent liquidity, pending quote fees, quote fees claimed so far, and whether the program's
+size rule would admit it, keyed by the position address with `kind: "position"`), and serves `/api/sky`, `/api/vaults`,
 `/api/vaults/:vault` and `/api/events` for the site.
 
 ## Running the site
