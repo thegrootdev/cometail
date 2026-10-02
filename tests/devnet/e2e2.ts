@@ -180,7 +180,7 @@ describe("devnet end-to-end, second vault", () => {
       const streamC0 = (indexed.streams ?? []).find((x: any) => String(x.data.pool) === dammC.toBase58());
       const harvestedC0 = (indexed.events ?? []).filter((e: any) => (e.name === "harvested" || e.name === "oneTimeHarvested") && e.data.stream === streamC0?.stream).reduce((a: bigint, e: any) => a + BigInt(e.data.gross), 0n);
       // the Sky refreshes after new events; wait for the row to carry every harvest the indexer holds
-      const cRow = await waitFor("Sky attribution of C", async () => { const sky = await (await fetch(`http://127.0.0.1:${API}/api/sky`)).json(); const row = sky.streams.find((s: any) => s.baseMint === mintC.publicKey.toBase58()); return row && row.realized30dLamports === harvestedC0.toString() ? row : null; }, 180_000, 10_000);
+      const cRow = await waitFor("Sky attribution of C", async () => { const sky = await (await fetch(`http://127.0.0.1:${API}/api/sky`)).json(); const row = sky.streams.find((s: any) => s.baseMint === mintC.publicKey.toBase58() && (s.kind ?? "curve") === "curve"); return row && row.realized30dLamports === harvestedC0.toString() ? row : null; }, 180_000, 10_000);
       step("indexer", { events: [...new Set(indexed.events.map((e: any) => e.name))], reconciliation: indexed.data.reconciliation, skyC: cRow ? { custody: cRow.custody, eligible: cRow.eligible, realized30d: cRow.realized30dLamports, vault: cRow.vault } : null });
       expect(indexed.data.reconciliation.matches).true;
       expect(cRow?.vault).eq(cv.vault.toBase58());

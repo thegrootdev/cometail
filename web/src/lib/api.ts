@@ -23,6 +23,10 @@ export interface SkyStream {
   tradingFeeLamports: string;
   dammPool: string | null;
   updatedAt: number;
+  kind?: "curve" | "position";
+  position?: string | null;
+  owner?: string;
+  lockedSharePct?: number;
 }
 export interface VaultRow {
   vault: string;

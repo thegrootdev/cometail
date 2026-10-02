@@ -39,6 +39,8 @@ export const sky = {
     realized: "harvested, 30 days",
     locked: "locked liquidity",
   },
+  position: "Locked position",
+  ofLocked: "of the locked liquidity",
 } as const;
 
 export const tokenPage = {

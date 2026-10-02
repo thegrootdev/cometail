@@ -85,7 +85,9 @@ export default function SkyPage() {
                       <span>
                         <strong>{short(s.baseMint, 5)}</strong>
                         <small>
-                          {s.custody} / {s.creatorPct}% locked
+                          {s.kind === "position"
+                            ? `${sky.position} · ${s.custody} / ${s.lockedSharePct}% ${sky.ofLocked}`
+                            : `${s.custody} / ${s.creatorPct}% locked`}
                         </small>
                       </span>
                     </Link>

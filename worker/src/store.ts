@@ -14,6 +14,11 @@ export interface SkyRow {
   /** Realized income from this vault's harvest events in the last 7 and 30 days; null when no vault holds the stream. */
   realized7dLamports: string | null; realized30dLamports: string | null; vault: string | null;
   tradingFeeLamports: string; dammPool: string | null; updatedAt: number;
+  /** "curve": a DBC pool and its creator rights (the default). "position": a permanently locked DAMM v2 position of a
+   *  migrated pool, keyed by the position address in `pool`, with the NFT holder in `creator`/`owner`. */
+  kind?: "curve" | "position"; position?: string | null; owner?: string;
+  /** Position rows: the position's permanent liquidity as a percentage of the pool's permanent total. */
+  lockedSharePct?: number;
 }
 
 export interface Store {
