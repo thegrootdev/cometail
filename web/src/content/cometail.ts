@@ -367,6 +367,8 @@ export const plainLaunch = {
   lock: "If the curve completes, 80% of the graduated liquidity is yours, permanently locked, earning fees for as long as the pool trades.",
 } as const;
 
+export const walletAccessibility = { close: "Close wallet selection" } as const;
+
 export const market = {
   kicker: "The launchpad", title: "Find your next comet.",
   body: "New ideas on the curve. Graduated comets on Meteora. Follow what is trading, then explore the tail.",

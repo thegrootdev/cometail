@@ -68,6 +68,22 @@
 @media(prefers-reduced-motion:reduce) { .market-card { transition: none; }.market-new-trade { animation: none; } }
 .token-execution-grid { align-items: start; }
 @media(max-width:767px) { .token-order-entry { order: -1; } }
+
+/* Receipt links remain identifiable without relying on their color. */
+.page-content .panel a.text-ion,
+.page-content .panel a.text-dust {
+ text-decoration: underline;
+ text-underline-offset: 3px;
+}
+
+/* Keep the footer below the first viewport while route data is loading. */
+.page-content {
+ min-height: calc(100vh - 80px);
+ min-height: calc(100svh - 80px);
+}
+.atlas-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.atlas-stats .stat { min-width: 0; }
+.atlas-stats .stat-label, .atlas-stats .stat-value { overflow-wrap: anywhere; }
 /* Keep navigation reachable at tablet widths without forcing the desktop row offscreen. */
 @media(min-width:761px) and (max-width:1100px) {
  .site-header { height: auto; flex-wrap: wrap; gap: 12px; }

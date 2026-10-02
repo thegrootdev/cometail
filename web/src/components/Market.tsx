@@ -17,7 +17,7 @@ function Snapshot({ data, error = false, onRetry }: { data: MarketEnvelope<unkno
   </div>;
 }
 function Metric({ label, value, note, exact }: { label: string; value: string; note?: string; exact?: string | null }) {
-  return <div className="market-metric"><dt>{label}</dt><dd title={exact ?? undefined}>{value}</dd>{note && <small>{note}</small>}</div>;
+  return <div className="market-metric"><dt>{label}</dt><dd title={exact ?? undefined}>{value}{note && <small>{note}</small>}</dd></div>;
 }
 function Stage({ token }: { token: MarketToken }) {
   const stage = token.migrationStage ?? token.stage;

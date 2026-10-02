@@ -84,7 +84,7 @@ export interface Store {
 
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and

@@ -41,12 +41,16 @@ export class Indexer {
   }
 
   /** The pools to follow: every launch's DBC curve and, once graduated, its DAMM v2 pool (token rows),
-   *  plus every vault's stream-token pool. */
+   *  plus every vault's stream-token pool. A trade's `vault` names the vault whose own stream token
+   *  trades on that pool (its dbc_pool or damm_pool), never a vault that merely holds a launch's
+   *  fee rights: the metrics count stream-token buyers by that field. */
   private async tradePools(vaults: Decoded[]): Promise<TradePool[]> {
     const out = new Map<string, TradePool>();
+    const streamPoolVault = new Map<string, string>();
+    for (const v of vaults) for (const p of [v.account.dbcPool, v.account.dammPool] as (PublicKey | undefined)[]) if (p && !isDefault(p)) streamPoolVault.set(p.toBase58(), v.pubkey.toBase58());
     for (const t of await this.store.listTokens()) {
-      out.set(t.dbcPool, { pool: new PublicKey(t.dbcPool), venue: "curve", vault: t.vault, baseDecimals: t.decimals });
-      if (t.dammPool && t.stage === "graduated") out.set(t.dammPool, { pool: new PublicKey(t.dammPool), venue: "damm", vault: t.vault, baseDecimals: t.decimals });
+      out.set(t.dbcPool, { pool: new PublicKey(t.dbcPool), venue: "curve", vault: streamPoolVault.get(t.dbcPool) ?? null, baseDecimals: t.decimals });
+      if (t.dammPool && t.stage === "graduated") out.set(t.dammPool, { pool: new PublicKey(t.dammPool), venue: "damm", vault: streamPoolVault.get(t.dammPool) ?? null, baseDecimals: t.decimals });
     }
     for (const v of vaults) {
       const pool: PublicKey | undefined = v.account.dammPool;

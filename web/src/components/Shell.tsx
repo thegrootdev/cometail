@@ -84,7 +84,7 @@ export function Shell({
           <ConnectWallet />
         </div>
       </header>
-      <main id="content" className={`page-content ${wide ? "page-wide" : ""}`}>
+      <main id="content" tabIndex={-1} className={`page-content ${wide ? "page-wide" : ""}`}>
         {children}
       </main>
       <footer className="site-footer">
