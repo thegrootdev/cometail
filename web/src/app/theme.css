@@ -1234,3 +1234,89 @@ body .wallet-adapter-dropdown-list {
     gap: 14px;
   }
 }
+
+/* Second review (spikes/19-comet-universe/REVIEW-e91a10c.txt). */
+/* 4. the mascot column only where a mascot is. */
+.page-heading {
+  grid-template-columns: minmax(0, 1fr);
+}
+.page-heading.has-mascot {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.page-heading:not(.has-mascot) .page-heading-side {
+  grid-column: 1;
+}
+/* 6. the launch fee, against the paragraph cascade of the aside and the preview. */
+.launch-aside p.creation-fee,
+.panel p.creation-fee,
+p.creation-fee,
+.hero-footnote {
+  color: var(--dust) !important;
+  font-weight: 800 !important;
+}
+/* 5. the modal's close control gets its own row. */
+body .wallet-adapter-modal-wrapper {
+  padding-top: 24px !important;
+}
+body .wallet-adapter-modal-title {
+  padding: 36px 56px 16px !important;
+}
+body .wallet-adapter-modal-button-close {
+  top: 14px !important;
+  right: 14px !important;
+}
+@media (max-width: 760px) {
+  /* 1. the catalogue cards drop the table's minimum width. */
+  .stream-table,
+  .stream-table tbody,
+  .stream-table tr,
+  .table-scroll {
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+  /* 2. chapter clearance, beating the sibling rule, side padding included. */
+  .chapter,
+  .chapter + .chapter {
+    padding: 68px 18px 20px !important;
+  }
+  /* 3. the header fits 390 and 320: wrap allowed, smaller controls, no overflow. */
+  .site-header {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px 10px;
+  }
+  .header-right {
+    gap: 8px;
+    flex: none;
+    max-width: 100%;
+  }
+  .brand-link .wordmark {
+    width: 112px;
+    height: auto;
+  }
+  body .wallet-adapter-button,
+  .wallet-placeholder {
+    min-height: 40px;
+    padding: 8px 14px !important;
+    font-size: 14px !important;
+  }
+  .network-badge {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+  .page-heading.has-mascot {
+    grid-template-columns: minmax(0, 1fr) 96px;
+  }
+  .page-heading:not(.has-mascot) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body .wallet-adapter-modal-title {
+    padding: 40px 48px 12px !important;
+    font-size: 24px !important;
+  }
+}
+@media (max-width: 340px) {
+  .network-badge {
+    display: none;
+  }
+}
