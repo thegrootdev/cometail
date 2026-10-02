@@ -62,6 +62,19 @@ export async function createPoolIx(a: { config: PublicKey; baseMint: PublicKey; 
   return { ix, ...addrs };
 }
 
+/** A Token-2022 base launch (config `tokenType = 1`): DBC writes the metadata into the mint, no Metaplex account. */
+export async function createPool2022Ix(a: { config: PublicKey; baseMint: PublicKey; quoteMint: PublicKey; creator: PublicKey; payer: PublicKey; name?: string; symbol?: string; uri?: string }) {
+  const addrs = poolAddrs(a.config, a.baseMint, a.quoteMint);
+  const ix = await dbcProgram.methods
+    .initializeVirtualPoolWithToken2022({ name: a.name ?? "token", symbol: a.symbol ?? "TKN", uri: a.uri ?? "https://cometail.fun/meta.json" })
+    .accountsPartial({
+      config: a.config, poolAuthority: DBC_POOL_AUTHORITY, creator: a.creator, baseMint: a.baseMint, quoteMint: a.quoteMint, pool: addrs.pool,
+      baseVault: addrs.baseVault, quoteVault: addrs.quoteVault, payer: a.payer, tokenQuoteProgram: TOKEN_PROGRAM_ID, tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+  return { ix, ...addrs };
+}
+
 export async function swap2Ix(svm: LiteSVM, a: { pool: PublicKey; payer: PublicKey; inputMint: PublicKey; outputMint: PublicKey; inputAccount: PublicKey; outputAccount: PublicKey; amount0: BN; amount1: BN; mode: SwapMode }) {
   const p = getPool(svm, a.pool);
   const cfg = getConfig(svm, p.config);
@@ -70,7 +83,7 @@ export async function swap2Ix(svm: LiteSVM, a: { pool: PublicKey; payer: PublicK
     .accountsPartial({
       poolAuthority: DBC_POOL_AUTHORITY, config: p.config, pool: a.pool, inputTokenAccount: a.inputAccount, outputTokenAccount: a.outputAccount,
       baseVault: p.baseVault, quoteVault: p.quoteVault, baseMint: p.baseMint, quoteMint: cfg.quoteMint, payer: a.payer,
-      tokenBaseProgram: TOKEN_PROGRAM_ID, tokenQuoteProgram: TOKEN_PROGRAM_ID, referralTokenAccount: null,
+      tokenBaseProgram: svm.getAccount(p.baseMint)!.owner, tokenQuoteProgram: TOKEN_PROGRAM_ID, referralTokenAccount: null,
     })
     .remainingAccounts([{ pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false }])
     .instruction();

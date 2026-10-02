@@ -155,6 +155,8 @@ pub struct Settle<'info> {
     pub protocol: Box<Account<'info, Protocol>>,
     #[account(mut, seeds = [SEED_VAULT, vault.st_mint.as_ref()], bump = vault.bump)]
     pub vault: Box<Account<'info, Vault>>,
+    /// Receives the rent of the order and record accounts when the order closes.
+    #[account(mut)]
     pub signer: Signer<'info>,
     #[account(mut, constraint = lb_pair.key() == vault.dlmm_pair @ VaultError::AccountMismatch)]
     pub lb_pair: AccountLoader<'info, lb_clmm::accounts::LbPair>,
@@ -248,7 +250,7 @@ pub fn settle<'info>(ctx: Context<'info, Settle<'info>>, bins: Vec<i32>) -> Resu
     let mut closed = false;
     if remaining == 0 {
         lb_clmm::cpi::close_limit_order_if_empty(CpiContext::new_with_signer(ctx.accounts.dlmm_program.key(), lb_clmm::cpi::accounts::CloseLimitOrderIfEmpty {
-            limit_order: ctx.accounts.limit_order.to_account_info(), owner: v.to_account_info(), rent_receiver: v.to_account_info(),
+            limit_order: ctx.accounts.limit_order.to_account_info(), owner: v.to_account_info(), rent_receiver: ctx.accounts.signer.to_account_info(),
             event_authority: ctx.accounts.dlmm_event_authority.to_account_info(), program: ctx.accounts.dlmm_program.to_account_info(),
         }, &[signer]))?;
         closed = true;

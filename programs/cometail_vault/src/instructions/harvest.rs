@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use anchor_spl::token_interface::TokenAccount as TokenAccountIf;
+use anchor_spl::token_interface::{TokenAccount as TokenAccountIf, TokenInterface};
 
 use crate::constants::*;
 use crate::cp_amm;
@@ -88,6 +88,9 @@ pub struct HarvestDbc<'info> {
     pub quote_vault: UncheckedAccount<'info>,
     /// CHECK: the pool's base mint, checked against the pool
     pub base_mint: UncheckedAccount<'info>,
+    /// The base mint's own token program (SPL or Token-2022): DBC constrains the base vault to it.
+    #[account(constraint = base_token_program.key() == *base_mint.owner @ VaultError::AccountMismatch)]
+    pub base_token_program: Interface<'info, TokenInterface>,
     /// CHECK: DBC program, by address
     #[account(address = dbc::ID)]
     pub dbc_program: UncheckedAccount<'info>,
@@ -116,7 +119,7 @@ pub fn harvest_dbc(ctx: Context<HarvestDbc>) -> Result<()> {
         token_a_account: c.placeholder_wsol.to_account_info(), token_b_account: c.income_wsol.to_account_info(),
         base_vault: ctx.accounts.base_vault.to_account_info(), quote_vault: ctx.accounts.quote_vault.to_account_info(),
         base_mint: ctx.accounts.base_mint.to_account_info(), quote_mint: c.wsol_mint.to_account_info(), creator: c.vault.to_account_info(),
-        token_base_program: c.token_program.to_account_info(), token_quote_program: c.token_program.to_account_info(),
+        token_base_program: ctx.accounts.base_token_program.to_account_info(), token_quote_program: c.token_program.to_account_info(),
         event_authority: ctx.accounts.dbc_event_authority.to_account_info(), program: ctx.accounts.dbc_program.to_account_info(),
     }, &[signer]), 0, u64::MAX)?;
     finish(&mut ctx.accounts.common, before)
@@ -128,9 +131,11 @@ pub fn harvest_dbc(ctx: Context<HarvestDbc>) -> Result<()> {
 #[derive(Accounts)]
 pub struct HarvestPosition<'info> {
     pub common: HarvestCommon<'info>,
-    #[account(constraint = damm_pool.key() == common.stream.pool @ VaultError::AccountMismatch)]
+    /// The stream's DAMM v2 pool: the deposited pool for position streams, the migration's
+    /// derived pool for DBC-rights streams (both record it in `derived_damm_pool`).
+    #[account(constraint = damm_pool.key() == common.stream.derived_damm_pool @ VaultError::AccountMismatch)]
     pub damm_pool: AccountLoader<'info, cp_amm::accounts::Pool>,
-    #[account(mut, constraint = position.key() == common.stream.position @ VaultError::AccountMismatch)]
+    #[account(mut, constraint = position.key() == common.stream.position @ VaultError::AccountMismatch, constraint = position.load()?.pool == damm_pool.key() @ VaultError::AccountMismatch)]
     pub position: AccountLoader<'info, cp_amm::accounts::Position>,
     #[account(constraint = nft_account.key() == common.stream.nft_account @ VaultError::AccountMismatch)]
     pub nft_account: Box<InterfaceAccount<'info, TokenAccountIf>>,
@@ -144,6 +149,9 @@ pub struct HarvestPosition<'info> {
     pub token_b_vault: UncheckedAccount<'info>,
     /// CHECK: checked against the pool
     pub token_a_mint: UncheckedAccount<'info>,
+    /// Token A's own token program (SPL or Token-2022): cp-amm constrains the A vault to it.
+    #[account(constraint = token_a_program.key() == *token_a_mint.owner @ VaultError::AccountMismatch)]
+    pub token_a_program: Interface<'info, TokenInterface>,
     /// CHECK: DAMM v2 program, by address
     #[account(address = cp_amm::ID)]
     pub cp_amm_program: UncheckedAccount<'info>,
@@ -154,7 +162,7 @@ pub struct HarvestPosition<'info> {
 pub fn harvest_position(ctx: Context<HarvestPosition>) -> Result<()> {
     let c = &ctx.accounts.common;
     require!(c.vault.status != VaultStatus::Open, VaultError::WrongStatus);
-    require!(c.stream.kind == StreamKind::DammV2Position || c.stream.position != Pubkey::default(), VaultError::AccountMismatch);
+    require!(c.stream.position != Pubkey::default(), VaultError::AccountMismatch);
     let (a_vault, b_vault, a_mint) = {
         let p = ctx.accounts.damm_pool.load()?;
         require!(p.collect_fee_mode == DAMM_COLLECT_ONLY_B || p.collect_fee_mode == DAMM_COLLECT_COMPOUNDING, VaultError::Ineligible);
@@ -172,7 +180,7 @@ pub fn harvest_position(ctx: Context<HarvestPosition>) -> Result<()> {
         token_a_vault: ctx.accounts.token_a_vault.to_account_info(), token_b_vault: ctx.accounts.token_b_vault.to_account_info(),
         token_a_mint: ctx.accounts.token_a_mint.to_account_info(), token_b_mint: c.wsol_mint.to_account_info(),
         position_nft_account: ctx.accounts.nft_account.to_account_info(), signer: c.vault.to_account_info(),
-        token_a_program: c.token_program.to_account_info(), token_b_program: c.token_program.to_account_info(),
+        token_a_program: ctx.accounts.token_a_program.to_account_info(), token_b_program: c.token_program.to_account_info(),
         event_authority: ctx.accounts.cp_amm_event_authority.to_account_info(), program: ctx.accounts.cp_amm_program.to_account_info(),
     }, &[signer]))?;
     finish(&mut ctx.accounts.common, before)

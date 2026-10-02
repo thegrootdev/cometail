@@ -4,6 +4,8 @@ use anchor_spl::token::{Mint, Token, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::VaultError;
+use crate::instructions::launch::APPROVED_BIN_STEPS;
+use crate::math;
 use crate::state::*;
 
 #[derive(Accounts)]
@@ -38,6 +40,9 @@ pub fn create_vault(ctx: Context<CreateVault>, policy: RoutingPolicy) -> Result<
     require!(policy.max_outstanding_orders >= 1, VaultError::InvalidPolicy);
     require!(policy.max_price_q64 > 0, VaultError::InvalidPolicy);
     require!(policy.max_spend_per_period > 0, VaultError::InvalidPolicy);
+    // register_pair derives the bin bound from the cap and has no second chance: every approved
+    // bin step must have a bin inside the cap in both orientations
+    for step in APPROVED_BIN_STEPS { require!(math::cap_feasible(step, policy.max_price_q64), VaultError::InvalidPolicy); }
     let v = &mut ctx.accounts.vault;
     v.depositor = ctx.accounts.depositor.key();
     v.depositor_wsol = ctx.accounts.depositor_wsol.key();

@@ -85,7 +85,11 @@ pub struct Vault {
     pub income_wsol: Pubkey,
     /// Second vault-owned WSOL account: the token A destination for every claim. Pinned.
     pub placeholder_wsol: Pubkey,
+    /// Monotonic: the next stream's PDA index. Never decremented.
     pub stream_count: u32,
+    /// Streams currently open on the vault (deposits plus the vault's own). Withdrawals take
+    /// them back; `launch` requires at least one.
+    pub active_streams: u32,
     pub policy: RoutingPolicy,
     pub routing: RoutingState,
     pub accounting: Accounting,

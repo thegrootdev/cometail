@@ -38,6 +38,14 @@ pub fn check_stream_config(info: &AccountInfo, admin: &Pubkey, preset: usize) ->
     require!(c.creator_liquidity_percentage == 0 && c.partner_liquidity_percentage == 0, VaultError::Ineligible);
     let expected_fee = [25u8, 50, 75][preset];
     require!(c.migration_fee_percentage == expected_fee && c.creator_migration_fee_percentage == 100, VaultError::Ineligible);
+    // launch derives the DAMM v2 pool from the customizable migration config and initializes an
+    // SPL mint; a locked-vesting schedule would park the curve in LockedVesting until a locker
+    // exists, and vested LP would fail the position checks at registration
+    require!(c.migration_fee_option == STREAM_MIGRATION_FEE_OPTION, VaultError::Ineligible);
+    require!(c.token_type == 0, VaultError::Ineligible);
+    let lv = &c.locked_vesting_config;
+    require!(lv.amount_per_period == 0 && lv.cliff_duration_from_migration_time == 0 && lv.frequency == 0 && lv.number_of_period == 0 && lv.cliff_unlock_amount == 0, VaultError::Ineligible);
+    require!(c.creator_liquidity_vesting_info.vesting_percentage == 0 && c.partner_liquidity_vesting_info.vesting_percentage == 0, VaultError::Ineligible);
     Ok(())
 }
 

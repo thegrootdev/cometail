@@ -61,16 +61,30 @@ the launch is still final: no cash-out, no ladder, but the vault keeps harvestin
 - `Vault`: depositor and their payout account, status (Open, Launched, Live), the stream
   token's DBC pool and derived DAMM v2 pool, the DLMM pair and its orientation, the
   vault's own position, the income and placeholder WSOL accounts, routing policy and
-  state, accounting totals.
+  state, accounting totals, and two counters: `stream_count` (the next stream's index,
+  never decremented) and `active_streams` (streams currently open; withdrawals take them
+  back and a launch needs at least one).
 - `Stream`: one per deposited DBC right or position, plus the vault's own pool and
   position marked `is_own` (set only by the program, never by a client).
-- `StreamIndex`: one per source account, so nothing can be deposited twice.
+- `StreamIndex`: one per source account (a DBC pool, a position), so nothing can be
+  deposited twice; a creator position that comes in with DBC rights has its own, and a
+  withdrawal closes every index the stream owns so the sources can enter a vault again.
 - `OrderRecord`: one per resting DLMM order, closed only when the order account closes.
 
 ## Instructions
 
-`init_protocol`, `update_protocol`, `create_vault`, `deposit_dbc_rights`,
+`init_protocol`, `update_protocol`, `create_vault`, `deposit_dbc_rights` (open curve),
+`deposit_dbc_rights_migrated` (graduated curve, with its creator position),
 `register_stream_position`, `deposit_position`, `deposit_position_split`,
 `withdraw_stream`, `launch`, `register_pair`, `register_own_position`, `cashout`,
-`harvest_trading`, `harvest_one_time`, `route`, `settle`. There is no swap instruction and
-no instruction with a free destination.
+`harvest_dbc`, `harvest_position`, `harvest_one_time`, `route`, `settle`. There is no swap
+instruction and no instruction with a free destination.
+
+A migrated creator position is recognized structurally, never by its share of a moving
+total: its NFT must sit in DAMM v2's own account for that NFT (the one the migration
+re-authorizes), owned by the vault with no delegate, carry only permanently locked
+liquidity, and hold at least half the creator's share of the pool's permanently locked
+liquidity. Depositors hand that account to the vault with a Token-2022 SetAuthority; a
+withdrawal hands it back. Harvests pass each mint's own token program, so Token-2022 bases
+work; `register_pair` is signed by the keeper or the depositor and refuses pairs whose base
+fee is above 1%; `create_vault` refuses a price cap that no approved bin step can represent.

@@ -21,7 +21,13 @@
 - Swap anything. Income is WSOL only; streams whose fees arrive in anything else are
   rejected at deposit.
 - Accept a client's word for anything it can read from the chain: eligibility, ownership,
-  provenance of the vault's own streams, order ownership, fill state.
+  provenance of the vault's own streams, which position is a migrated creator position,
+  order ownership, fill state.
+- Launch a vault whose streams were all withdrawn: the count of open streams, not the
+  number ever created, gates the launch.
+- Bind a DLMM pair chosen by a stranger, or one whose base fee is above 1%.
+- Let any source enter twice, or stay blocked after a withdrawal: a creator position that
+  came in with DBC rights has its own index, and withdrawals close every index they own.
 - Let a harvest happen before launch, so a withdrawal before launch always returns the
   stream with its fees attached.
 - Place anything but buy orders, above the depositor's price cap, past the period budget or
@@ -37,7 +43,11 @@ one-time claim replays, uninitialized or aliased claim destinations, the creator
 window around migration, creator NFTs not moving with a rights transfer, curves that would
 migrate into unsupported fee modes, withdrawable principal entering as a "stream",
 delegates that survive NFT transfers, duplicate or self-referential streams, forged
-own-stream provenance, launchpad spam, manufactured income before deposit, stream decay and
+own-stream provenance, a dust position posing as a migrated creator position, registration
+blocked by unrelated liquidity additions, launches of emptied vaults, pair bindings by
+strangers or with prohibitive fees, Token-2022 bases stranding at harvest, orphaned
+deduplication indices, stream configs drifting from what the launch path assumes, price
+caps no bin can represent, launchpad spam, manufactured income before deposit, stream decay and
 non-graduation, bid placement manipulation, settlement griefing, DLMM pair squatting, mint
 orientation, order fee denomination, transaction size and compute, rent, Token-2022
 extensions, unsolicited tokens, and the upgrade authorities above. Each one has a rule in

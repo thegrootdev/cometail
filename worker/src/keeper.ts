@@ -151,7 +151,8 @@ async function streamPass(ctx: KeeperContext, protocol: any, vaultPk: PublicKey,
       }
     }
     // creator trading fees accrue while the curve trades and stay claimable after
-    const dbcIx = await chain.client.harvestDbc({ ...common, dbcPool: s.pool, baseVault: pool.baseVault, quoteVault: pool.quoteVault, baseMint: pool.baseMint });
+    const baseTokenProgram = (await chain.accountOwner(pool.baseMint)) ?? TOKEN_PROGRAM_ID;
+    const dbcIx = await chain.client.harvestDbc({ ...common, dbcPool: s.pool, baseVault: pool.baseVault, quoteVault: pool.quoteVault, baseMint: pool.baseMint, baseTokenProgram });
     await sendIfWorthIt(dbcIx, `harvest_dbc ${streamPk.toBase58()}`, cfg.dustLamports);
     // one-time claims (migration fee, surplus) for external curves, once, after migration
     if (!s.isOwn && pool.migrationProgress === DBC_PROGRESS.createdPool && (Number(s.oneTimeClaims) & 3) !== 3) {
@@ -163,10 +164,11 @@ async function streamPass(ctx: KeeperContext, protocol: any, vaultPk: PublicKey,
   // the registered or deposited DAMM v2 position
   const position: PublicKey = s.position;
   if (!isDefault(position)) {
-    const dammPoolPk: PublicKey = kind === "dammV2Position" ? s.pool : s.derivedDammPool;
+    const dammPoolPk: PublicKey = s.derivedDammPool; // the deposited pool for position streams, the derived pool for DBC rights
     const pool = await chain.dammPool(dammPoolPk);
     if (!pool) return;
-    const ix = await chain.client.harvestPosition({ ...common, dammPool: dammPoolPk, position, nftAccount: s.nftAccount, tokenAVault: pool.tokenAVault, tokenBVault: pool.tokenBVault, tokenAMint: pool.tokenAMint });
+    const tokenAProgram = (await chain.accountOwner(pool.tokenAMint)) ?? TOKEN_PROGRAM_ID;
+    const ix = await chain.client.harvestPosition({ ...common, dammPool: dammPoolPk, position, nftAccount: s.nftAccount, tokenAVault: pool.tokenAVault, tokenBVault: pool.tokenBVault, tokenAMint: pool.tokenAMint, tokenAProgram });
     await sendIfWorthIt(ix, `harvest_position ${streamPk.toBase58()}`, cfg.dustLamports);
   }
 }

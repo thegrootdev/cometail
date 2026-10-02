@@ -32,3 +32,11 @@ the live mainnet Meteora binaries, in CI.
     totals equal balance deltas.
 12. **Configs**: the four configs reproduce the measured economics on the live binaries
     before and after creation on devnet.
+13. **Security regressions**: one case per finding of the security pass: a migrated
+    creator position is harvestable on its derived pool; registration survives unrelated
+    liquidity additions and rejects the partner position and dust positions in any
+    account; Token-2022 bases harvest with their own token program; an emptied vault
+    cannot launch; `register_pair` rejects strangers and fees above 1%; a bundled creator
+    position cannot enter twice and its withdrawal requires and closes its index; stream
+    configs with another migration option, token type or vesting are refused; an
+    unrepresentable price cap is refused at vault creation.

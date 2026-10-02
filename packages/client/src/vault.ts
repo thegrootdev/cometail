@@ -1,7 +1,7 @@
 // Instruction builders for the COMETAIL vault program. Pure: no RPC, no signing.
 import { AnchorProvider, BN, Idl, Program, Wallet } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT } from "@solana/spl-token";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, AuthorityType, createSetAuthorityInstruction, getAssociatedTokenAddressSync, NATIVE_MINT } from "@solana/spl-token";
 import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, DLMM_PROGRAM_ID, deriveProtocol, deriveVault, SEEDS } from "./index";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -32,6 +32,13 @@ export function dammPositionNftAccount(nftMint: PublicKey): PublicKey {
 }
 export function dammPosition(nftMint: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("position"), nftMint.toBuffer()], DAMM_V2_PROGRAM_ID)[0];
+}
+
+/** Hand a position NFT that sits in cp-amm's own PDA account to the vault: the account's authority
+ *  moves, the NFT stays where the migration put it. This is how a migrated creator position enters a
+ *  vault (`deposit_dbc_rights_migrated`); `withdraw_stream` hands the authority back. */
+export function handPositionNftToVaultIx(nftMint: PublicKey, currentOwner: PublicKey, vault: PublicKey): TransactionInstruction {
+  return createSetAuthorityInstruction(dammPositionNftAccount(nftMint), currentOwner, AuthorityType.AccountOwner, vault, [], TOKEN_2022_PROGRAM_ID);
 }
 
 export type RoutingPolicy = { maxSpendPerPeriod: BN; periodSeconds: BN; maxOutstandingOrders: number; maxBinsPerOrder: number; maxPriceQ64: BN };
@@ -79,12 +86,20 @@ export class VaultClient {
       cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: CP_AMM_EVENT_AUTHORITY, systemProgram: SystemProgram.programId,
     }).instruction();
   }
-  async depositDbcRights(a: { vault: PublicKey; depositor: PublicKey; streamIndex: number; dbcPool: PublicKey; dbcConfig: PublicKey; baseMint: PublicKey; creatorPosition?: PublicKey; creatorNftAccount?: PublicKey }): Promise<TransactionInstruction> {
+  /** PreBondingCurve rights only (the creator position registers after the external migration). */
+  async depositDbcRights(a: { vault: PublicKey; depositor: PublicKey; streamIndex: number; dbcPool: PublicKey; dbcConfig: PublicKey; baseMint: PublicKey }): Promise<TransactionInstruction> {
     return this.program.methods.depositDbcRights().accountsPartial({
       vault: a.vault, depositor: a.depositor, stream: deriveStream(a.vault, a.streamIndex), streamIndex: deriveStreamIndex(a.dbcPool),
-      dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, baseMint: a.baseMint, creatorPosition: a.creatorPosition ?? null, creatorNftAccount: a.creatorNftAccount ?? null,
+      dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, baseMint: a.baseMint, systemProgram: SystemProgram.programId,
+    }).instruction();
+  }
+  /** CreatedPool rights plus the creator position, whose PDA NFT account the depositor hands to the vault in the same transaction (`handPositionNftToVaultIx`). */
+  async depositDbcRightsMigrated(a: { vault: PublicKey; depositor: PublicKey; streamIndex: number; dbcPool: PublicKey; dbcConfig: PublicKey; baseMint: PublicKey; dammPool: PublicKey; creatorPosition: PublicKey; creatorNftAccount: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.depositDbcRightsMigrated().accountsPartial({
+      vault: a.vault, depositor: a.depositor, stream: deriveStream(a.vault, a.streamIndex), streamIndex: deriveStreamIndex(a.dbcPool), creatorPositionIndex: deriveStreamIndex(a.creatorPosition),
+      dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, baseMint: a.baseMint, dammPool: a.dammPool, creatorPosition: a.creatorPosition, creatorNftAccount: a.creatorNftAccount,
       cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: CP_AMM_EVENT_AUTHORITY, systemProgram: SystemProgram.programId,
-    } as any).instruction();
+    }).instruction();
   }
   async registerStreamPosition(a: { vault: PublicKey; stream: PublicKey; payer: PublicKey; dbcPool: PublicKey; dbcConfig: PublicKey; dammPool: PublicKey; position: PublicKey; nftAccount: PublicKey }): Promise<TransactionInstruction> {
     return this.program.methods.registerStreamPosition().accountsPartial({
@@ -105,6 +120,8 @@ export class VaultClient {
     }).instruction();
     return { ix, newNftMint, newPosition, newNftAccount };
   }
+  /** `position` is required for a DBC-rights stream that holds a creator position (its index closes too).
+   *  `depositorNftAccount` only when the NFT is not in cp-amm's PDA account; the PDA account's authority is handed back instead. */
   async withdrawStream(a: { vault: PublicKey; depositor: PublicKey; stream: PublicKey; kind: "dbc" | "position"; indexKey: PublicKey; position?: PublicKey; dbcPool?: PublicKey; dbcConfig?: PublicKey; nftAccount?: PublicKey; nftMint?: PublicKey; depositorNftAccount?: PublicKey }): Promise<TransactionInstruction> {
     return this.program.methods.withdrawStream().accountsPartial({
       vault: a.vault, depositor: a.depositor, stream: a.stream, streamIndex: deriveStreamIndex(a.indexKey), streamIndexKey: a.indexKey,
@@ -144,8 +161,9 @@ export class VaultClientStep4 extends VaultClient {
     }).instruction();
     return { ix, pool, stAta: getAssociatedTokenAddressSync(a.stMint, a.vault, true) };
   }
-  async registerPair(a: { vault: PublicKey; lbPair: PublicKey }): Promise<TransactionInstruction> {
-    return this.program.methods.registerPair().accountsPartial({ vault: a.vault, lbPair: a.lbPair }).instruction();
+  /** `signer` is the keeper or the depositor. */
+  async registerPair(a: { vault: PublicKey; signer: PublicKey; lbPair: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.registerPair().accountsPartial({ protocol: this.protocol, vault: a.vault, signer: a.signer, lbPair: a.lbPair }).instruction();
   }
   async registerOwnPosition(a: { vault: PublicKey; payer: PublicKey; streamIndex: number; dbcPool: PublicKey; dbcConfig: PublicKey; dammPool: PublicKey; position: PublicKey; nftAccount: PublicKey }): Promise<TransactionInstruction> {
     return this.program.methods.registerOwnPosition().accountsPartial({
@@ -166,11 +184,13 @@ export class VaultClientStep5 extends VaultClientStep4 {
   private common(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey }) {
     return { protocol: this.protocol, vault: a.vault, stream: a.stream, incomeWsol: a.incomeWsol, placeholderWsol: a.placeholderWsol, depositorWsol: a.depositorWsol, treasury: a.treasury, wsolMint: NATIVE_MINT, tokenProgram: TOKEN_PROGRAM_ID };
   }
-  async harvestDbc(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dbcPool: PublicKey; baseVault: PublicKey; quoteVault: PublicKey; baseMint: PublicKey }): Promise<TransactionInstruction> {
-    return this.program.methods.harvestDbc().accountsPartial({ common: this.common(a), dbcPool: a.dbcPool, dbcPoolAuthority: DBC_POOL_AUTHORITY, baseVault: a.baseVault, quoteVault: a.quoteVault, baseMint: a.baseMint, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY } as any).instruction();
+  /** `baseTokenProgram` is the base mint's owner (SPL by default; Token-2022 for 2022 bases). */
+  async harvestDbc(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dbcPool: PublicKey; baseVault: PublicKey; quoteVault: PublicKey; baseMint: PublicKey; baseTokenProgram?: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.harvestDbc().accountsPartial({ common: this.common(a), dbcPool: a.dbcPool, dbcPoolAuthority: DBC_POOL_AUTHORITY, baseVault: a.baseVault, quoteVault: a.quoteVault, baseMint: a.baseMint, baseTokenProgram: a.baseTokenProgram ?? TOKEN_PROGRAM_ID, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY } as any).instruction();
   }
-  async harvestPosition(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dammPool: PublicKey; position: PublicKey; nftAccount: PublicKey; tokenAVault: PublicKey; tokenBVault: PublicKey; tokenAMint: PublicKey }): Promise<TransactionInstruction> {
-    return this.program.methods.harvestPosition().accountsPartial({ common: this.common(a), dammPool: a.dammPool, position: a.position, nftAccount: a.nftAccount, cpAmmPoolAuthority: CP_AMM_POOL_AUTHORITY, tokenAVault: a.tokenAVault, tokenBVault: a.tokenBVault, tokenAMint: a.tokenAMint, cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: CP_AMM_EVENT_AUTHORITY } as any).instruction();
+  /** `dammPool` is the stream's recorded DAMM v2 pool (the derived pool for DBC-rights streams); `tokenAProgram` is token A's owner. */
+  async harvestPosition(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dammPool: PublicKey; position: PublicKey; nftAccount: PublicKey; tokenAVault: PublicKey; tokenBVault: PublicKey; tokenAMint: PublicKey; tokenAProgram?: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.harvestPosition().accountsPartial({ common: this.common(a), dammPool: a.dammPool, position: a.position, nftAccount: a.nftAccount, cpAmmPoolAuthority: CP_AMM_POOL_AUTHORITY, tokenAVault: a.tokenAVault, tokenBVault: a.tokenBVault, tokenAMint: a.tokenAMint, tokenAProgram: a.tokenAProgram ?? TOKEN_PROGRAM_ID, cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: CP_AMM_EVENT_AUTHORITY } as any).instruction();
   }
   async harvestOneTime(a: { vault: PublicKey; stream: PublicKey; incomeWsol: PublicKey; placeholderWsol: PublicKey; depositorWsol: PublicKey; treasury: PublicKey; dbcPool: PublicKey; dbcConfig: PublicKey; quoteVault: PublicKey }): Promise<TransactionInstruction> {
     return this.program.methods.harvestOneTime().accountsPartial({ common: this.common(a), dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, dbcPoolAuthority: DBC_POOL_AUTHORITY, quoteVault: a.quoteVault, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY } as any).instruction();

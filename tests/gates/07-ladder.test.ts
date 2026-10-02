@@ -63,7 +63,7 @@ async function live(stAsX = true) {
     ? await dlmm.initPairIx({ x: stMint.publicKey, y: NATIVE_MINT, funder: keeper.publicKey, userTokenX: keeperSt, userTokenY: keeperQuote, binStep: 100, baseFactor: 1000 })
     : await dlmm.initPairIx({ x: NATIVE_MINT, y: stMint.publicKey, funder: keeper.publicKey, userTokenX: keeperQuote, userTokenY: keeperSt, binStep: 100, baseFactor: 1000 });
   send(svm, [pair.ix], [keeper], { cu: 400_000 });
-  send(svm, [await client.registerPair({ vault: cv.vault, lbPair: pair.pair })], [keeper]);
+  send(svm, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: pair.pair })], [keeper]);
   for (const i of [-1, 0, 1]) send(svm, [await dlmm.initBinArrayIx(pair.pair, i, keeper.publicKey)], [keeper], { cu: 1_400_000 });
   // income: harvest the own position after a swap (SOL only)
   const pool = damm.getPool(svm, om.dammPool);

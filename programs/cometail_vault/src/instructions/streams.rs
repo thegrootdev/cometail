@@ -1,11 +1,12 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::{self, Token2022};
+use anchor_spl::token_2022::{self, spl_token_2022::instruction::AuthorityType, Token2022};
 use anchor_spl::token_interface::{Mint, TokenAccount};
 
 use crate::constants::*;
 use crate::cp_amm;
 use crate::dynamic_bonding_curve as dbc;
 use crate::errors::VaultError;
+use crate::instructions::deposit::{add_active_stream, clear_delegate_permission};
 use crate::instructions::eligibility::*;
 use crate::state::*;
 
@@ -15,7 +16,8 @@ fn vault_seeds(vault: &Vault) -> [Vec<u8>; 3] {
 
 // ---------------------------------------------------------------------------------------
 // register_stream_position: a PreBondingCurve DBC stream migrated; its creator position
-// now sits in a vault-owned account and can be recorded (permissionless).
+// now sits in the vault-owned PDA account the migration re-authorized, and can be recorded
+// (permissionless).
 // ---------------------------------------------------------------------------------------
 #[derive(Accounts)]
 pub struct RegisterStreamPosition<'info> {
@@ -44,17 +46,8 @@ pub struct RegisterStreamPosition<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// The creator-side position of a migrated DBC pool holds the config's creator share of the
-/// pool's liquidity; anything materially smaller is not it.
-pub fn check_creator_side(pool: &cp_amm::accounts::Pool, pos: &cp_amm::accounts::Position, creator_pct: u8) -> Result<()> {
-    let expected = pool.liquidity.checked_mul(creator_pct as u128).ok_or(VaultError::Overflow)? / 100;
-    let floor = expected.checked_mul(999).ok_or(VaultError::Overflow)? / 1000;
-    require!(pos.permanent_locked_liquidity >= floor, VaultError::AccountMismatch);
-    Ok(())
-}
-
 pub fn register_stream_position(ctx: Context<RegisterStreamPosition>) -> Result<()> {
-    require!(ctx.accounts.vault.status != VaultStatus::Open || true, VaultError::WrongStatus); // any status: registration may complete later
+    // any vault status: an external migration can land before or after the launch
     let dbc_pool = ctx.accounts.dbc_pool.load()?;
     require!(dbc_pool.pool_state.migration_progress == DBC_PROGRESS_CREATED_POOL, VaultError::WrongStatus);
     require_keys_eq!(dbc_pool.pool_state.creator, ctx.accounts.vault.key(), VaultError::AccountMismatch);
@@ -64,19 +57,17 @@ pub fn register_stream_position(ctx: Context<RegisterStreamPosition>) -> Result<
     require_keys_eq!(pool.token_b_mint, WSOL_MINT, VaultError::Ineligible);
     require!(pool.collect_fee_mode == DAMM_COLLECT_ONLY_B || pool.collect_fee_mode == DAMM_COLLECT_COMPOUNDING, VaultError::Ineligible);
     let pos = ctx.accounts.position.load()?;
-    check_position_principal(&pos)?;
-    check_creator_side(&pool, &pos, config.creator_permanent_locked_liquidity_percentage)?;
-    check_nft_account(&ctx.accounts.nft_account, &ctx.accounts.vault.key(), &pos.nft_mint)?;
+    check_creator_position(&pool, &pos, &ctx.accounts.nft_account, &ctx.accounts.vault.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage)?;
     require_keys_neq!(ctx.accounts.position.key(), ctx.accounts.vault.own_position, VaultError::Duplicate);
     let nft_mint = pos.nft_mint;
     drop(pos); drop(pool); drop(config); drop(dbc_pool);
-    let seeds = vault_seeds(&ctx.accounts.vault);
-    let signer: &[&[u8]] = &[&seeds[0], &seeds[1], &seeds[2]];
-    cp_amm::cpi::update_delegate_permission(
-        CpiContext::new_with_signer(ctx.accounts.cp_amm_program.key(), cp_amm::cpi::accounts::UpdateDelegatePermission {
-            position: ctx.accounts.position.to_account_info(), position_nft_account: ctx.accounts.nft_account.to_account_info(),
-            owner: ctx.accounts.vault.to_account_info(), event_authority: ctx.accounts.cp_amm_event_authority.to_account_info(), program: ctx.accounts.cp_amm_program.to_account_info(),
-        }, &[signer]), 0)?;
+    clear_delegate_permission(
+        &ctx.accounts.vault,
+        &ctx.accounts.position.to_account_info(),
+        &ctx.accounts.nft_account.to_account_info(),
+        &ctx.accounts.cp_amm_program.to_account_info(),
+        &ctx.accounts.cp_amm_event_authority.to_account_info(),
+    )?;
     let s = &mut ctx.accounts.stream;
     s.position = ctx.accounts.position.key();
     s.nft_mint = nft_mint;
@@ -198,14 +189,16 @@ pub fn deposit_position_split(ctx: Context<DepositPositionSplit>, permanent_lock
     s.deposit_ts = Clock::get()?.unix_timestamp;
     ctx.accounts.stream_index.vault = vault.key();
     ctx.accounts.stream_index.stream = s.key();
-    vault.stream_count = vault.stream_count.checked_add(1).ok_or(VaultError::Overflow)?;
+    add_active_stream(vault)?;
     emit!(crate::instructions::deposit::StreamDeposited { vault: vault.key(), stream: s.key(), kind: 2, pool: s.pool, position: s.position });
     Ok(())
 }
 
 // ---------------------------------------------------------------------------------------
-// withdraw_stream: Open only. Rights go back through DBC, NFTs through a token transfer,
-// fees untouched. The Stream and StreamIndex accounts close to the depositor.
+// withdraw_stream: Open only. Rights go back through DBC; an NFT in cp-amm's PDA account
+// goes back by handing the account's authority to the depositor, any other vault-owned
+// account by a token transfer; fees untouched. The Stream and every StreamIndex it owns
+// close to the depositor, so the sources can enter a vault again.
 // ---------------------------------------------------------------------------------------
 #[derive(Accounts)]
 pub struct WithdrawStream<'info> {
@@ -215,13 +208,13 @@ pub struct WithdrawStream<'info> {
     pub depositor: Signer<'info>,
     #[account(mut, close = depositor, has_one = vault @ VaultError::AccountMismatch, constraint = !stream.is_own @ VaultError::AccountMismatch)]
     pub stream: Box<Account<'info, Stream>>,
-    /// Index of the primary source (DBC pool or position).
-    #[account(mut, close = depositor, seeds = [SEED_STREAM_INDEX, stream_index_key.key().as_ref()], bump)]
+    /// Index of the primary source (DBC pool or position); it must belong to this stream.
+    #[account(mut, close = depositor, seeds = [SEED_STREAM_INDEX, stream_index_key.key().as_ref()], bump, constraint = stream_index.stream == stream.key() @ VaultError::AccountMismatch)]
     pub stream_index: Account<'info, StreamIndex>,
     /// CHECK: the key the index was derived from (pool for DBC rights, position otherwise)
     pub stream_index_key: UncheckedAccount<'info>,
-    /// Index of a registered derived position (DBC rights that migrated), if any.
-    #[account(mut, close = depositor, seeds = [SEED_STREAM_INDEX, stream.position.as_ref()], bump)]
+    /// Index of the creator position of a DBC-rights stream (bundled or registered), if any.
+    #[account(mut, close = depositor, seeds = [SEED_STREAM_INDEX, stream.position.as_ref()], bump, constraint = position_index.stream == stream.key() @ VaultError::AccountMismatch)]
     pub position_index: Option<Account<'info, StreamIndex>>,
     /// CHECK: DBC pool (DBC rights only)
     #[account(mut)]
@@ -237,7 +230,7 @@ pub struct WithdrawStream<'info> {
     #[account(mut)]
     pub nft_account: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
     pub nft_mint: Option<Box<InterfaceAccount<'info, Mint>>>,
-    /// Depositor-owned destination for the NFT.
+    /// Depositor-owned destination for the NFT (only when the NFT is not in cp-amm's PDA account).
     #[account(mut, constraint = depositor_nft_account.owner == depositor.key() @ VaultError::AccountMismatch)]
     pub depositor_nft_account: Option<Box<InterfaceAccount<'info, TokenAccount>>>,
     pub token_2022_program: Program<'info, Token2022>,
@@ -262,22 +255,35 @@ pub fn withdraw_stream(ctx: Context<WithdrawStream>) -> Result<()> {
         }, &[signer]))?;
     }
     if s.position != Pubkey::default() {
-        // a position bundled at a CreatedPool deposit has no separate index; one registered after an
-        // external migration does, and closes here
-        if s.kind == StreamKind::DammV2Position { require!(ctx.accounts.position_index.is_none(), VaultError::AccountMismatch); }
+        // a position's index is the primary one for position streams and a second one for
+        // DBC-rights streams (bundled at deposit or registered after the migration): it closes here
+        match s.kind {
+            StreamKind::DammV2Position => require!(ctx.accounts.position_index.is_none(), VaultError::AccountMismatch),
+            StreamKind::DbcCreatorRights => require!(ctx.accounts.position_index.is_some(), VaultError::AccountMismatch),
+        }
         let from = ctx.accounts.nft_account.as_ref().ok_or(VaultError::AccountMismatch)?;
         let mint = ctx.accounts.nft_mint.as_ref().ok_or(VaultError::AccountMismatch)?;
-        let to = ctx.accounts.depositor_nft_account.as_ref().ok_or(VaultError::AccountMismatch)?;
         require_keys_eq!(from.key(), s.nft_account, VaultError::AccountMismatch);
         require_keys_eq!(mint.key(), s.nft_mint, VaultError::AccountMismatch);
-        require_keys_eq!(to.mint, s.nft_mint, VaultError::AccountMismatch);
-        token_2022::transfer_checked(CpiContext::new_with_signer(ctx.accounts.token_2022_program.key(), token_2022::TransferChecked {
-            from: from.to_account_info(), mint: mint.to_account_info(), to: to.to_account_info(), authority: ctx.accounts.vault.to_account_info(),
-        }, &[signer]), 1, 0)?;
+        if from.key() == position_nft_account_pda(&s.nft_mint) {
+            // cp-amm's own account for this NFT: the depositor gets the account's authority back
+            require!(ctx.accounts.depositor_nft_account.is_none(), VaultError::AccountMismatch);
+            token_2022::set_authority(CpiContext::new_with_signer(ctx.accounts.token_2022_program.key(), token_2022::SetAuthority {
+                current_authority: ctx.accounts.vault.to_account_info(), account_or_mint: from.to_account_info(),
+            }, &[signer]), AuthorityType::AccountOwner, Some(ctx.accounts.depositor.key()))?;
+        } else {
+            let to = ctx.accounts.depositor_nft_account.as_ref().ok_or(VaultError::AccountMismatch)?;
+            require_keys_eq!(to.mint, s.nft_mint, VaultError::AccountMismatch);
+            token_2022::transfer_checked(CpiContext::new_with_signer(ctx.accounts.token_2022_program.key(), token_2022::TransferChecked {
+                from: from.to_account_info(), mint: mint.to_account_info(), to: to.to_account_info(), authority: ctx.accounts.vault.to_account_info(),
+            }, &[signer]), 1, 0)?;
+        }
     } else {
         require!(ctx.accounts.position_index.is_none(), VaultError::AccountMismatch);
     }
-    emit!(StreamWithdrawn { vault: ctx.accounts.vault.key(), stream: s.key() });
+    let vault = &mut ctx.accounts.vault;
+    vault.active_streams = vault.active_streams.checked_sub(1).ok_or(VaultError::Overflow)?;
+    emit!(StreamWithdrawn { vault: vault.key(), stream: s.key() });
     Ok(())
 }
 

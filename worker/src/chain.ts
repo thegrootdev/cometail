@@ -100,6 +100,11 @@ export class Chain {
     const info = await this.connection.getAccountInfo(pk);
     return info ? AccountLayout.decode(info.data).amount : 0n;
   }
+  /** The program that owns an account (a mint's token program). */
+  async accountOwner(pk: PublicKey): Promise<PublicKey | null> {
+    const info = await this.connection.getAccountInfo(pk);
+    return info ? info.owner : null;
+  }
   async tokenOwner(pk: PublicKey): Promise<PublicKey | null> {
     const info = await this.connection.getAccountInfo(pk);
     return info ? new PublicKey(AccountLayout.decode(info.data).owner) : null;

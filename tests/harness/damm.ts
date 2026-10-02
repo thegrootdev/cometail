@@ -16,12 +16,17 @@ export function getPosition(svm: LiteSVM, position: PublicKey): any {
   return dammProgram.coder.accounts.decode("position", Buffer.from(svm.getAccount(position)!.data));
 }
 
+/** The token program that owns a mint. */
+export function mintProgram(svm: LiteSVM, mint: PublicKey): PublicKey {
+  return svm.getAccount(mint)!.owner;
+}
+
 export async function swapIx(svm: LiteSVM, a: { pool: PublicKey; payer: PublicKey; inputAccount: PublicKey; outputAccount: PublicKey; amountIn: BN; minOut?: BN }) {
   const p = getPool(svm, a.pool);
   return dammProgram.methods.swap({ amountIn: a.amountIn, minimumAmountOut: a.minOut ?? new BN(0) }).accountsPartial({
     poolAuthority: DAMM_POOL_AUTHORITY, pool: a.pool, payer: a.payer, inputTokenAccount: a.inputAccount, outputTokenAccount: a.outputAccount,
     tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault, tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint,
-    tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: null,
+    tokenAProgram: mintProgram(svm, p.tokenAMint), tokenBProgram: mintProgram(svm, p.tokenBMint), referralTokenAccount: null,
   }).remainingAccounts([{ pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false }]).instruction();
 }
 

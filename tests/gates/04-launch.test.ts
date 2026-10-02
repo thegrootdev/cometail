@@ -111,13 +111,13 @@ describe("launch, migration, own position, cash-out, pair registration", () => {
     // a liquidity-mining pair for the same mints occupies the customizable address: rejected
     const lm = await dlmm.initPairIx({ x: stMint.publicKey, y: NATIVE_MINT, funder: keeper.publicKey, userTokenX: keeperSt, userTokenY: keeperQuote, binStep: 100, baseFactor: 1000, functionType: dlmm.ConcreteFunctionType.LiquidityMining });
     send(svm, [lm.ix], [keeper], { cu: 400_000 });
-    expectFail(svm, [await client.registerPair({ vault: cv.vault, lbPair: lm.pair })], [keeper], "Ineligible");
+    expectFail(svm, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: lm.pair })], [keeper], "Ineligible");
     // a proper pair for other mints is not this vault's pair
     const other = createMint(svm, keeper, 6);
     const keeperOther = mintTo(svm, keeper, other, keeper.publicKey, new BN(1_000_000));
     const op = await dlmm.initPairIx({ x: other, y: NATIVE_MINT, funder: keeper.publicKey, userTokenX: keeperOther, userTokenY: keeperQuote, binStep: 100, baseFactor: 1000 });
     send(svm, [op.ix], [keeper], { cu: 400_000 });
-    expectFail(svm, [await client.registerPair({ vault: cv.vault, lbPair: op.pair })], [keeper], "AccountMismatch");
+    expectFail(svm, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: op.pair })], [keeper], "AccountMismatch");
     // nothing registered yet
     expect(client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data)).dlmmPair.equals(require("@solana/web3.js").PublicKey.default)).true;
     void TOKEN_PROGRAM_ID;
@@ -133,13 +133,13 @@ describe("launch, migration, own position, cash-out, pair registration", () => {
     await dbc.buy(svm, keeper, L.pool, keeperQuote, keeperSt, new BN(100_000_000));
     const pair = await dlmm.initPairIx({ x: stMint.publicKey, y: NATIVE_MINT, funder: keeper.publicKey, userTokenX: keeperSt, userTokenY: keeperQuote, binStep: 100, baseFactor: 1000 });
     send(svm, [pair.ix], [keeper], { cu: 400_000 });
-    send(svm, [await client.registerPair({ vault: cv.vault, lbPair: pair.pair })], [keeper], { label: "register_pair" });
+    send(svm, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: pair.pair })], [keeper], { label: "register_pair" });
     const v = client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data));
     expect(v.dlmmPair.equals(pair.pair)).true;
     expect(v.stIsX).eq(dlmm.getPair(svm, pair.pair).tokenXMint.equals(stMint.publicKey));
     // cap = 10 lamports per raw ST unit (10 * 2^64 in Q64): with ST as X the bound is the last bin with price <= 10,
     // i.e. floor(ln(10)/ln(1.01)) = 231; with ST as Y it is the first bin with price >= 1/10, i.e. -231
     expect(v.binBound).eq(v.stIsX ? 231 : -231);
-    expectFail(svm, [await client.registerPair({ vault: cv.vault, lbPair: pair.pair })], [keeper], "Duplicate");
+    expectFail(svm, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: pair.pair })], [keeper], "Duplicate");
   });
 });

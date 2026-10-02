@@ -71,6 +71,17 @@ pub fn max_abs_bin(bin_step: u16) -> i32 {
     lo
 }
 
+/// `max_abs_bin` for the approved bin steps, fixed so `create_vault` does not search for it
+/// (the unit test below pins every entry to the computed value).
+pub const MAX_ABS_BIN_BY_STEP: [(u16, i32); 6] = [(10, 44_383), (20, 22_202), (25, 17_766), (50, 8_894), (80, 5_567), (100, 4_458)];
+
+/// Does the cap admit at least one bin in both orientations on this bin step? That is what
+/// `bin_bound` needs: the lowest price within the cap for ST = X, the highest for ST = Y.
+pub fn cap_feasible(bin_step: u16, cap_q64: u128) -> bool {
+    let m = match MAX_ABS_BIN_BY_STEP.iter().find(|(s, _)| *s == bin_step) { Some((_, m)) => *m, None => max_abs_bin(bin_step) };
+    bin_within_cap(bin_step, -m, cap_q64, true) && bin_within_cap(bin_step, m, cap_q64, false)
+}
+
 /// The bound bin: the largest bin within the cap when ST is X (bids go below it), the
 /// smallest bin within the cap when ST is Y (bids go above it). None when no bin qualifies.
 pub fn bin_bound(bin_step: u16, cap_q64: u128, st_is_x: bool) -> Option<i32> {
@@ -112,6 +123,19 @@ mod tests {
         assert!(max_abs_bin(100) > 4000 && max_abs_bin(100) < 4500);
         assert!(max_abs_bin(10) > 40_000);
         assert_eq!(bin_bound(100, 0, true), None); // no price is <= 0
+    }
+    #[test]
+    fn saturation_table_matches() {
+        for (step, m) in MAX_ABS_BIN_BY_STEP { assert_eq!(max_abs_bin(step), m, "bin step {step}"); }
+    }
+    #[test]
+    fn feasibility() {
+        for (step, _) in MAX_ABS_BIN_BY_STEP {
+            assert!(cap_feasible(step, ONE_Q64));
+            assert!(cap_feasible(step, ONE_Q64 * 10));
+            assert!(!cap_feasible(step, 1)); // below the lowest representable price
+            assert!(cap_feasible(step, ONE_Q64) == (bin_bound(step, ONE_Q64, true).is_some() && bin_bound(step, ONE_Q64, false).is_some()));
+        }
     }
     #[test]
     fn bounds() {

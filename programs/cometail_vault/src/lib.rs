@@ -47,6 +47,10 @@ pub mod cometail_vault {
         instructions::deposit_dbc_rights(ctx)
     }
 
+    pub fn deposit_dbc_rights_migrated(ctx: Context<DepositDbcRightsMigrated>) -> Result<()> {
+        instructions::deposit_dbc_rights_migrated(ctx)
+    }
+
     pub fn register_stream_position(ctx: Context<RegisterStreamPosition>) -> Result<()> {
         instructions::register_stream_position(ctx)
     }

@@ -8,8 +8,8 @@ use crate::cp_amm;
 use crate::dynamic_bonding_curve as dbc;
 use crate::errors::VaultError;
 use crate::instructions::eligibility::*;
+use crate::instructions::deposit::{add_active_stream, clear_delegate_permission};
 use crate::instructions::protocol::check_stream_config;
-use crate::instructions::streams::check_creator_side;
 use crate::lb_clmm;
 use crate::math;
 use crate::state::*;
@@ -86,7 +86,7 @@ pub fn launch(ctx: Context<Launch>, preset: u8, metadata: LaunchMetadata) -> Res
     let v = &ctx.accounts.vault;
     require!(v.status == VaultStatus::Open, VaultError::WrongStatus);
     require_keys_eq!(v.depositor, ctx.accounts.depositor.key(), VaultError::NotDepositor);
-    require!(v.stream_count > 0, VaultError::Ineligible); // a vault launches streams, not air
+    require!(v.active_streams > 0, VaultError::Ineligible); // a vault launches streams, not air: withdrawn ones do not count
     require!((preset as usize) < 3, VaultError::InvalidPreset);
     require_keys_eq!(ctx.accounts.config.key(), ctx.accounts.protocol.stream_configs[preset as usize], VaultError::AccountMismatch);
     check_stream_config(&ctx.accounts.config.to_account_info(), &ctx.accounts.protocol.admin, preset as usize)?;
@@ -128,13 +128,14 @@ pub fn launch(ctx: Context<Launch>, preset: u8, metadata: LaunchMetadata) -> Res
     {
         let data = pool_info.try_borrow_data()?;
         let disc = <dbc::accounts::VirtualPool as anchor_lang::Discriminator>::DISCRIMINATOR;
-        require!(data.len() >= 8 && data[..8] == *disc, VaultError::ForeignAccount);
-        let p: &dbc::types::PoolState = bytemuck::from_bytes(&data[8..8 + core::mem::size_of::<dbc::types::PoolState>()]);
+        let size = core::mem::size_of::<dbc::types::PoolState>();
+        require!(data.len() >= 8 + size && data[..8] == *disc, VaultError::ForeignAccount);
+        let p: &dbc::types::PoolState = bytemuck::from_bytes(&data[8..8 + size]);
         require_keys_eq!(p.creator, v.key(), VaultError::AccountMismatch);
         require_keys_eq!(p.base_mint, v.st_mint, VaultError::AccountMismatch);
         require_keys_eq!(p.config, ctx.accounts.config.key(), VaultError::AccountMismatch);
     }
-    let derived = derive_damm_pool(&DAMM_V2_MIGRATION_CONFIGS[6], &v.st_mint, &WSOL_MINT);
+    let derived = derive_damm_pool(&DAMM_V2_MIGRATION_CONFIGS[STREAM_MIGRATION_FEE_OPTION as usize], &v.st_mint, &WSOL_MINT);
     let vault = &mut ctx.accounts.vault;
     vault.status = VaultStatus::Launched;
     vault.preset = preset;
@@ -152,7 +153,7 @@ pub fn launch(ctx: Context<Launch>, preset: u8, metadata: LaunchMetadata) -> Res
     s.deposit_ts = Clock::get()?.unix_timestamp;
     ctx.accounts.stream_index.vault = vault.key();
     ctx.accounts.stream_index.stream = s.key();
-    vault.stream_count = vault.stream_count.checked_add(1).ok_or(VaultError::Overflow)?;
+    add_active_stream(vault)?;
     emit!(Launched { vault: vault.key(), st_mint: vault.st_mint, dbc_pool: vault.dbc_pool, preset });
     Ok(())
 }
@@ -162,14 +163,20 @@ pub fn launch(ctx: Context<Launch>, preset: u8, metadata: LaunchMetadata) -> Res
 // ---------------------------------------------------------------------------------------
 #[derive(Accounts)]
 pub struct RegisterPair<'info> {
+    #[account(seeds = [SEED_PROTOCOL], bump = protocol.bump)]
+    pub protocol: Box<Account<'info, Protocol>>,
     #[account(mut, seeds = [SEED_VAULT, vault.st_mint.as_ref()], bump = vault.bump)]
-    pub vault: Account<'info, Vault>,
+    pub vault: Box<Account<'info, Vault>>,
+    /// The keeper or the depositor: the binding is write-once, so a stranger must not choose it.
+    pub signer: Signer<'info>,
     pub lb_pair: AccountLoader<'info, lb_clmm::accounts::LbPair>,
 }
 
 pub fn register_pair(ctx: Context<RegisterPair>) -> Result<()> {
     let v = &ctx.accounts.vault;
     require!(v.status != VaultStatus::Open, VaultError::WrongStatus);
+    let signer = ctx.accounts.signer.key();
+    require!(signer == ctx.accounts.protocol.keeper || signer == v.depositor, VaultError::NotKeeper);
     require_keys_eq!(v.dlmm_pair, Pubkey::default(), VaultError::Duplicate);
     let pair = ctx.accounts.lb_pair.load()?;
     let st_is_x = if pair.token_x_mint == v.st_mint && pair.token_y_mint == WSOL_MINT { true }
@@ -181,6 +188,13 @@ pub fn register_pair(ctx: Context<RegisterPair>) -> Result<()> {
     require!(pair.parameters.function_type == DLMM_FUNCTION_LIMIT_ORDER, VaultError::Ineligible);
     require!(pair.parameters.collect_fee_mode == DLMM_COLLECT_ONLY_Y, VaultError::Ineligible);
     require!(APPROVED_BIN_STEPS.contains(&pair.bin_step), VaultError::Ineligible);
+    // base fee at DLMM's 1e9 precision; a prohibitive fee would make every bid a gift to the pair
+    let base_fee = (pair.parameters.base_factor as u128)
+        .checked_mul(pair.bin_step as u128)
+        .and_then(|x| x.checked_mul(10))
+        .and_then(|x| 10u128.checked_pow(pair.parameters.base_fee_power_factor as u32).and_then(|p| x.checked_mul(p)))
+        .ok_or(VaultError::Overflow)?;
+    require!(base_fee <= MAX_PAIR_BASE_FEE, VaultError::Ineligible);
     let now = Clock::get()?.unix_timestamp as u64;
     require!(pair.activation_point <= now, VaultError::Ineligible);
     require_keys_eq!(pair.pre_activation_swap_address, Pubkey::default(), VaultError::Ineligible);
@@ -238,17 +252,16 @@ pub fn register_own_position(ctx: Context<RegisterOwnPosition>) -> Result<()> {
     require_keys_eq!(pool.token_b_mint, WSOL_MINT, VaultError::Ineligible);
     require!(pool.collect_fee_mode == DAMM_COLLECT_COMPOUNDING, VaultError::Ineligible);
     let pos = ctx.accounts.position.load()?;
-    check_position_principal(&pos)?;
-    check_creator_side(&pool, &pos, config.creator_permanent_locked_liquidity_percentage)?;
-    check_nft_account(&ctx.accounts.nft_account, &v.key(), &pos.nft_mint)?;
+    check_creator_position(&pool, &pos, &ctx.accounts.nft_account, &v.key(), config.creator_permanent_locked_liquidity_percentage, config.partner_permanent_locked_liquidity_percentage)?;
     let nft_mint = pos.nft_mint;
     drop(pos); drop(pool); drop(config); drop(dbc_pool);
-    let seeds = vault_signer(v);
-    let signer: &[&[u8]] = &[&seeds[0], &seeds[1], &seeds[2]];
-    cp_amm::cpi::update_delegate_permission(CpiContext::new_with_signer(ctx.accounts.cp_amm_program.key(), cp_amm::cpi::accounts::UpdateDelegatePermission {
-        position: ctx.accounts.position.to_account_info(), position_nft_account: ctx.accounts.nft_account.to_account_info(),
-        owner: v.to_account_info(), event_authority: ctx.accounts.cp_amm_event_authority.to_account_info(), program: ctx.accounts.cp_amm_program.to_account_info(),
-    }, &[signer]), 0)?;
+    clear_delegate_permission(
+        &ctx.accounts.vault,
+        &ctx.accounts.position.to_account_info(),
+        &ctx.accounts.nft_account.to_account_info(),
+        &ctx.accounts.cp_amm_program.to_account_info(),
+        &ctx.accounts.cp_amm_event_authority.to_account_info(),
+    )?;
     let vault = &mut ctx.accounts.vault;
     vault.own_position = ctx.accounts.position.key();
     vault.own_position_nft_account = ctx.accounts.nft_account.key();
@@ -266,7 +279,7 @@ pub fn register_own_position(ctx: Context<RegisterOwnPosition>) -> Result<()> {
     s.deposit_ts = Clock::get()?.unix_timestamp;
     ctx.accounts.stream_index.vault = vault.key();
     ctx.accounts.stream_index.stream = s.key();
-    vault.stream_count = vault.stream_count.checked_add(1).ok_or(VaultError::Overflow)?;
+    add_active_stream(vault)?;
     emit!(Live { vault: vault.key(), damm_pool: vault.damm_pool, position: vault.own_position });
     Ok(())
 }

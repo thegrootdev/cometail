@@ -4,12 +4,15 @@ import { BN } from "@coral-xyz/anchor";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, createTransferCheckedInstruction, createApproveInstruction } from "@solana/spl-token";
 import { expect } from "chai";
-import { VaultClient, dammPositionNftAccount } from "@cometail/client";
+import { VaultClient, dammPositionNftAccount, deriveStreamIndex, handPositionNftToVaultIx } from "@cometail/client";
 import { startSvm, fund, DAMM_V2_MIGRATION_CONFIG } from "../harness/svm";
 import { send, expectFail } from "../harness/tx";
 import { ataIx, ensureAta, balance, wrapSol, tokenOwner } from "../harness/tokens";
 import * as dbc from "../harness/dbc";
 import * as damm from "../harness/damm";
+
+/** A closed account: LiteSVM keeps a zero-lamport shell for it. */
+const closed = (svm: any, pk: PublicKey) => { const a = svm.getAccount(pk); return !a || Number(a.lamports) === 0; };
 
 const policy = { maxSpendPerPeriod: new BN(5_000_000_000), periodSeconds: new BN(3600), maxOutstandingOrders: 4, maxBinsPerOrder: 20, maxPriceQ64: new BN(1).shln(64) };
 
@@ -103,7 +106,7 @@ describe("gate 1 + 4: deposits, eligibility, delegates, withdrawals", () => {
     expect(damm.getPosition(svm, ext.creatorPos.position).delegatePermission).eq(0);
   });
 
-  it("DBC rights, CreatedPool: rights transfer + creator NFT in one tx; migrated creator position registered; one-time flags read from the pool", async () => {
+  it("DBC rights, CreatedPool: rights transfer + creator position (PDA account handed to the vault) in one tx; the open-curve path rejects a graduated pool; one-time flags read from the pool; withdrawal hands the account back and closes both indices", async () => {
     const svm = startSvm();
     const client = new VaultClient();
     const protocol = fund(svm), creator = fund(svm), buyer = fund(svm);
@@ -112,25 +115,35 @@ describe("gate 1 + 4: deposits, eligibility, delegates, withdrawals", () => {
     const cv = await client.createVault({ depositor: creator.publicKey, stMint: stMintKp.publicKey, policy });
     send(svm, [cv.ix], [creator, cv.placeholder, stMintKp]);
     const nftMint = ext.creatorPos.state.nftMint;
-    const vaultNft = ataIx(creator.publicKey, nftMint, cv.vault, TOKEN_2022_PROGRAM_ID);
     const xfer = await dbc.transferPoolCreatorIx(svm, ext.pool, creator.publicKey, cv.vault);
-    // without the NFT the CreatedPool deposit must fail
-    const depNoNft = await client.depositDbcRights({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint });
-    expectFail(svm, [xfer, depNoNft], [creator], "AccountMismatch");
-    const dep = await client.depositDbcRights({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint, creatorPosition: ext.creatorPos.position, creatorNftAccount: vaultNft.address });
-    send(svm, [xfer, vaultNft.ix, createTransferCheckedInstruction(ext.creatorPos.nftAccount, nftMint, vaultNft.address, creator.publicKey, 1, 0, [], TOKEN_2022_PROGRAM_ID), dep], [creator], { label: "deposit_dbc_rights.created_pool" });
+    // a graduated pool cannot enter through the open-curve path
+    const depOpen = await client.depositDbcRights({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint });
+    expectFail(svm, [xfer, depOpen], [creator], "WrongStatus");
+    // the migrated path needs the creator position in cp-amm's PDA account, vault-owned: without the hand-over it fails
+    const dep = await client.depositDbcRightsMigrated({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint, dammPool: ext.dammPool, creatorPosition: ext.creatorPos.position, creatorNftAccount: ext.creatorPos.nftAccount });
+    expectFail(svm, [xfer, dep], [creator], "AccountMismatch");
+    send(svm, [xfer, handPositionNftToVaultIx(nftMint, creator.publicKey, cv.vault), dep], [creator], { label: "deposit_dbc_rights_migrated" });
     expect(dbc.getPool(svm, ext.pool).creator.equals(cv.vault)).true;
+    expect(tokenOwner(svm, ext.creatorPos.nftAccount).equals(cv.vault)).true;
     const stream = client.decodeStream(Buffer.from(svm.getAccount(require("@cometail/client").deriveStream(cv.vault, 0))!.data));
     expect(stream.kind).deep.eq({ dbcCreatorRights: {} });
     expect(stream.position.equals(ext.creatorPos.position)).true;
+    expect(stream.nftAccount.equals(ext.creatorPos.nftAccount)).true;
     expect(stream.derivedDammPool.equals(ext.dammPool)).true;
     expect(stream.oneTimeClaims).eq(0); // plain launch: nothing withdrawn yet
-    // withdraw in Open: rights and NFT return
-    const back = ataIx(creator.publicKey, nftMint, creator.publicKey, TOKEN_2022_PROGRAM_ID);
-    const wd = await client.withdrawStream({ vault: cv.vault, depositor: creator.publicKey, stream: require("@cometail/client").deriveStream(cv.vault, 0), kind: "dbc", indexKey: ext.pool, position: undefined, dbcPool: ext.pool, dbcConfig: ext.config, nftAccount: vaultNft.address, nftMint, depositorNftAccount: back.address });
-    send(svm, [back.ix, wd], [creator], { label: "withdraw_stream.dbc" });
+    expect(svm.getAccount(deriveStreamIndex(ext.creatorPos.position))).not.null; // the bundled position has its own index
+    expect(client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data)).activeStreams).eq(1);
+    // withdraw in Open: the position index is required; rights and the account's authority return; both indices close
+    const streamKey = require("@cometail/client").deriveStream(cv.vault, 0);
+    expectFail(svm, [await client.withdrawStream({ vault: cv.vault, depositor: creator.publicKey, stream: streamKey, kind: "dbc", indexKey: ext.pool, dbcPool: ext.pool, dbcConfig: ext.config, nftAccount: ext.creatorPos.nftAccount, nftMint })], [creator], "AccountMismatch");
+    const wd = await client.withdrawStream({ vault: cv.vault, depositor: creator.publicKey, stream: streamKey, kind: "dbc", indexKey: ext.pool, position: ext.creatorPos.position, dbcPool: ext.pool, dbcConfig: ext.config, nftAccount: ext.creatorPos.nftAccount, nftMint });
+    send(svm, [wd], [creator], { label: "withdraw_stream.dbc_migrated" });
     expect(dbc.getPool(svm, ext.pool).creator.equals(creator.publicKey)).true;
-    expect(balance(svm, back.address).toString()).eq("1");
+    expect(tokenOwner(svm, ext.creatorPos.nftAccount).equals(creator.publicKey)).true;
+    expect(balance(svm, ext.creatorPos.nftAccount).toString()).eq("1");
+    expect(closed(svm, deriveStreamIndex(ext.pool))).true;
+    expect(closed(svm, deriveStreamIndex(ext.creatorPos.position))).true;
+    expect(client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data)).activeStreams).eq(0);
   });
 
   it("DBC rights, PreBondingCurve: rights only; after the external migration the creator position is registered permissionlessly", async () => {

@@ -147,3 +147,57 @@ pub fn check_dbc_rights(pool: &dbc::types::PoolState, config_key: &Pubkey, confi
     if pool.is_creator_withdraw_surplus != 0 { one_time_claims |= 2; }
     Ok(DbcEligibility { derived_damm_pool, migration_progress: pool.migration_progress, one_time_claims })
 }
+
+/// cp-amm's own token account for a position NFT: `["position_nft_account", nft_mint]`
+/// (`cpamm/instructions/ix_create_position.rs:38-46`; no immutable-owner extension). The DBC
+/// migration creates both positions there and re-authorizes them to the creator and the
+/// partner with SetAuthority (`migrate_damm_v2_initialize_pool.rs:326-346, 657-662`).
+pub fn position_nft_account_pda(nft_mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"position_nft_account", nft_mint.as_ref()], &cp_amm::ID).0
+}
+
+/// a * b >= c * d without overflow: exact when it fits, otherwise on both sides shifted down
+/// by 8 bits (a bound check, so the lost precision cannot flip a comfortable margin).
+fn mul_ge(a: u128, b: u128, c: u128, d: u128) -> bool {
+    match (a.checked_mul(b), c.checked_mul(d)) {
+        (Some(l), Some(r)) => l >= r,
+        _ => (a >> 8).saturating_mul(b) >= (c >> 8).saturating_mul(d),
+    }
+}
+
+/// The creator-side position of a migrated DBC pool, proven structurally instead of by a
+/// share of a moving total:
+/// 1. the NFT sits in cp-amm's PDA account for its mint, owned by the vault with no
+///    delegate. Only the migration or the previous holder (SetAuthority) can put it there,
+///    and a vault-owned position cannot gain locked liquidity without the vault's signature
+///    (`cpamm/state/position.rs:546-564`, `ix_permanent_lock_position.rs:48-51`,
+///    `ix_add_liquidity.rs:97`).
+/// 2. it carries only permanently locked liquidity (no withdrawable principal).
+/// 3. its permanently locked liquidity is at least half the creator's share of the pool's
+///    permanently locked total (`pool.permanent_lock_liquidity`, `cpamm/state/pool.rs:166`,
+///    which only permanent locks move, never `add_liquidity`): at the preset 80/20 the
+///    partner position fails, and a griefer would have to permanently lock as much as the
+///    whole migration to shift the bound. For configs where the partner's permanent share is
+///    at least half the creator's, the partner's own position would also pass; it can only
+///    get here if the partner hands it to the vault, and it is never smaller than half the
+///    creator share.
+pub fn check_creator_position(
+    pool: &cp_amm::accounts::Pool,
+    pos: &cp_amm::accounts::Position,
+    nft_account: &InterfaceAccount<TokenAccount>,
+    vault: &Pubkey,
+    creator_pct: u8,
+    partner_pct: u8,
+) -> Result<()> {
+    require_keys_eq!(nft_account.key(), position_nft_account_pda(&pos.nft_mint), VaultError::AccountMismatch);
+    check_nft_account(nft_account, vault, &pos.nft_mint)?;
+    check_position_principal(pos)?;
+    let total_pct = (creator_pct as u128).checked_add(partner_pct as u128).ok_or(VaultError::Overflow)?;
+    require!(creator_pct > 0 && total_pct <= 100, VaultError::Ineligible);
+    // pos.permanent_locked * (creator + partner) * 2 >= pool.permanent_lock * creator
+    require!(
+        mul_ge(pos.permanent_locked_liquidity, total_pct * 2, pool.permanent_lock_liquidity, creator_pct as u128),
+        VaultError::AccountMismatch
+    );
+    Ok(())
+}

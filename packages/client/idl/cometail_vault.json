@@ -458,16 +458,163 @@
           "name": "base_mint"
         },
         {
-          "name": "creator_position",
-          "docs": [
-            "Only for a CreatedPool deposit: the creator position already minted, now vault-owned."
-          ],
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit_dbc_rights_migrated",
+      "discriminator": [
+        231,
+        158,
+        190,
+        73,
+        185,
+        237,
+        107,
+        32
+      ],
+      "accounts": [
+        {
+          "name": "vault",
           "writable": true,
-          "optional": true
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.st_mint",
+                "account": "Vault"
+              }
+            ]
+          }
         },
         {
-          "name": "creator_nft_account",
-          "optional": true
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "stream",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  114,
+                  101,
+                  97,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault"
+              },
+              {
+                "kind": "account",
+                "path": "vault.stream_count",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stream_index",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  114,
+                  101,
+                  97,
+                  109,
+                  45,
+                  105,
+                  110,
+                  100,
+                  101,
+                  120
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "dbc_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_position_index",
+          "docs": [
+            "Index of the bundled creator position: the position can never be deposited again."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  114,
+                  101,
+                  97,
+                  109,
+                  45,
+                  105,
+                  110,
+                  100,
+                  101,
+                  120
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator_position"
+              }
+            ]
+          }
+        },
+        {
+          "name": "dbc_pool"
+        },
+        {
+          "name": "dbc_config"
+        },
+        {
+          "name": "base_mint"
+        },
+        {
+          "name": "damm_pool",
+          "docs": [
+            "The DAMM v2 pool the migration derived to (checked against the config in the handler)."
+          ]
+        },
+        {
+          "name": "creator_position",
+          "writable": true
+        },
+        {
+          "name": "creator_nft_account"
         },
         {
           "name": "cp_amm_program",
@@ -891,6 +1038,12 @@
           "name": "base_mint"
         },
         {
+          "name": "base_token_program",
+          "docs": [
+            "The base mint's own token program (SPL or Token-2022): DBC constrains the base vault to it."
+          ]
+        },
+        {
           "name": "dbc_program",
           "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
         },
@@ -1110,7 +1263,11 @@
           ]
         },
         {
-          "name": "damm_pool"
+          "name": "damm_pool",
+          "docs": [
+            "The stream's DAMM v2 pool: the deposited pool for position streams, the migration's",
+            "derived pool for DBC-rights streams (both record it in `derived_damm_pool`)."
+          ]
         },
         {
           "name": "position",
@@ -1132,6 +1289,12 @@
         },
         {
           "name": "token_a_mint"
+        },
+        {
+          "name": "token_a_program",
+          "docs": [
+            "Token A's own token program (SPL or Token-2022): cp-amm constrains the A vault to it."
+          ]
         },
         {
           "name": "cp_amm_program",
@@ -1561,6 +1724,26 @@
       ],
       "accounts": [
         {
+          "name": "protocol",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  116,
+                  111,
+                  99,
+                  111,
+                  108
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "vault",
           "writable": true,
           "pda": {
@@ -1582,6 +1765,13 @@
               }
             ]
           }
+        },
+        {
+          "name": "signer",
+          "docs": [
+            "The keeper or the depositor: the binding is write-once, so a stranger must not choose it."
+          ],
+          "signer": true
         },
         {
           "name": "lb_pair"
@@ -1896,6 +2086,10 @@
         },
         {
           "name": "signer",
+          "docs": [
+            "Receives the rent of the order and record accounts when the order closes."
+          ],
+          "writable": true,
           "signer": true
         },
         {
@@ -2105,7 +2299,7 @@
         {
           "name": "stream_index",
           "docs": [
-            "Index of the primary source (DBC pool or position)."
+            "Index of the primary source (DBC pool or position); it must belong to this stream."
           ],
           "writable": true,
           "pda": {
@@ -2140,7 +2334,7 @@
         {
           "name": "position_index",
           "docs": [
-            "Index of a registered derived position (DBC rights that migrated), if any."
+            "Index of the creator position of a DBC-rights stream (bundled or registered), if any."
           ],
           "writable": true,
           "optional": true,
@@ -2202,7 +2396,7 @@
         {
           "name": "depositor_nft_account",
           "docs": [
-            "Depositor-owned destination for the NFT."
+            "Depositor-owned destination for the NFT (only when the NFT is not in cp-amm's PDA account)."
           ],
           "writable": true,
           "optional": true
@@ -4722,6 +4916,17 @@
           },
           {
             "name": "stream_count",
+            "docs": [
+              "Monotonic: the next stream's PDA index. Never decremented."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "active_streams",
+            "docs": [
+              "Streams currently open on the vault (deposits plus the vault's own). Withdrawals take",
+              "them back; `launch` requires at least one."
+            ],
             "type": "u32"
           },
           {

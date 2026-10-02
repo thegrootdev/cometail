@@ -15,6 +15,13 @@ pub const EXTERNAL_PROTOCOL_DEN: u64 = 5;
 pub const MAX_UNLOCKED_DUST: u128 = 3;
 /// DLMM limit orders carry at most this many bins.
 pub const MAX_BINS_PER_ORDER: u8 = 50;
+/// Highest DLMM base fee the protocol accepts on a stream-token pair: 1% at DLMM's 1e9 fee
+/// precision (`dlmm/commons/src/constants.rs:24`). The pair's base fee is
+/// `base_factor * bin_step * 10 * 10^base_fee_power_factor` (`dlmm/commons/src/extensions/lb_pair.rs:136-144`).
+pub const MAX_PAIR_BASE_FEE: u128 = 10_000_000;
+/// The DBC migration fee option every stream config must use: `launch` derives the stream
+/// token's DAMM v2 pool from `DAMM_V2_MIGRATION_CONFIGS[6]` (customizable).
+pub const STREAM_MIGRATION_FEE_OPTION: u8 = 6;
 
 pub const SEED_PROTOCOL: &[u8] = b"protocol";
 pub const SEED_VAULT: &[u8] = b"vault";
