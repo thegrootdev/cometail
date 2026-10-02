@@ -4,6 +4,7 @@
 //   GET /api/vaults/:vault          one vault with its streams and latest events
 //   GET /api/events?vault=&limit=   events, newest first
 //   GET /api/health
+//   GET /api/prices                 SOL/USD for display, with its source and age
 //   GET /api/metrics                the submission metrics, independent actors apart from the demo set
 // It binds to the loopback interface and expects a reverse proxy in front for TLS. CORS is
 // limited to the configured origins, and each client address gets a token bucket; the
@@ -132,6 +133,29 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
   };
 }
 
+let metricsMemo: { at: number; value: unknown } | null = null;
+let priceMemo: { at: number; value: { solUsd: number; source: string; at: number } } | null = null;
+
+/** SOL/USD for display only (market cap and USD columns): Jupiter's public price API first,
+ *  CoinGecko as the fallback, cached for 60 s, never a transaction input. */
+export async function solUsd(): Promise<{ solUsd: number; source: string; at: number } | null> {
+  if (priceMemo && Date.now() - priceMemo.at < 60_000) return priceMemo.value;
+  const tries: [string, string, (j: any) => number][] = [
+    ["jupiter", "https://lite-api.jup.ag/price/v3?ids=So11111111111111111111111111111111111111112", (j) => Number(j?.So11111111111111111111111111111111111111112?.usdPrice)],
+    ["coingecko", "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd", (j) => Number(j?.solana?.usd)],
+  ];
+  for (const [source, url, pick] of tries) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(6_000), headers: { accept: "application/json" } });
+      if (!r.ok) continue;
+      const v = pick(await r.json());
+      if (Number.isFinite(v) && v > 0) { priceMemo = { at: Date.now(), value: { solUsd: v, source, at: Date.now() } }; return priceMemo.value; }
+    } catch (e) { log("price source failed", { source, error: String((e as Error).message ?? e) }); }
+  }
+  return priceMemo?.value ?? null;
+}
+
+
 export async function startApi(store: Store, opts: ApiOptions): Promise<http.Server> {
   await refuseIfTaken(opts.host, opts.port);
   const buckets = new Buckets(opts.ratePerMinute, Math.max(10, Math.ceil(opts.ratePerMinute / 2)));
@@ -167,7 +191,12 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         return send(200, { ...vault, streams: await store.listStreams(m[1]), events: await store.listEvents(m[1], limit), trades: await store.listTrades(m[1], limit) });
       }
       if (url.pathname === "/api/events") return send(200, { events: await store.listEvents(url.searchParams.get("vault"), limit) });
-      if (url.pathname === "/api/metrics") return send(200, await metrics(store, new Set(opts.demoActors ?? []), new Set(opts.plainConfigs ?? [])), { "cache-control": "public, max-age=60" });
+      if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
+      if (url.pathname === "/api/metrics") {
+        // the whole store is read for this document: computed at most once per 30 s, shared by every caller
+        if (!metricsMemo || Date.now() - metricsMemo.at > 30_000) metricsMemo = { at: Date.now(), value: await metrics(store, new Set(opts.demoActors ?? []), new Set(opts.plainConfigs ?? [])) };
+        return send(200, metricsMemo.value, { "cache-control": "public, max-age=30" });
+      }
       send(404, { error: "not found" });
     } catch (e) {
       log("api error", { path: url.pathname, error: String((e as Error).message ?? e) });

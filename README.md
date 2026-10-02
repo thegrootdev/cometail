@@ -100,7 +100,8 @@ claimable backlog, realized curve income; for every migrated pool, one row per p
 locked DAMM v2 position with the NFT holder and its custody, the position's share of the pool's
 permanent liquidity, pending quote fees, quote fees claimed so far, and whether the program's
 size rule would admit it, keyed by the position address with `kind: "position"`), and serves `/api/sky`, `/api/vaults`,
-`/api/vaults/:vault`, `/api/events` and `/api/metrics` for the site. Vault rows carry a live
+`/api/vaults/:vault`, `/api/events`, `/api/prices` (SOL/USD for display, cached, with its source) and
+`/api/metrics` (computed at most every 30 s) for the site. Vault rows carry a live
 view (the standing bids bin by bin with prices and the pool's active price) and stream rows the
 registered position's share of its pool's locked liquidity. `/api/metrics` reports the submission
 numbers with independent actors apart from the demo set (`COMETAIL_DEMO_ACTORS`): plain launches
