@@ -156,6 +156,8 @@ class PgStore implements Store {
     try { const q = await this.pool.query("select last_value, is_called from feed_seq_seq"); if (q.rows[0]?.is_called) previousHead = Math.max(previousHead, Number(q.rows[0].last_value)); } catch { /* no sequence yet */ }
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      // Persist the allocator before destructive DDL: a restart after the drop must retain it.
+      await this.pool.query("insert into meta (key, value) values ('feed_seq_floor', $1) on conflict (key) do update set value = greatest(meta.value::bigint, excluded.value::bigint)::text", [String(previousHead)]);
       await this.pool.query("delete from meta where key not in ('schema', 'feed_seq_floor')");
       await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades, tokens, feed");
     }
@@ -282,6 +284,8 @@ class SqliteStore implements Store {
     try { const q: any = this.db.prepare("select seq from sqlite_sequence where name = 'feed'").get(); if (q) previousHead = Math.max(previousHead, Number(q.seq)); } catch { /* no sequence row yet */ }
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      // Persist the allocator before destructive DDL: a restart after the drop must retain it.
+      this.db.prepare("insert into meta (key, value) values ('feed_seq_floor', ?) on conflict (key) do update set value = cast(max(cast(meta.value as integer), cast(excluded.value as integer)) as text)").run(String(previousHead));
       this.db.exec("delete from meta where key not in ('schema', 'feed_seq_floor')");
       this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists feed; drop table if exists trades; drop table if exists tokens");
     }
