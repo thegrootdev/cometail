@@ -14,6 +14,7 @@ export interface EstimateLabel { path: string; source: "estimate"; basis: string
 /** SDK annotations. Missing wire provenance is explicitly labelled indexer, never chain. */
 export interface Evidence { provenance: Provenance; estimates: EstimateLabel[] }
 export interface Coverage { status: "complete" | "partial" | "stale"; pendingPools: number; lastSuccessfulAtMs: number | null }
+export interface QuoteUsd { value: number | null; source: string | null; status: "fresh" | "missing" }
 export interface SolUsd { value: number; source: string; observedAtMs: number; status: "fresh" | "stale"; valuationBasis: "market" | "reference" }
 export interface Envelope<T> extends Evidence {
   schemaVersion: 1; cluster: string; generatedAtMs: number; observedSlot: number | null;
@@ -32,6 +33,7 @@ export interface Token extends Evidence {
     quoteMint: Address; tokenKind: "plain" | "stream"; config: Address; vault: Address | null;
   };
   market: {
+    priceQuote: string | null; quoteMint: Address; quoteDecimals: number; quoteUsd: QuoteUsd;
     priceSol: string | null; priceSource: string | null; priceAtMs: number; totalSupplyRaw: RawAmount;
     circulatingSupplyRaw: null; fdvUsd: string | null; marketCapUsd: null; valuationBasis: "fdv";
     liquidityLamports: RawAmount | null; liquidityBasis: "curve-quote-reserve" | "damm-quote-x2" | null;
@@ -46,6 +48,7 @@ export interface Trade extends Evidence {
   id: string; signature: string; ordinal: number; slot: number; blockTimeSec: number | null;
   pool: Address; venue: "curve" | "damm" | null; side: "buy" | "sell";
   baseAmountRaw: RawAmount | null; quoteAmountLamports: RawAmount | null; executionPriceSol: string | null;
+  executionPriceQuote: string | null; quoteMint: Address; quoteDecimals: number;
   trader: Address; traderKind: "authority" | "feePayer";
 }
 export interface SkyStream extends Evidence {
@@ -95,19 +98,22 @@ export interface Metrics extends Evidence {
 export interface Prices extends Evidence { solUsd: number; source: string; at: number }
 export interface Health extends Evidence { ok: boolean; service: string; time: number }
 export interface FeedData {
-  launch: { mint: Address; name: string; symbol: string; imageUrl: string | null; creator: Address; config: Address; dbcPool: Address; tokenKind: "plain" | "stream" };
-  trade: { mint: Address; pool: Address; venue: "curve" | "damm"; side: "buy" | "sell"; baseAmountRaw: RawAmount; quoteAmountLamports: RawAmount; executionPriceSol: string | null; trader: Address; signature: string };
-  graduation: { mint: Address; dbcPool: Address; dammPool: Address; signature: string };
-  harvest: { vault: Address; stream: Address; incomeLamports: RawAmount; signature: string };
-  bid: { vault: Address; order: Address; bins: number; grossLamports: RawAmount; signature: string };
-  fill: { vault: Address; order: Address; burnedStRaw: RawAmount; unfilledLamports: RawAmount; signature: string };
-  cashout: { vault: Address; depositorLamports: RawAmount; signature: string };
+  launch: { mint: Address; name: string; symbol: string; imageUrl: string | null; creator: Address; config: Address; dbcPool: Address; tokenKind: "plain" | "stream"; quoteMint?: Address; stage?: Stage; createdAtMs?: number | null };
+  trade: { mint: Address | null; pool: Address; venue: "curve" | "damm" | null; side: "buy" | "sell"; baseAmountRaw: RawAmount | null; quoteAmountLamports: RawAmount | null; executionPriceSol: string | null; trader: Address; signature: string; traderKind?: "authority" | "feePayer" };
+  graduation: { mint: Address; dbcPool: Address; dammPool: Address | null; quoteMint?: Address; signature?: string };
+  harvest: { vault: Address; stream: Address | null; incomeLamports: RawAmount | null; signature: string; grossLamports?: RawAmount | null; toDepositorLamports?: RawAmount | null; toProtocolLamports?: RawAmount | null; oneTime?: boolean };
+  bid: { vault: Address; order: Address | null; bins: number; grossLamports: RawAmount | null; signature: string };
+  fill: { vault: Address; order: Address | null; burnedStRaw: RawAmount | null; unfilledLamports: RawAmount | null; signature: string };
+  cashout: { vault: Address; depositorLamports: RawAmount | null; signature: string };
+  unwind: { vault: Address; stMint: Address | null; dbcPool: Address | null; incomeReturned: RawAmount | null; launchedAt?: string | null; unwoundAt?: string | null; signature: string };
+  vault: { vault: Address; event: string; signature: string; [key: string]: Json };
 }
 export type FeedType = keyof FeedData;
 type Origin<T> = { provenance: Provenance & { source: "chain" | "indexer" }; data: T & { basis?: string } } | { provenance: Provenance & { source: "estimate" }; data: T & { basis: string } };
 export type FeedEvent = { [K in FeedType]: { schemaVersion: 1; cluster: string; type: K; cursor: Cursor; observedSlot: number | null; generatedAtMs: number } & Origin<FeedData[K]> }[FeedType];
-export type ControlFrame = { type: "hello"; cursor: Cursor | null; retentionSlots: number } | { type: "ping"; generatedAtMs: number } | ({ type: "coverage" } & Coverage);
+export interface GapFrame { type: "gap"; oldest: Cursor; resume: Cursor }
+export type ControlFrame = GapFrame | { type: "hello"; cursor: Cursor | null; retentionSlots: number } | { type: "ping"; generatedAtMs: number } | ({ type: "coverage" } & Coverage);
 export type FeedFrame = FeedEvent | ControlFrame;
-export interface FeedReplay { events: FeedEvent[]; nextCursor: Cursor | null }
+export interface FeedReplay { schemaVersion: 1; cluster: string; type: "replay"; generatedAtMs: number; events: FeedEvent[]; nextCursor: Cursor | null }
 export interface RequestOptions { signal?: AbortSignal }
 export interface TokenQuery { sort?: "volume24h" | "newest"; stage?: "bonding" | "graduated" | "all"; q?: string; limit?: number; cursor?: string }

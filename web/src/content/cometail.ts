@@ -132,6 +132,8 @@ export const vaultPage = {
     "If this stream token's curve never reaches its threshold, the seller is not stuck. Thirty days after launch, while the curve is still below its threshold, the seller can unwind: the streams go back to the seller's wallet with any income the vault collected from them, and the vault closes for good. The stream token keeps trading on its curve, so holders can sell back; a later graduation changes nothing for a closed vault.",
   unwind: {
     title: "Unwind this vault",
+    readFailed: "We could not check the curve. Retry to see whether this vault can unwind.",
+    retry: "Check again",
     bodyWaiting: "If the curve is still below its threshold by then, you can unwind from",
     bodyReady: "Thirty days have passed and the curve is still below its threshold. You can close this vault for good and take your streams back.",
     whatHappens: "Your streams return to your wallet, with the income the vault collected from them. The stream token keeps trading on its curve; holders can sell back. This cannot be undone.",
@@ -401,6 +403,17 @@ export const experience = {
 } as const;
 
 export const plainLaunch = {
+  presets: {
+    title: "Choose your curve",
+    body: "One token. Three paths to graduation.",
+    standard: { name: "Standard", body: "The familiar curve, with price rising as tokens are bought." },
+    long: { name: "Long curve", body: "More room for price discovery before the pool graduates." },
+    flat: { name: "Flat curve", body: "Most liquidity sits in a narrower price band before the final climb." },
+    quote: "Quoted in SOL",
+    unavailable: "Unavailable on this network",
+    shapeNote: "Shapes illustrate the designs; they are not price forecasts. Your curve is fixed at launch.",
+    selected: "Selected curve",
+  },
   title: "Launch a token",
   intro:
     "One flat 1% fee on the curve. While it bonds, 75% of the fee after Meteora's cut is yours (60% of the gross fee). If it graduates, your permanently locked position earns 80% of the pool's claimable fees (32% of the gross fee while half of the LP fees compound), for as long as it trades.",

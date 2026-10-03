@@ -56,7 +56,7 @@ export function feedFromEvents(rows: EventRow[]): FeedRow[] {
 export function feedFromTrades(rows: TradeRow[], mintOfPool: (pool: string) => string | null): FeedRow[] {
   return rows.map((t) => ({
     slot: t.slot, ordinal: t.idx, signature: t.signature, type: "trade", vault: t.vault || null, mint: mintOfPool(t.pool), provenance: chain(t.signature, t.slot), at: now(),
-    data: { mint: mintOfPool(t.pool), pool: t.pool, venue: t.venue ?? null, side: t.buy ? "buy" : "sell", baseAmountRaw: t.baseAmountRaw ?? null, quoteAmountLamports: t.quoteAmountLamports ?? null, executionPriceSol: t.executionPriceSol ?? null, trader: t.trader, traderKind: t.traderKind, signature: t.signature },
+    data: { mint: mintOfPool(t.pool), pool: t.pool, venue: t.venue ?? null, side: t.buy ? "buy" : "sell", baseAmountRaw: t.baseAmountRaw ?? null, quoteAmountLamports: t.quoteAmountLamports ?? null, executionPriceSol: t.executionPriceSol ?? null, executionPriceQuote: t.executionPriceQuote ?? t.executionPriceSol ?? null, quoteMint: t.quoteMint ?? "So11111111111111111111111111111111111111112", quoteDecimals: t.quoteDecimals ?? 9, trader: t.trader, traderKind: t.traderKind, signature: t.signature },
   }));
 }
 

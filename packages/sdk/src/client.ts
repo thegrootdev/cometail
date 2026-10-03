@@ -1,5 +1,5 @@
 import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade } from "./types.js";
-import { array, compareCursors, decodeEnvelope, decodeFrame, evidence, number, object, parseCursor, ProtocolError, text } from "./protocol.js";
+import { array, compareCursors, decodeEnvelope, decodeFrame, isFeedEvent, evidence, number, object, parseCursor, ProtocolError, text } from "./protocol.js";
 import { FeedSubscription } from "./feed.js";
 import type { FeedOptions } from "./feed.js";
 export interface ClientOptions {
@@ -18,7 +18,7 @@ function token(value: unknown): Token {
   text(id.mint); number(id.decimals); text(market.totalSupplyRaw);
   object(r.volume24h); object(r.holders); object(r.bonding);
   const labels: EstimateLabel[] = [];
-  if (market.fdvUsd !== null) labels.push(label("market.fdvUsd", "Derived fully diluted value from total supply, indexed price and the response's SOL/USD reference; not circulating market cap."));
+  if (market.fdvUsd !== null) labels.push(label("market.fdvUsd", "Derived fully diluted value from total supply, indexed price and the response's quote-to-USD reference; not circulating market cap."));
   if (market.liquidityBasis === "damm-quote-x2") labels.push(label("market.liquidityLamports", "Graduated pool quote side multiplied by two; a liquidity estimate."));
   return row<Token>(r, labels);
 }
@@ -107,16 +107,18 @@ export class CometailClient {
   async replay(q: { since?: string; limit?: number } = {}, options?: RequestOptions): Promise<FeedReplay> {
     if (q.since !== undefined) parseCursor(q.since);
     const r = object(await this.get("/api/feed" + query(q, 500), options));
+    if (r.schemaVersion !== 1 || r.type !== "replay") throw new ProtocolError("Unsupported replay envelope");
+    text(r.cluster); number(r.generatedAtMs);
     let previous = q.since;
     const events = array(r.events).map(v => {
       const frame = decodeFrame(v);
-      if (!("schemaVersion" in frame)) throw new ProtocolError("Control frame in replay events");
+      if (!isFeedEvent(frame)) throw new ProtocolError("Control frame in replay events");
       if (previous !== undefined && compareCursors(frame.cursor, previous) <= 0) throw new ProtocolError("Replay is not strictly increasing after since");
       previous = frame.cursor; return frame;
     });
     const next = r.nextCursor === null ? null : text(r.nextCursor);
     if (next !== null && (events.length === 0 || compareCursors(next, events[events.length - 1]!.cursor) !== 0)) throw new ProtocolError("nextCursor must acknowledge the last event in this replay page");
-    return { events, nextCursor: next };
+    return { schemaVersion: 1, type: "replay", cluster: text(r.cluster), generatedAtMs: number(r.generatedAtMs), events, nextCursor: next };
   }
   /** One page at a time; abort cancels an active request. Does not claim retention is complete. */
   async *replayAll(since?: string, options?: RequestOptions): AsyncGenerator<FeedEvent> {

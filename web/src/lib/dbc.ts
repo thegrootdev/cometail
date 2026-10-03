@@ -64,9 +64,12 @@ export async function curveSwapTx(connection: Connection, pool: PublicKey, owner
 export async function claimCreatorFeesTx(connection: Connection, pool: PublicKey, creator: PublicKey): Promise<Transaction> {
   return dbcClient(connection).creator.claimCreatorTradingFee({ creator, payer: creator, pool, maxBaseAmount: new BN(0), maxQuoteAmount: new BN("18446744073709551615") });
 }
-export async function launchTx(connection: Connection, a: { payer: PublicKey; baseMint: PublicKey; name: string; symbol: string; uri: string; firstBuyLamports?: BN }): Promise<Transaction> {
+export async function launchTx(connection: Connection, a: { payer: PublicKey; baseMint: PublicKey; name: string; symbol: string; uri: string; firstBuyLamports?: BN; config?: PublicKey }): Promise<Transaction> {
   const client = dbcClient(connection);
-  const createPoolParam = { name: a.name, symbol: a.symbol, uri: a.uri, payer: a.payer, poolCreator: a.payer, config: ADDRESSES.plainConfig, baseMint: a.baseMint };
+  const config = a.config ?? ADDRESSES.plainConfig;
+  const configState = await dbcState(connection).getPoolConfig(config);
+  if (!configState || !configState.quoteMint.equals(NATIVE_MINT)) throw new Error("This launch requires a SOL-quoted config");
+  const createPoolParam = { name: a.name, symbol: a.symbol, uri: a.uri, payer: a.payer, poolCreator: a.payer, config, baseMint: a.baseMint };
   if (a.firstBuyLamports && a.firstBuyLamports.gtn(0)) {
     return client.creator.createPoolWithFirstBuy({ createPoolParam, firstBuyParam: { buyer: a.payer, buyAmount: a.firstBuyLamports, minimumAmountOut: new BN(0), referralTokenAccount: null } });
   }

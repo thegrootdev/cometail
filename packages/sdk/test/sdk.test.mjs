@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CometailClient, FeedSubscription, ApiError, ProtocolError, decodeFrame, compareCursors } from '../dist/index.js';
+import { CometailClient, FeedSubscription, ApiError, ProtocolError, FeedGapError, decodeFrame, compareCursors } from '../dist/index.js';
 const mint='11111111111111111111111111111111';
 const frame=(cursor='10:0:abc', extra={})=>({schemaVersion:1,cluster:'devnet',type:'harvest',cursor,observedSlot:10,generatedAtMs:100,provenance:{source:'chain',signature:'abc',slot:10},data:{vault:mint,stream:mint,incomeLamports:'9007199254740993',signature:'abc'},...extra});
 const token={identity:{mint,decimals:6,name:'Comet',symbol:'COMET',imageUrl:null,metadataUri:null,metadataStatus:'missing',creator:mint,custody:'wallet',createdAtMs:null,dbcPool:mint,dammPool:null,quoteMint:mint,tokenKind:'plain',config:mint,vault:null,stage:'bonding',links:null},market:{priceSol:null,priceSource:null,priceAtMs:10,totalSupplyRaw:'9007199254740993',circulatingSupplyRaw:null,fdvUsd:'100',marketCapUsd:null,valuationBasis:'fdv',liquidityLamports:'10000',liquidityBasis:'damm-quote-x2'},volume24h:{lamports:'0',buys:0,sells:0,windowEndMs:10,windowStartMs:0,complete:false,status:'partial'},holders:{count:null,countedAtMs:null,status:'missing',definition:'owners'},bonding:{progressBps:0,quoteRaisedLamports:'0',targetLamports:'1',migrationStage:'bonding'},updatedAtMs:10};
@@ -21,7 +21,7 @@ test('all REST routes keep exact wire paths/shapes and identify estimates',async
  case '/api/sky':return json({streams:[{baseMint:mint,claimableLamports:'1',realizedEstimateLamports:'2',realized7dLamports:null}]});
  case '/api/vaults':return json({vaults:[{vault:mint,data:{},updatedAt:1,stToken:null}]});
  case '/api/vaults/'+mint:return json({vault:mint,data:{},streams:[{stream:mint,data:{},token:null}],events:[{signature:'a',slot:3,data:{}}],trades:[{signature:'b',slot:4,amountIn:'999',buy:true}]});
- case '/api/events':return json({events:[{signature:'a',slot:3,data:{}}]});
+ case '/api/events':return json({schemaVersion:1,cluster:'devnet',type:'replay',generatedAtMs:100,events:[{signature:'a',slot:3,data:{}}]});
  case '/api/tokens/'+mint:return json(envelope(token));
  case '/api/tokens/'+mint+'/trades':return json(envelope({trades:[{signature:'a',slot:3,baseAmountRaw:null,quoteAmountLamports:null}],nextCursor:null}));
  case '/api/metrics':return json({generatedAt:10,incomplete:true,plainLaunches:{volumeEstimateLamports:{independent:'125',demo:'0',unattributed:'0'}}});
@@ -45,11 +45,11 @@ test('caller cancellation and bounded timeout abort active requests',async()=>{
  await assert.rejects(new CometailClient({fetch,timeoutMs:5}).prices(),/timed out/);
 });
 test('feed replay pages numerically, preserves evidence, and does not skip same-slot events',async()=>{
- const calls=[];const c=clientWith(async u=>{calls.push(new URL(u).searchParams.get('since'));return calls.length===1?json({events:[frame('9:1:abc'),frame('10:0:abc')],nextCursor:'10:0:abc'}):json({events:[frame('10:0:abd')],nextCursor:null})});const got=[];for await(const e of c.replayAll('9:0:abc'))got.push(e.cursor);assert.deepEqual(got,['9:1:abc','10:0:abc','10:0:abd']);assert.deepEqual(calls,['9:0:abc','10:0:abc']);assert.equal(compareCursors('9:0:abc','10:0:abc'),-1);
+ const calls=[];const c=clientWith(async u=>{calls.push(new URL(u).searchParams.get('since'));return calls.length===1?json({schemaVersion:1,cluster:'devnet',type:'replay',generatedAtMs:100,events:[frame('9:1:abc'),frame('10:0:abc')],nextCursor:'10:0:abc'}):json({schemaVersion:1,cluster:'devnet',type:'replay',generatedAtMs:100,events:[frame('10:0:abd')],nextCursor:null})});const got=[];for await(const e of c.replayAll('9:0:abc'))got.push(e.cursor);assert.deepEqual(got,['9:1:abc','10:0:abc','10:0:abd']);assert.deepEqual(calls,['9:0:abc','10:0:abc']);assert.equal(compareCursors('9:0:abc','10:0:abc'),-1);
 });
 test('replay rejects nonadvancing/misordered cursors and surfaces retention 410',async()=>{
- await assert.rejects(clientWith(async()=>json({events:[frame()],nextCursor:'11:0:abc'})).replay(),ProtocolError);
- await assert.rejects(clientWith(async()=>json({events:[frame('10:0:abc'),frame('9:0:abc')],nextCursor:null})).replay(),ProtocolError);
+ await assert.rejects(clientWith(async()=>json({schemaVersion:1,cluster:'devnet',type:'replay',generatedAtMs:100,events:[frame()],nextCursor:'11:0:abc'})).replay(),ProtocolError);
+ await assert.rejects(clientWith(async()=>json({schemaVersion:1,cluster:'devnet',type:'replay',generatedAtMs:100,events:[frame('10:0:abc'),frame('9:0:abc')],nextCursor:null})).replay(),ProtocolError);
  await assert.rejects(clientWith(async()=>json({error:'cursor expired'},410)).replay({since:'1:0:abc'}),e=>e instanceof ApiError&&e.status===410);
 });
 test('all seven event types validate; estimates require basis and exact raw strings',()=>{
@@ -87,4 +87,21 @@ test('direct subscriptions reject invalid origins before opening a transport',()
   assert.equal(opened,false);
  }
  assert.throws(()=>decodeFrame(frame(undefined,{type:'toString'})),ProtocolError);
+});
+
+test('retention gaps stop before hello or events without advancing the saved cursor',async()=>{
+ const x=setup({since:'1:0:abc'});
+ x.sockets[0].send({type:'gap',oldest:'10:0:abc',resume:'9:0:abc'});
+ x.sockets[0].send({type:'hello',cursor:'99:0:abc',retentionSlots:100});
+ x.sockets[0].send(frame());await turn();
+ assert.equal(x.sub.closed,true);assert.equal(x.sub.cursor,'1:0:abc');assert.equal(x.events.length,0);
+ assert.equal(x.controls[0].type,'gap');assert.equal(x.errors[0] instanceof FeedGapError,true);
+ assert.equal(x.errors[0].resume,'9:0:abc');assert.equal(x.sockets.length,1);
+ assert.throws(()=>decodeFrame({type:'gap',oldest:'10:0:abc',resume:'10:0:abc'}),ProtocolError);
+ assert.throws(()=>decodeFrame({type:'gap',oldest:'10:0:abc',resume:'bad'}),ProtocolError);
+});
+test('unwind feed keeps exact returned balance and rejects a numeric or fractional amount',()=>{
+ const event=frame(undefined,{type:'unwind',data:{vault:mint,stMint:mint,dbcPool:mint,incomeReturned:'9007199254740993',signature:'abc'}});
+ assert.equal(decodeFrame(event).data.incomeReturned,'9007199254740993');
+ for(const amount of [1,'1.5','-1'])assert.throws(()=>decodeFrame({...event,data:{...event.data,incomeReturned:amount}}),ProtocolError);
 });

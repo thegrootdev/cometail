@@ -55,7 +55,7 @@ Known REST estimates receive a field path and basis:
 - Token `market.liquidityLamports` with `damm-quote-x2`: twice the pool's quote side.
 - Metrics `plainLaunches.volumeEstimateLamports`: the current flat-fee assumption, net curve fee multiplied by 125.
 
-Use `coverage`, `incomplete`, `notes`, timestamps and the nullable raw values when deciding what to display. Missing is not zero. Devnet USD figures are reference values. The SDK does not price future USDC/stock presets or reinterpret `quoteAmountLamports` as SOL for an arbitrary quote mint; changes to those wire fields require the matching worker contract.
+Use `coverage`, `incomplete`, `notes`, timestamps and the nullable raw values when deciding what to display. Missing is not zero. Devnet USD figures are reference values. Token markets expose `priceQuote`, `quoteMint`, `quoteDecimals` and `quoteUsd`; token-route trades expose `executionPriceQuote`, `quoteMint` and `quoteDecimals`. `priceSol` and `executionPriceSol` are null for non-WSOL quotes. Legacy fields named `lamports` are quote base units: interpret them using that quote mint and its decimals. A missing quote-to-USD rate stays null, never a guessed dollar figure. Feed trade rows in this worker release do not yet include quote siblings; resolve the token identity before displaying their quote amounts.
 
 ```ts
 const sky = await api.sky({ limit: 200 });
@@ -69,7 +69,7 @@ console.log(metrics.incomplete, metrics.notes, metrics.estimates);
 
 ## Subscribe and resume
 
-The worker sends `launch`, `trade`, `graduation`, `harvest`, `bid`, `fill` and `cashout` events. Discriminating `event.type` narrows its data. `bid.data.bins` is a count. The socket also sends `hello`, `ping` (normally every 25 seconds) and `coverage` controls.
+The worker sends `launch`, `trade`, `graduation`, `harvest`, `bid`, `fill`, `cashout`, `unwind` and `vault` events. Discriminating `event.type` narrows its data. `bid.data.bins` is a count. Nullable amounts and addresses remain null. `vault.data.event` names other program events. Indexer-derived graduations have no transaction signature; their cursor identifies the token and scan slot. The socket also sends `hello`, `ping` (normally every 25 seconds) and `coverage` controls. A `gap` control supplies `oldest` and `resume` cursors.
 
 ```ts
 import type { FeedEvent } from "@cometail/sdk";
@@ -118,12 +118,12 @@ try {
 }
 ```
 
-Replay pages are `{ events, nextCursor }`, strictly after `since`, oldest first. A non-null `nextCursor` is the last event in a page with more results. Cursors compare numerically by slot and ordinal, then by signature; do not compare the full string lexically. The intended worker retention is seven days; that is a retention policy, not proof that a given scan or connection has no gaps. Feed/replay require the corresponding worker release; this package does not start a feed server.
+Replay pages are `{ schemaVersion, cluster, type: "replay", generatedAtMs, events, nextCursor }`, strictly after `since`, oldest first. A non-null `nextCursor` is the last event in a page with more results. Cursors compare numerically by slot and ordinal, then by signature; do not compare the full string lexically. The intended worker retention is seven days; that is a retention policy, not proof that a given scan or connection has no gaps. Feed/replay require the corresponding worker release; this package does not start a feed server.
 
 ## Errors, cancellation and test transports
 
 ```ts
-import { ApiError, ProtocolError } from "@cometail/sdk";
+import { ApiError, ProtocolError, FeedGapError } from "@cometail/sdk";
 try {
   await api.prices({ signal: stop.signal });
 } catch (error) {
@@ -138,3 +138,12 @@ try {
 `ApiError` retains HTTP status, the raw Retry-After header and parsed error body. Timeouts and caller cancellation abort fetch. Requests time out after 15 seconds by default. `baseUrl` must be an HTTP(S) origin; origin credentials are rejected. Constructors accept an injected `fetch`, and `feed` accepts a standards-compatible `socketFactory`. REST guards validate envelopes, collections and the essential fields consumed by the SDK; TypeScript declarations describe the full server contract, not exhaustive runtime validation of arbitrary account JSON. Feed frames validate the event discriminant, required data fields, raw amounts and provenance before delivery.
 
 No runtime dependencies, telemetry, secrets or transaction builders are included. The existing `@cometail/client` is the separate vault-program client. Mainnet setup and config creation follow the mainnet runbook and the operator's release procedure.
+
+A retention `gap` closes the socket with `FeedGapError`, preserving the last delivered
+cursor. The error exposes `oldest` and `resume`; `onControl` also receives the gap. The
+client never reconnects past it automatically. After your application reconciles the
+missing interval, explicitly replay or subscribe using `resume` (which precedes the
+oldest retained event). Using `oldest` itself as an exclusive `since` would skip it.
+HTTP replay retains the worker's 410 `{ error, oldest, resume }` body in `ApiError`.
+`unwind.data.incomeReturned` is the raw WSOL balance returned, including donations;
+it is separate from cumulative harvested-income and split counters.

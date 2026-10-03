@@ -1,6 +1,8 @@
 "use client";
 import { friendlyError, insufficientSol, LAUNCH_OVERHEAD_LAMPORTS } from "@/lib/errors";
-import { useState } from "react";
+import { LaunchPresets } from "@/components/LaunchPresets";
+import { LAUNCH_PRESETS, type LaunchPresetId } from "@/lib/launch-presets";
+import { useEffect, useState } from "react";
 import { CopyAddress } from "@/components/CopyAddress";
 import Link from "next/link";
 import { Keypair } from "@solana/web3.js";
@@ -14,6 +16,7 @@ import {
   type TokenImage,
 } from "@/components/TokenIdentity";
 import { plainLaunch, amounts, experience as c } from "@/content/cometail";
+import { presetsPage } from "@/content/presets";
 import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
 import { SocialFields } from "@/components/SocialLinks";
@@ -28,6 +31,14 @@ export default function LaunchPage() {
   const { connection } = useConnection();
   const { signMessage } = useWallet();
   const { run, status, connected, publicKey } = useTx();
+  const [presetId, setPresetId] = useState<LaunchPresetId>("standard");
+  // the presets page links here with ?preset=<id>; an unknown or unavailable id keeps Standard
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("preset");
+    const found = LAUNCH_PRESETS.find((p) => p.id === wanted && p.config);
+    if (found) setPresetId(found.id);
+  }, []);
+  const preset = LAUNCH_PRESETS.find(p => p.id === presetId)!;
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
   const [description, setDescription] = useState("");
@@ -47,6 +58,7 @@ export default function LaunchPage() {
   const shortfall = publicKey && firstBuyRaw !== null && solBalance.lamports !== null && solBalance.lamports < need ? insufficientSol(need, solBalance.lamports) : null;
   const quickBuys = [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} SOL`, value: v })), { label: amounts.max, value: solBalance.lamports === null ? null : inputValue(spendable(solBalance.lamports, LAUNCH_OVERHEAD_LAMPORTS) ?? 0n, 9) }];
   const valid =
+    !!preset.config &&
     linksValid(links) &&
     firstBuyRaw !== null &&
     !shortfall &&
@@ -57,9 +69,8 @@ export default function LaunchPage() {
     new TextEncoder().encode(symbol.trim().toUpperCase()).length <= 10;
   const busy = preparing || status.state === "sending";
   const submit = async () => {
-    if (!valid || !image || !publicKey || busy) return;
+    if (!valid || !image || !publicKey || !preset.config || busy || blocked) return;
     setPreparing(true);
-    if (blocked) return;
     setError(null);
     try {
       const lamports = firstBuyRaw && firstBuyRaw > 0n ? new BN(firstBuyRaw.toString()) : undefined;
@@ -83,6 +94,7 @@ export default function LaunchPage() {
       const sig = await run(
         () =>
           launchTx(connection, {
+            config: preset.config!,
             payer: publicKey,
             baseMint: kp.publicKey,
             name: name.trim(),
@@ -108,9 +120,11 @@ export default function LaunchPage() {
         title={plainLaunch.title}
         body={c.launchBody}
       />
+      <p className="form-notice presets-link">{presetsPage.launchLink} <Link href="/presets" className="text-link">{presetsPage.launchLinkAction} ↗</Link></p>
       <div className="launch-layout">
         <Card title={c.identity}>
           <StorageNotice storage={storage} />
+          <LaunchPresets value={presetId} onChange={id => { setPresetId(id); setFirstBuy(""); }} disabled={busy || !!mint || blocked} />
           <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
             <div className="form-row">
               <label className="field">
@@ -200,6 +214,7 @@ export default function LaunchPage() {
         <aside className="preview-column">
           <IdentityPreview name={name} symbol={symbol} image={image?.preview} links={links} />
           <Card title={c.review}>
+            <p className="caption">{plainLaunch.presets.selected}: <strong>{plainLaunch.presets[presetId].name}</strong></p>
             <p className="creation-fee">{plainLaunch.creationFee}</p>
             <p className="disclosure-copy">{plainLaunch.intro}</p>
             <p className="disclosure-copy">{plainLaunch.lock}</p>

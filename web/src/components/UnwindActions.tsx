@@ -23,13 +23,27 @@ export function UnwindActions({ vault, v, streams, onChange }: { vault: string; 
   const { run, status } = useTx();
   const [error, setError] = useState<string | null>(null);
   // the curve's own progress decides: a pool past its threshold graduates instead
-  const [progress, setProgress] = useState<number | null>(null);
+  const [read, setRead] = useState<{ pool: string; progress: number } | null>(null);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
-    let live = true;
-    if (!v?.dbcPool) return;
-    loadPool(connection, new PublicKey(String(v.dbcPool))).then((p) => { if (live) setProgress(p ? p.progress : -1); }).catch(() => { if (live) setProgress(-1); });
-    return () => { live = false; };
-  }, [connection, v?.dbcPool]);
+    let live = true, sequence = 0;
+    const key = String(v?.dbcPool ?? "");
+    setRead(null);
+    if (!key) return;
+    const refresh = async () => {
+      const request = ++sequence;
+      try {
+        const pool = await loadPool(connection, new PublicKey(key));
+        if (live && request === sequence) setRead({ pool: key, progress: pool?.progress ?? -1 });
+      } catch {
+        if (live && request === sequence) setRead({ pool: key, progress: -1 });
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 15_000);
+    return () => { live = false; clearInterval(timer); };
+  }, [connection, v?.dbcPool, retry]);
+  const progress = read?.pool === String(v?.dbcPool) ? read.progress : null;
   const copy = vaultPage.unwind;
   const own = streams.find((s) => s.isOwn && KIND(s) === "dbcCreatorRights");
   const launchedAt = own ? Number(own.depositTs) : null;
@@ -56,7 +70,7 @@ export function UnwindActions({ vault, v, streams, onChange }: { vault: string; 
   };
   return (
     <Card title={copy.title} className="mt-6 unwind-card">
-      {progress === null ? <p>{copy.checking}</p> : progress !== MigrationProgress.PreBondingCurve ? <p>{copy.graduatedInstead}</p> : ready ? <p>{copy.bodyReady}</p> : <p>{copy.bodyWaiting} <strong>{when}</strong>.</p>}
+      {progress === null ? <p>{copy.checking}</p> : progress === -1 ? <p role="alert">{copy.readFailed} <button type="button" className="text-ion" onClick={() => setRetry(n => n + 1)}>{copy.retry} ↻</button></p> : progress !== MigrationProgress.PreBondingCurve ? <p>{copy.graduatedInstead}</p> : ready ? <p>{copy.bodyReady}</p> : <p>{copy.bodyWaiting} <strong>{when}</strong>.</p>}
       {belowThreshold && <p className="caption mt-2">{copy.whatHappens}</p>}
       {ready && status.state !== "done" && (
         <button type="button" className="button button-secondary mt-4" onClick={unwind} disabled={status.state === "sending"}>

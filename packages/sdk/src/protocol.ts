@@ -2,6 +2,12 @@ import type { ControlFrame, EstimateLabel, Evidence, FeedEvent, FeedFrame, Prove
 export class ProtocolError extends Error {
   constructor(message: string) { super(message); this.name = "ProtocolError"; }
 }
+/** Retention has a gap. Reconcile before explicitly starting a new subscription. */
+export class FeedGapError extends ProtocolError {
+  constructor(public readonly oldest: string, public readonly resume: string) {
+    super("Feed history expired; reconcile before resuming"); this.name = "FeedGapError";
+  }
+}
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new ProtocolError("Expected a JSON object");
   return value as Record<string, unknown>;
@@ -36,7 +42,7 @@ export function evidence(value: unknown, estimates: EstimateLabel[] = []): Evide
 }
 /** Cursors sort numerically by slot and ordinal, then by signature; never lexically by the full string. */
 export function parseCursor(value: string): readonly [bigint, bigint, string] {
-  const m = /^(\d{1,20}):(\d{1,20}):([1-9A-HJ-NP-Za-km-z]{1,128})$/.exec(value);
+  const m = /^(\d{1,12}):(\d{1,9}):([^:\s]{1,96})$/.exec(value);
   if (!m) throw new ProtocolError("Invalid feed cursor");
   return [BigInt(m[1]!), BigInt(m[2]!), m[3]!];
 }
@@ -50,15 +56,29 @@ function coverage(v: Record<string, unknown>): void {
 }
 const required: Record<string, readonly string[]> = {
   launch: ["mint", "name", "symbol", "creator", "config", "dbcPool", "tokenKind"],
-  trade: ["mint", "pool", "venue", "side", "baseAmountRaw", "quoteAmountLamports", "trader", "signature"],
-  graduation: ["mint", "dbcPool", "dammPool", "signature"],
-  harvest: ["vault", "stream", "incomeLamports", "signature"],
-  bid: ["vault", "order", "grossLamports", "signature"],
-  fill: ["vault", "order", "burnedStRaw", "unfilledLamports", "signature"],
-  cashout: ["vault", "depositorLamports", "signature"],
+  trade: ["pool", "side", "trader", "signature"],
+  graduation: ["mint", "dbcPool"],
+  harvest: ["vault", "signature"], bid: ["vault", "signature"],
+  fill: ["vault", "signature"], cashout: ["vault", "signature"],
+  unwind: ["vault", "signature"], vault: ["vault", "event", "signature"],
 };
+const nullable: Record<string, readonly string[]> = {
+  trade: ["mint", "venue", "baseAmountRaw", "quoteAmountLamports", "executionPriceSol"],
+  graduation: ["dammPool"], harvest: ["stream", "incomeLamports"],
+  bid: ["order", "grossLamports"], fill: ["order", "burnedStRaw", "unfilledLamports"],
+  cashout: ["depositorLamports"], unwind: ["stMint", "dbcPool", "incomeReturned"],
+};
+/** Control frames also carry schemaVersion on the worker; discriminate by type. */
+export function isFeedEvent(frame: FeedFrame): frame is FeedEvent {
+  return !["hello", "ping", "coverage", "gap"].includes(frame.type);
+}
 export function decodeFrame(value: unknown): FeedFrame {
   const v = object(value);
+  if (v.type === "gap") {
+    const oldest = text(v.oldest), resume = text(v.resume);
+    if (compareCursors(resume, oldest) >= 0) throw new ProtocolError("Gap resume must precede oldest retained event");
+    return v as unknown as ControlFrame;
+  }
   if (v.type === "hello") {
     if (v.cursor !== null) parseCursor(text(v.cursor)); number(v.retentionSlots);
     return v as unknown as ControlFrame;
@@ -73,16 +93,18 @@ export function decodeFrame(value: unknown): FeedFrame {
   if (v.observedSlot !== null) number(v.observedSlot);
   const p = provenance(v.provenance), d = object(v.data);
   for (const k of fields) text(d[k]);
-  for (const [k, x] of Object.entries(d)) if (/(?:Raw|Lamports)$/.test(k) && (typeof x !== "string" || !/^\d+$/.test(x))) throw new ProtocolError(`Invalid raw amount: ${k}`);
+  for (const k of nullable[kind] ?? []) if (d[k] !== null) text(d[k]);
+  for (const [k, x] of Object.entries(d)) if (/(?:Raw|Lamports)$/.test(k) && x !== null && (typeof x !== "string" || !/^\d+$/.test(x))) throw new ProtocolError(`Invalid raw amount: ${k}`);
   if (p.source === "estimate" && (typeof d.basis !== "string" || !d.basis.trim())) throw new ProtocolError("Estimate event requires data.basis");
   if (v.type === "launch") {
     if (d.imageUrl !== null) text(d.imageUrl);
     if (d.tokenKind !== "plain" && d.tokenKind !== "stream") throw new ProtocolError("Invalid tokenKind");
   }
   if (v.type === "trade") {
-    if (!["curve", "damm"].includes(String(d.venue)) || !["buy", "sell"].includes(String(d.side))) throw new ProtocolError("Invalid trade side/venue");
+    if ((d.venue !== null && !["curve", "damm"].includes(String(d.venue))) || !["buy", "sell"].includes(String(d.side))) throw new ProtocolError("Invalid trade side/venue");
     if (d.executionPriceSol !== null) text(d.executionPriceSol);
   }
+  if (v.type === "unwind" && d.incomeReturned !== null && !/^\d+$/.test(text(d.incomeReturned))) throw new ProtocolError("Invalid incomeReturned raw amount");
   if (v.type === "bid" && (typeof d.bins !== "number" || !Number.isSafeInteger(d.bins) || d.bins < 0)) throw new ProtocolError("Invalid bin count");
   return v as unknown as FeedEvent;
 }

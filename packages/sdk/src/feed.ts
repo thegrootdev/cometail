@@ -1,5 +1,5 @@
 import type { ControlFrame, FeedEvent } from "./types.js";
-import { compareCursors, decodeFrame, parseCursor, ProtocolError } from "./protocol.js";
+import { compareCursors, decodeFrame, isFeedEvent, parseCursor, ProtocolError, FeedGapError } from "./protocol.js";
 /** Browser WebSocket and standards-compatible Node implementations satisfy this interface. */
 export interface SocketLike {
   addEventListener(type: string, listener: (event: Event) => void): void;
@@ -116,7 +116,11 @@ export class FeedSubscription {
         const data = (event as MessageEvent<unknown>).data;
         if (typeof data !== "string" || data.length > this.maxChars) throw new ProtocolError("Expected a bounded JSON text frame");
         const frame = decodeFrame(JSON.parse(data)); this.arm(socket); this.failures = 0;
-        if (!("schemaVersion" in frame)) { this.options.onControl?.(frame); return; }
+        if (!isFeedEvent(frame)) {
+          this.options.onControl?.(frame);
+          if (frame.type === "gap") this.fail(new FeedGapError(frame.oldest, frame.resume));
+          return;
+        }
         if (this.cluster !== undefined && frame.cluster !== this.cluster) throw new ProtocolError("Feed cluster changed");
         this.cluster = frame.cluster;
         if (received !== undefined && compareCursors(frame.cursor, received) <= 0) throw new ProtocolError("Feed events are not strictly increasing within the connection");

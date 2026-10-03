@@ -1740,3 +1740,21 @@ body:before {
     padding-bottom: calc(24px + 51px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* Presets page: one sticker card per curve. */
+.presets-common { margin: 18px 0 6px; }
+.presets-devnet { margin-bottom: 18px; }
+.presets-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 18px; }
+.preset-card .preset-tagline { font-family: var(--font-display); font-weight: 700; font-size: 20px; margin: 0 0 6px; color: var(--ion); }
+.preset-card .preset-for { margin: 0 0 8px; }
+.preset-card .preset-curve { margin: 0 0 12px; }
+.preset-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin: 0 0 14px; }
+.preset-facts div { display: flex; flex-direction: column; gap: 2px; }
+.preset-facts dt { font-family: var(--font-body); font-weight: 800; font-size: 12px; color: #c9d2f2; }
+.preset-facts dd { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 18px; color: #fff; font-variant-numeric: tabular-nums; }
+.preset-config { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 14px; }
+.preset-action { display: inline-flex; }
+.presets-launchpads { margin-top: 24px; }
+.preset-snippet { margin: 14px 0; padding: 12px 14px; border: 2px solid var(--ink); border-radius: 14px; background: var(--panel-deep); font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre; }
+.presets-link { margin: 14px 0 0; }
+@media (max-width: 760px) { .presets-grid { grid-template-columns: 1fr; } .preset-facts dd { font-size: 17px; } }
