@@ -8,15 +8,15 @@ const require = createRequire(import.meta.url);
 const ts = require('typescript');
 
 // Load the real worker modules; replace only logging, Store and the external price lookup.
-function loadWorker() {
+function loadWorker(options = {}) {
   const cache = new Map();
-  const priceFetch = async () => new Response(JSON.stringify({So11111111111111111111111111111111111111112:{usdPrice:150}}));
+  const priceFetch = options.fetch ?? (async () => new Response(JSON.stringify({So11111111111111111111111111111111111111112:{usdPrice:150}})));
   function load(name) {
     if (cache.has(name)) return cache.get(name);
     const source = fs.readFileSync(new URL(`../../../worker/src/${name}.ts`, import.meta.url), 'utf8');
     const code = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
     const exports = {};cache.set(name,exports);
-    vm.runInNewContext(code, {exports,require(name){return name==='./tx'?{log(){}}:name==='./feed'?load('feed'):require(name)},fetch:priceFetch,URL,AbortSignal,Date,Buffer,console,process,setTimeout,clearTimeout,setInterval,clearInterval});
+    vm.runInNewContext(code, {exports,require(name){return name==='./tx'?{log(){}}:name==='./feed'?load('feed'):require(name)},fetch:priceFetch,URL,AbortSignal,Date:options.Date ?? Date,Buffer,console,process,setTimeout,clearTimeout,setInterval,clearInterval});
     return exports;
   }
   return {api:load('api'),feed:load('feed')};
@@ -98,4 +98,30 @@ test('SDK consumes all worker feed kinds, replay envelope, resume sentinel and r
     for(const sub of subscriptions)sub.close();
     server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
   }
+});
+
+
+test('worker ranks exact cross-quote USD volumes and never values stale or missing quotes', async () => {
+  let now=Date.now(),available=true;
+  const {api:worker}=loadWorker({Date:class extends Date {static now(){return now}},fetch:async()=>new Response(JSON.stringify({So11111111111111111111111111111111111111112:{usdPrice:100}}),{status:available?200:503})});
+  const sol='So11111111111111111111111111111111111111112',usd='EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const token=(mint,quoteMint,quoteDecimals,volume24hLamports,createdAtMs)=>({mint,name:mint,symbol:'FIX',creator:'owner',decimals:6,quoteMint,quoteDecimals,volume24hLamports,createdAtMs,updatedAt:createdAtMs,totalSupplyRaw:'1000000',priceSol:quoteMint===sol?'1':null,priceQuote:'1',quoteRaisedLamports:'0',targetLamports:'100',progressBps:0,stage:'bonding',volumeComplete:true});
+  let rows=[];
+  const store={listTokens:async()=>rows,listPoolCursors:async()=>[],observedSlot:async()=>1,getMeta:async()=>now};
+  const server=await worker.startApi(store,{host:'127.0.0.1',port:0,origins:[],ratePerMinute:1000,cluster:'devnet'});
+  const api=new CometailClient({baseUrl:`http://127.0.0.1:${server.address().port}`});
+  const ranked=()=>api.tokens({sort:'volume24h'});
+  try {
+    rows=[token('sol',sol,9,'1000000000',1),token('usd',usd,6,'200000000',2)];
+    const fresh=await ranked();assert.equal(fresh.data.tokens[0].identity.mint,'usd');assert.equal(fresh.data.volumeRanking.basis,'quote-usd-v1');
+    rows=[token('older-high-raw','stock-A',8,'1000000000000000',1),token('newer-low-raw','stock-B',6,'1',2)];
+    assert.equal((await ranked()).data.tokens[0].identity.mint,'newer-low-raw');
+    rows=[token('lower',usd,6,'9007199254740992',2),token('higher',usd,6,'9007199254740993',1)];
+    assert.equal((await ranked()).data.tokens[0].identity.mint,'higher');
+    rows=[token('stale-sol',sol,9,'1000000000000000',1),token('fresh-usd',usd,6,'1000000',2)];
+    now+=700000;available=false;
+    const stale=await ranked(),staleToken=stale.data.tokens.find(t=>t.identity.mint==='stale-sol');
+    assert.equal(stale.data.tokens[0].identity.mint,'fresh-usd');assert.equal(stale.solUsd.status,'stale');
+    assert.equal(staleToken.market.quoteUsd.status,'missing');assert.equal(staleToken.market.fdvUsd,null);
+  } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });

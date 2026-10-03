@@ -56,8 +56,10 @@ function Valuation() {
   return <div className="market-valuation"><p>{copy.valuation}</p></div>;
 }
 export function MarketDirectory() {
-  // Cross-quote raw volume is not a comparable rank. Use chronology until the API normalizes it.
-  const sort = "newest";
+  // The server advertises comparable ranking only after its worker upgrade.
+  const [sort, setSort] = useState<"volume24h" | "newest">("newest");
+  const [rankingReady, setRankingReady] = useState(false);
+  useEffect(() => { if (!rankingReady) setSort("newest"); }, [rankingReady]);
   const [stage, setStage] = useState("all"), [query, setQuery] = useState(""), [search, setSearch] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   useEffect(() => { const t = setTimeout(() => { setSearch(query.trim()); setCursor(null); }, 300); return () => clearTimeout(t); }, [query]);
@@ -67,21 +69,24 @@ export function MarketDirectory() {
   return <section className="market-section" aria-labelledby="market-title">
     <div className="market-heading"><div><span className="eyebrow">{copy.kicker}</span><h2 id="market-title">{copy.title}</h2><p>{copy.body}</p></div><span className="market-orbit" aria-hidden="true">✦</span></div>
     <div className="market-controls">
-      <span className="market-switch">{copy.newest}</span>
+      <div className="market-switch" aria-label={copy.kicker}>{(["newest", ...(rankingReady ? ["volume24h" as const] : [])] as const).map(s => <button type="button" key={s} aria-pressed={sort === s} onClick={() => { setSort(s); setCursor(null); }}>{s === "volume24h" ? copy.trending : copy.newest}</button>)}</div>
       <label className="market-search"><span>{copy.search}</span><input type="search" placeholder={copy.searchHint} value={query} onChange={e => setQuery(e.target.value)} /></label>
       <label className="market-filter"><span>{copy.all}</span><select value={stage} onChange={e => { setStage(e.target.value); setCursor(null); }}><option value="all">{copy.all}</option><option value="bonding">{copy.bonding}</option><option value="graduated">{copy.graduated}</option></select></label>
     </div>
-    <p className="market-sort-note">{copy.newestNote}</p>
-    <DirectoryResults key={path} path={path} cursor={cursor} onCursor={setCursor} clear={clear} />
+    <p className="market-sort-note">{sort === "volume24h" ? copy.ranking : copy.newestNote}</p>
+    <DirectoryResults key={path} path={path} cursor={cursor} onCursor={setCursor} clear={clear} onRankingReady={setRankingReady} />
   </section>;
 }
-function DirectoryResults({ path, cursor, onCursor, clear }: { path: string; cursor: string | null; onCursor: (c: string | null) => void; clear: () => void }) {
+function DirectoryResults({ path, cursor, onCursor, clear, onRankingReady }: { path: string; cursor: string | null; onCursor: (c: string | null) => void; clear: () => void; onRankingReady: (ready: boolean) => void }) {
   const { data, loading, error, reload } = useMarket<TokenList>(path);
+  useEffect(() => { if (data) onRankingReady(data.data.volumeRanking?.basis === "quote-usd-v1"); }, [data, onRankingReady]);
   const [shown, setShown] = useState<MarketEnvelope<TokenList> | null>(null);
   useEffect(() => { if (data) setShown(old => old ?? data); }, [data]);
   const view = shown ?? data;
   const pending = !!(shown && data && JSON.stringify(shown.data) !== JSON.stringify(data.data));
   if (!view) return <DataState kind={error ? "error" : "loading"} title={error ? copy.failed : copy.loading} body={error ? copy.failedBody : copy.loadingBody} onRetry={error ? reload : undefined} />;
+  // On worker rollback, discard an incompatible ranking response before rendering it.
+  if (path.includes("sort=volume24h") && view.data.volumeRanking?.basis !== "quote-usd-v1") return <DataState compact kind="loading" title={copy.loading} />;
   const tokens = Array.isArray(view.data?.tokens) ? view.data.tokens : [];
   return <><Snapshot data={view} error={error} onRetry={reload} />
     {pending && <button className="market-update" type="button" onClick={() => setShown(data)}>{copy.dataUpdated} <strong>{copy.refresh} ↻</strong></button>}

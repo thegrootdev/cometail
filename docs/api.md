@@ -72,3 +72,8 @@ only when the quote is WSOL. `quoteUsd` is the USD rate of one quote unit: the S
 for WSOL, 1 for a configured dollar stablecoin (`COMETAIL_USDC_MINTS`), otherwise
 `{ value: null, status: "missing" }`, and then `fdvUsd` is null rather than guessed. The
 `solUsd` envelope field stays for SOL-quoted figures.
+
+Volume ranking uses fresh quote-to-USD references and exact integer quote volumes. Assets
+without a usable rate follow in newest-first order. Token lists advertise
+`volumeRanking: { basis: "quote-usd-v1", unrated: "newest" }` in `data`; clients should
+keep cross-quote volume controls hidden until this contract is present.

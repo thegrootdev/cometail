@@ -37,7 +37,7 @@ export interface MarketEnvelope<T> {
   solUsd: { value: string | null; source: string; observedAtMs: number | null; status: MetricStatus } | null;
   data: T;
 }
-export interface TokenList { tokens: MarketToken[]; nextCursor: string | null }
+export interface TokenList { tokens: MarketToken[]; nextCursor: string | null; volumeRanking?: { basis: "quote-usd-v1"; unrated: "newest" } }
 export interface TradeList { trades: MarketTrade[]; nextCursor: string | null }
 
 /** Keep the worker's grouped wire schema separate from presentation fields. */

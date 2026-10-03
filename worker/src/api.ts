@@ -226,7 +226,8 @@ function tradeView(t: TradeRow) {
 }
 async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
-  const price = await solUsd();
+  const reference = await solUsd();
+  const price = reference && Date.now() - reference.at < 10 * 60_000 ? reference : null;
   const parts = url.pathname.split("/").filter(Boolean); // api, tokens, [mint], [trades]
   if (parts.length === 2) {
     const sort = url.searchParams.get("sort") === "newest" ? "newest" : "volume24h";
@@ -236,24 +237,36 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
     if (stage === "bonding") rows = rows.filter((t) => t.stage !== "graduated");
     else if (stage === "graduated") rows = rows.filter((t) => t.stage === "graduated");
     if (q) rows = rows.filter((t) => [t.mint, t.name, t.symbol, t.creator].some((x) => x.toLowerCase().includes(q)));
-    // volume ranks in USD so quotes compare: a token whose quote has no rate ranks after every
-    // token with one, by its raw quote volume; a stale or missing SOL reference leaves every WSOL
-    // token unrated, so the directory then follows newest rather than rank by lamports alone
-    const usdVolume = (t: TokenRow): number | null => { const r = quoteUsdRate(t.quoteMint, price?.solUsd ?? null); return r.value === null ? null : (Number(t.volume24hLamports) / 10 ** (t.quoteDecimals ?? 9)) * r.value; };
+    // Compare exact quote base units through the current reference rate. Unrated assets
+    // use chronology, since their raw volumes cannot be compared across quote mints.
+    const newest = (a: TokenRow, b: TokenRow) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0) || b.updatedAt - a.updatedAt || a.mint.localeCompare(b.mint);
+    const usdVolume = (t: TokenRow): { numerator: bigint; denominator: bigint } | null => {
+      const rate = quoteUsdRate(t.quoteMint, price?.solUsd ?? null).value;
+      if (rate === null) return null;
+      // Preserve the reference number's decimal representation, including exponent notation;
+      // only the external rate is a number, never the indexed integer volume.
+      const [mantissa, exponent = "0"] = rate.toString().toLowerCase().split("e");
+      const [whole, fraction = ""] = mantissa.split(".");
+      const scale = fraction.length - Number(exponent) + (t.quoteDecimals ?? 9);
+      const numerator = BigInt(t.volume24hLamports) * BigInt(whole + fraction);
+      return scale >= 0 ? { numerator, denominator: 10n ** BigInt(scale) }
+        : { numerator: numerator * 10n ** BigInt(-scale), denominator: 1n };
+    };
     const byVolume = (a: TokenRow, b: TokenRow) => {
       const ua = usdVolume(a), ub = usdVolume(b);
-      if (ua !== null && ub !== null) return ub - ua || b.updatedAt - a.updatedAt;
-      if (ua !== null) return -1;
-      if (ub !== null) return 1;
-      return BigInt(b.volume24hLamports) > BigInt(a.volume24hLamports) ? 1 : BigInt(b.volume24hLamports) < BigInt(a.volume24hLamports) ? -1 : 0;
+      if (ua && ub) {
+        const left = ua.numerator * ub.denominator, right = ub.numerator * ua.denominator;
+        return left > right ? -1 : left < right ? 1 : newest(a, b);
+      }
+      return ua ? -1 : ub ? 1 : newest(a, b);
     };
-    rows.sort((a, b) => sort === "newest" ? (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0) || b.updatedAt - a.updatedAt : byVolume(a, b));
+    rows.sort(sort === "newest" ? newest : byVolume);
     const cursor = url.searchParams.get("cursor");
     let start = 0;
     if (cursor) { const i = rows.findIndex((t) => t.mint === cursor); start = i >= 0 ? i + 1 : 0; }
     const page = rows.slice(start, start + limit);
     const next = start + limit < rows.length ? page[page.length - 1]?.mint ?? null : null;
-    return send(200, await envelope(store, opts, { tokens: page.map((t) => tokenView(t, price?.solUsd ?? null)), total: rows.length, nextCursor: next, sort, stage }), { "cache-control": "public, max-age=5" });
+    return send(200, await envelope(store, opts, { tokens: page.map((t) => tokenView(t, price?.solUsd ?? null)), total: rows.length, nextCursor: next, sort, stage, volumeRanking: { basis: "quote-usd-v1", unrated: "newest" } }), { "cache-control": "public, max-age=5" });
   }
   const mint = parts[2];
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) return send(404, { error: "no such token" });

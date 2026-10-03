@@ -432,7 +432,7 @@ export const market = {
   body: "New ideas on the curve. Graduated comets on Meteora. Follow what is trading, then explore the tail.",
   trending: "Trending", newest: "New launches", all: "All stages", bonding: "Bonding", graduated: "Graduated",
   search: "Search tokens", searchHint: "Name, symbol or mint address", clear: "Clear filters",
-  ranking: "Ranked by observed 24h SOL swap volume. Partial windows are labelled.",
+  ranking: "Ranked by 24-hour volume in a fresh USD reference. Tokens without a rate follow in newest-first order.",
   newestNote: "Ordered by launch time, not by the last refresh.",
   price: "Price", fdv: "FDV · USD", volume: "24h volume", holders: "Holder addresses",
   unknown: "Unavailable", partial: "Partial history", stale: "Last known data", current: "Latest snapshot",

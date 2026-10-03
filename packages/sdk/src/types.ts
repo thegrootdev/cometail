@@ -43,7 +43,7 @@ export interface Token extends Evidence {
   bonding: { progressBps: number | null; quoteRaisedLamports: RawAmount; targetLamports: RawAmount; migrationStage: Stage };
   updatedAtMs: number;
 }
-export interface TokenList { tokens: Token[]; total: number; nextCursor: string | null; sort: "volume24h" | "newest"; stage: string }
+export interface TokenList { volumeRanking?: { basis: "quote-usd-v1"; unrated: "newest" }; tokens: Token[]; total: number; nextCursor: string | null; sort: "volume24h" | "newest"; stage: string }
 export interface Trade extends Evidence {
   id: string; signature: string; ordinal: number; slot: number; blockTimeSec: number | null;
   pool: Address; venue: "curve" | "damm" | null; side: "buy" | "sell";
