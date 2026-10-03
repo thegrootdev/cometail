@@ -65,5 +65,7 @@ mint and a Token-2022 mint with the MetadataPointer extension):
 Mainnet: created by the protocol owner on the day (docs/mainnet-runbook.md); addresses land in
 `configs/mainnet.json` and here.
 
-Every preset's on-chain parameters can be read back with the DBC SDK (`state.getPoolConfig`)
-and compared with the file; `tests/devnet/verify-configs.ts` does that for the protocol's set.
+Every preset's on-chain parameters are read back and compared with its file, field by field
+(quote mint and decimals, threshold, curve segments, fees, liquidity split, migration
+settings, the stock badge), by `tests/mainnet/verify-configs.ts` with `CLUSTER=devnet` or
+`CLUSTER=mainnet`.

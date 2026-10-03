@@ -1,74 +1,133 @@
 # Mainnet runbook
 
 The ordered switch from devnet to mainnet. Every step names who runs it and what it needs.
-Nothing on this list sends a mainnet transaction until step 5, and every transaction before
-step 7 is a protocol setup signed by the owner's wallet. The difference list behind this
-runbook is in the pre-mainnet review notes (devnet to mainnet diff); this file is the order.
+Steps 1 to 3 send no transaction. Step 4 deploys the program and step 5 creates accounts:
+those are mainnet transactions, signed by the owner's wallet, and nothing else sends one
+until the team launches in step 9. Every address this page produces is public and lands in
+`configs/mainnet.json`; no key and no keyed URL ever enters the repository.
 
-## 0. Before anything
-- The program binary is the reviewed one: `git diff <review commit>..HEAD -- programs/` is
-  empty, and the full gate suite passed on the push candidate.
-- The owner's mainnet wallet (admin, fee claimer, leftover receiver, treasury owner) is funded:
-  program rent about 3.54 SOL, four configs about 0.1 SOL, protocol init and ATAs under 0.05
-  SOL, plus the keeper's operating SOL (step 4).
-- A keyed mainnet RPC exists for the worker and one restricted to the site origin for the browser.
+## 1. Keys (first, before anything that names them)
+- Owner's wallet: admin, fee claimer, leftover receiver, treasury owner. Its public key is
+  `ADMIN` below; its keypair file stays with the owner (mode 600, outside the repository) and
+  is used only in step 5.
+- Keeper hot key: generated on the box now, `solana-keygen new -o <path outside the repo>`,
+  mode 600, readable by the service user. Its public key is `KEEPER` below and the same key
+  the worker runs with in step 6; the protocol stores it at init. Never the admin key.
+- Keyed mainnet RPC for the box (`RPC`) and a second one restricted to the site's origin for
+  browsers (`NEXT_PUBLIC_RPC_URL`).
 
-## 1. Dry run (no transaction)
+## 2. Funding (owner)
+The owner's wallet: program rent 3.54 SOL (docs/deploy.md), nine configs about 0.3 SOL,
+the treasury account and init under 0.05 SOL, transaction fees, plus a margin: 4.5 SOL.
+The keeper: operating SOL only (bin-array rent 0.071 SOL per array plus fees), 1 SOL to start.
+
+## 3. Dry run (no transaction)
 ```
-cd tests && ADMIN=<owner wallet> KEEPER=<keeper pubkey> RPC=<keyed mainnet rpc> \
-  ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/dryrun.ts
+cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> \
+  COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v \
+  COMETAIL_QUOTE_STOCK=<stock mint, see 3b> \
+  DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/setup.ts
 ```
-Simulates the treasury ATA, the four `create_config` transactions with the full-size preset
-files in `configs/` and `init_protocol`, all with the owner's wallet as every authority. The
-config simulations pass before the program is deployed; `init_protocol` passes only after
-step 2. Keep the output with the deployment record.
+`tests/mainnet/setup.ts` refuses any cluster but mainnet, checks both quote mints and the
+stock's DBC token badge, then simulates the treasury account and the nine `create_config`
+transactions (three stream presets, plain, long, flat, exp, stock-usdc, stock-xstock, with
+the full-size files in `configs/`) with the owner's wallet as every authority and the stock
+badge as remaining account 0. The `init_protocol` simulation needs the real stream configs
+and treasury, so before step 5 it is reported SKIPPED. Any failed simulation fails the run.
+Keep the output with the deployment record.
 
-## 2. Deploy the program (owner)
-`docs/deploy.md`: `solana program deploy` with the reviewed ELF, max-len the ELF size, upgrade
-authority the owner's wallet. Verify: `solana program show 5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg`
-on mainnet shows the owner's wallet as authority. Rerun step 1: `init_protocol` now simulates.
-
-## 3. Configs and protocol (owner)
-`tests/mainnet/setup.ts` (the devnet setup with the mainnet key path and `configs/mainnet.json`
-as its state file) creates, in order: the treasury WSOL ATA, the four configs, `init_protocol`.
-Each step is skipped once its account exists, so a partial run is resumed by running it again.
-Record the four config addresses and the protocol address in `configs/mainnet.json` (public
-addresses only; the file is committed).
-
-## 3b. The stock quote for the stock preset (owner's pick, read-only scan 2026-10-03)
-All xStocks carry a DBC token badge. By holders and depth on mainnet: NVIDIA xStock (NVDAx,
+### 3b. The stock quote (read-only scan 2026-10-03, rerun at setup for the chosen mint)
+All Backed xStocks carry a DBC token badge. By holders and depth: NVIDIA xStock (NVDAx,
 `Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh`, 8 decimals) 172,851 holders, 0.01 % price
 impact on a 10,000 USD buy and 0.13 % on 100,000; SP500 xStock (SPYx,
-`XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`) 81,422 holders, 0.04 % and 0.12 %; Tesla
-(TSLAx) 44,606 holders, 0.16 % and 0.23 %. The stock preset's config is created with the
-chosen mint as quote and its badge as remaining account 0 (`tokenBadge` in the SDK);
-`NEXT_PUBLIC_QUOTE_STOCK` and the config address go to Vercel.
+`XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`) 81,422 holders, 0.04 % and 0.12 %. The owner
+picks; the setup script verifies the badge of whatever mint is given.
 
-## 4. Keeper key (box)
-Generate a fresh keypair on the box, mode 600, outside the repository; fund it with operating
-SOL only (bin-array rent 0.071 SOL per array plus fees; 1 SOL to start). Never the admin key.
+## 4. Deploy the program (owner)
+`docs/deploy.md`: `solana program deploy` with the reviewed ELF (the hash in the release
+record), max-len the ELF size, upgrade authority the owner's wallet, the keyed mainnet RPC
+given explicitly with `-u`. Verify with
+`solana program show 5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg -u <keyed mainnet rpc>`:
+authority the owner's wallet.
 
-## 5. Worker (box, root)
-`/etc/cometail/worker.env`: `COMETAIL_RPC_URL` the keyed mainnet RPC; `COMETAIL_KEEPER_KEYPAIR`
-the step 4 file; `COMETAIL_MIGRATE_CONFIGS` the mainnet plain config and every preset config (long, flat,
-exp, stock-usdc, stock-xstock); `COMETAIL_SKY_CONFIGS` the four protocol configs plus the same
-five presets (never empty on mainnet); `COMETAIL_USDC_MINTS` mainnet USDC; `COMETAIL_DEMO_ACTORS` the owner's wallets and
-the keeper; `COMETAIL_MIN_ROUTE_LAMPORTS=100000000`; `COMETAIL_API_ORIGINS=https://cometail.fun`.
-Then `systemctl restart cometail-indexer@dev cometail-keeper@dev` and check
-`/api/health`, `/api/metrics` (cluster mainnet-beta, zero rows) and the keeper log for one pass.
+## 5. Configs and protocol (owner, real transactions)
+The step 3 command without `DRY_RUN`, plus `ADMIN_KEYPAIR=<path to the owner's keypair file>`.
+It creates, in order, what does not exist yet: the treasury WSOL account, the nine configs,
+`init_protocol` with the three stream configs, the treasury and `KEEPER`. Every address goes
+to `configs/mainnet.json` as it is confirmed, so an interrupted run is resumed by running the
+same command again. Then the readback:
+```
+cd tests && RPC=<keyed mainnet rpc> CLUSTER=mainnet ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/verify-configs.ts
+```
+compares every config on chain with its file (quote mint and decimals, thresholds, curve,
+fees, liquidity split, migration settings), the stock badge, and the protocol's admin, keeper,
+treasury and stream-config pins. Commit `configs/mainnet.json`.
 
-## 6. Site (Vercel, owner)
-Production variables: `NEXT_PUBLIC_CLUSTER=mainnet-beta`, `NEXT_PUBLIC_RPC_URL` the
-origin-restricted mainnet RPC, `NEXT_PUBLIC_PROTOCOL`, `NEXT_PUBLIC_PLAIN_CONFIG`,
-`NEXT_PUBLIC_STREAM_CONFIG_25/50/75`, `NEXT_PUBLIC_TREASURY` from `configs/mainnet.json`.
-Storage and API variables unchanged. Redeploy; `/api/metadata` must answer ready with the new
-build; the Devnet badge disappears.
+## 6. Worker (box, root)
+Stop both services. Keep the devnet database file where it is. Write
+`/etc/cometail/worker.env` for mainnet, every line:
+```
+COMETAIL_RPC_URL=<keyed mainnet rpc>
+COMETAIL_CLUSTER=mainnet-beta
+DATABASE_URL=sqlite:/opt/cometail/repo/.local/mainnet.sqlite     (a fresh file; never the devnet one)
+COMETAIL_KEEPER_KEYPAIR=<keeper keypair path from step 1>
+COMETAIL_MIGRATE_CONFIGS=<plain,long,flat,exp,stock-usdc,stock-xstock from configs/mainnet.json>
+COMETAIL_SKY_CONFIGS=<those six plus stream-25,stream-50,stream-75>
+COMETAIL_USDC_MINTS=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+COMETAIL_DEMO_ACTORS=<owner wallet, keeper, every team wallet that will trade>
+COMETAIL_API_PORT=8841
+COMETAIL_API_HOST=127.0.0.1
+COMETAIL_API_ORIGINS=https://cometail.fun
+COMETAIL_API_RATE_PER_MINUTE=120
+COMETAIL_MIN_ROUTE_LAMPORTS=100000000
+COMETAIL_DUST_LAMPORTS=100000
+COMETAIL_POLL_MS=15000
+COMETAIL_SKY_EVERY_PASSES=4
+COMETAIL_DRY_RUN=0
+```
+`COMETAIL_MODE` stays per service unit (indexer, keeper); `@dev` in the unit names is the
+Unix user, not the cluster. Do not carry `COMETAIL_ONCE` into the file. Start both services.
+Check: `/api/health` ok; `/api/tokens?limit=1` and `/api/feed?limit=1` answer
+`cluster: "mainnet-beta"` with empty lists at first; the keeper log shows one pass with no
+error; `solana genesis-hash -u <keyed mainnet rpc>` is `5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`.
 
-## 7. First launches (team)
-One plain launch and one vault by the team, labelled demo in `COMETAIL_DEMO_ACTORS`, before
-opening to users: launch with a logo and links from the site, one buy, one claim; one vault
-deposit, launch, and a harvest after the first fees. Each receipt goes on the checklist.
+## 7. Site (Vercel, owner)
+Production variables, every one:
+```
+NEXT_PUBLIC_CLUSTER=mainnet-beta
+NEXT_PUBLIC_RPC_URL=<origin-restricted mainnet rpc>
+NEXT_PUBLIC_API_URL=https://api.cometail.fun
+NEXT_PUBLIC_PROTOCOL=<configs/mainnet.json protocol>
+NEXT_PUBLIC_TREASURY=<configs/mainnet.json treasury>
+NEXT_PUBLIC_PLAIN_CONFIG=<configs.plain>
+NEXT_PUBLIC_STREAM_CONFIG_25=<configs.stream-25>
+NEXT_PUBLIC_STREAM_CONFIG_50=<configs.stream-50>
+NEXT_PUBLIC_STREAM_CONFIG_75=<configs.stream-75>
+NEXT_PUBLIC_LONG_CONFIG=<presets.long>
+NEXT_PUBLIC_FLAT_CONFIG=<presets.flat>
+NEXT_PUBLIC_EXP_CONFIG=<presets.exp>
+NEXT_PUBLIC_STOCK_USDC_CONFIG=<presets.stock-usdc>
+NEXT_PUBLIC_STOCK_XSTOCK_CONFIG=<presets.stock-xstock>
+NEXT_PUBLIC_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+NEXT_PUBLIC_QUOTE_STOCK=<the stock mint from 3b>
+```
+Storage stays as configured (`COMETAIL_STORAGE_PROVIDER=r2`, `COMETAIL_MEDIA_ORIGIN`,
+`COMETAIL_APP_ORIGIN=https://cometail.fun`, `R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, server-side only). Redeploy. `/api/metadata` answers ready with the
+new build; the Devnet badge is gone; `/presets` shows six cards with the mainnet addresses.
+
+## 8. Acceptance before users (team)
+Token page of any mainnet mint on a preset config reads from the API (not "not indexed
+yet"); `/api/metrics` shows zero rows; the feed socket answers hello with
+`cluster: "mainnet-beta"`.
+
+## 9. First launches (team, labelled demo in `COMETAIL_DEMO_ACTORS`)
+One plain launch with a logo and links from the site, one buy, one claim; one vault deposit,
+launch, and a harvest after the first fees; one launch on the USDC preset. Each receipt goes
+on the checklist.
 
 ## Rollback
-Vercel: promote the previous deployment. Worker: restore the previous `worker.env` and restart.
-The program and configs stay; nothing in them depends on the site or the worker.
+Site: promote the previous Vercel deployment. Worker: restore the devnet `worker.env` with
+its own `DATABASE_URL`, `COMETAIL_CLUSTER` and RPC, then restart; never run a mainnet RPC
+against the devnet database or the reverse. The program and the configs stay; nothing in
+them depends on the site or the worker.

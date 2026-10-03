@@ -77,12 +77,19 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
   const ofVault = (vault: string | null | undefined): Cls => (vault && vaultClass.get(vault)) || "unattributed";
   const own = new Map(streams.map((s) => [s.stream, !!s.data.isOwn]));
   const launches = counts(), launchFees = triple();
+  // fees and volumes are sums of quote units, so they are kept per quote: the lamport totals are
+  // WSOL-quoted launches only; every other quote gets its own raw total under its mint
+  const WSOL_MINT = "So11111111111111111111111111111111111111112";
+  const byQuote = new Map<string, { count: Record<Cls, number>; tradingFeeRaw: Record<Cls, bigint> }>();
   for (const r of sky) if ((r.kind ?? "curve") === "curve" && plainConfigs.has(r.config)) {
     // a program-held creator is a vault PDA: the launch belongs to that vault's depositor, or is
     // unattributed until the vault record exists; a wallet creator classifies by itself
     // without a vault record only a wallet-held creator is a resolved owner; program or unknown custody is unattributed
     const c: Cls = r.vault ? ofVault(r.vault) : r.custody === "wallet" ? cls(r.creator) : "unattributed";
-    launches[c]++; launchFees[c] += BigInt(r.tradingFeeLamports);
+    launches[c]++;
+    const quote = r.quoteMint ?? WSOL_MINT;
+    if (quote === WSOL_MINT) launchFees[c] += BigInt(r.tradingFeeLamports);
+    else { const q = byQuote.get(quote) ?? { count: counts(), tradingFeeRaw: triple() }; q.count[c]++; q.tradingFeeRaw[c] += BigInt(r.tradingFeeLamports); byQuote.set(quote, q); }
   }
   const recurring = { external: triple(), own: triple() }, oneTime = { external: triple(), own: triple() };
   for (const e of recurringEvents) { const c = ofVault(e.vault); (own.get(String(e.data.stream)) ? recurring.own : recurring.external)[c] += BigInt(e.data.gross ?? 0); }
@@ -132,7 +139,8 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
       ...(unknownBins > 0 ? [`${unknownBins} bin(s) could not be read; their depth is not counted`] : []),
       ...(unavailableLadders > 0 ? [`${unavailableLadders} vault ladder(s) could not be read this pass; their depth is not counted`] : []),
     ],
-    plainLaunches: { count: launches, tradingFeeLamports: str(launchFees), volumeEstimateLamports: volume(launchFees) },
+    plainLaunches: { count: launches, tradingFeeLamports: str(launchFees), volumeEstimateLamports: volume(launchFees), denomination: "counts cover every quote; the lamport totals and the volume estimate cover WSOL-quoted launches only",
+      byQuote: Object.fromEntries([...byQuote.entries()].map(([mint, q]) => [mint, { count: q.count, tradingFeeRaw: str(q.tradingFeeRaw), volumeEstimateRaw: volume(q.tradingFeeRaw) }])) },
     recurringIncomeLamports: { external: str(recurring.external), own: str(recurring.own) },
     oneTimeProceedsLamports: { external: str(oneTime.external), own: str(oneTime.own) },
     depositors: { independent: depositors.independent.size, demo: depositors.demo.size },
