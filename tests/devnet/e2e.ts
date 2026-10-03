@@ -97,7 +97,7 @@ describe("devnet end-to-end", () => {
       const vault = new PublicKey(find("vault").vault), pair = new PublicKey(find("pair").pair);
       const plainCfg = new PublicKey(find("configs").plain);
       const streamCfgs = [state.e2e["stream-25"], state.e2e["stream-50"], state.e2e["stream-75"]].map((k: string) => new PublicKey(k));
-      const cfg: Config = { rpcUrl: RPC, mode: "once", pollMs: 0, keeper, dustLamports: 100_000n, minRouteLamports: 5_000_000n, maxRouteLamports: 5_000_000_000n, ladderBins: 3, ladderNearBps: 200, ladderFarBps: 2000, ladderDecay: 0.85, staleOrderSeconds: 86_400, databaseUrl: null, apiPort: 0, skyConfigs: [], skyEveryPasses: 1, dryRun: false, cuPriceMicroLamports: 0 };
+      const cfg: Config = { rpcUrl: RPC, mode: "once", migrateConfigs: [] as any, pollMs: 0, keeper, dustLamports: 100_000n, minRouteLamports: 5_000_000n, maxRouteLamports: 5_000_000_000n, ladderBins: 3, ladderNearBps: 200, ladderFarBps: 2000, ladderDecay: 0.85, staleOrderSeconds: 86_400, databaseUrl: null, apiPort: 0, skyConfigs: [], skyEveryPasses: 1, dryRun: false, cuPriceMicroLamports: 0 };
       record.resumedFrom = process.env.RESUME; record.steps = prior.steps;
       await finish({ connection, chain, client, ctx: { chain, cfg, keeper, luts: new LookupTables(connection, keeper, false) }, buyer, vault, pair, plainCfg, streamCfgs, step });
       record.finishedAt = new Date().toISOString(); save(); return;
@@ -154,7 +154,7 @@ describe("devnet end-to-end", () => {
 
     // 4. the stream token's curve fills; the keeper migrates it, registers the own position, cashes out, harvests
     await send(connection, [ataIx(buyer.publicKey, stMint.publicKey, buyer.publicKey), await curveBuyIx({ config: streamCfgs[1], baseMint: stMint.publicKey, buyer: buyer.publicKey, amountIn: R50.muln(6).divn(5) })], [buyer], { cu: 400_000, label: "buyer fills the stream token curve" });
-    const cfg: Config = { rpcUrl: RPC, mode: "once", pollMs: 0, keeper, dustLamports: 100_000n, minRouteLamports: 5_000_000n, maxRouteLamports: 5_000_000_000n, ladderBins: 3, ladderNearBps: 200, ladderFarBps: 2000, ladderDecay: 0.85, staleOrderSeconds: 86_400, databaseUrl: null, apiPort: 0, skyConfigs: [], skyEveryPasses: 1, dryRun: false, cuPriceMicroLamports: 0 };
+    const cfg: Config = { rpcUrl: RPC, mode: "once", migrateConfigs: [] as any, pollMs: 0, keeper, dustLamports: 100_000n, minRouteLamports: 5_000_000n, maxRouteLamports: 5_000_000_000n, ladderBins: 3, ladderNearBps: 200, ladderFarBps: 2000, ladderDecay: 0.85, staleOrderSeconds: 86_400, databaseUrl: null, apiPort: 0, skyConfigs: [], skyEveryPasses: 1, dryRun: false, cuPriceMicroLamports: 0 };
     const ctx = { chain, cfg, keeper, luts: new LookupTables(connection, keeper, false) };
     await keeperPass(ctx);
     let v = await chain.vault(cv.vault);
