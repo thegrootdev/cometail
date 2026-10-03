@@ -102,6 +102,12 @@ export async function replay(store: Store, cluster: string, since: CursorLike | 
   if (since && oldest && compareCursor(since, oldest) < 0 && cursorOf(since) !== resumeBefore(oldest)) {
     return { status: 410, body: { error: "cursor expired", oldest: cursorOf(oldest), resume: resumeBefore(oldest) } };
   }
+  // a cursor beyond the head comes from another database generation: explicit, never silent
+  const head = since ? await store.headFeed() : null;
+  if (since && (!head || compareCursor(since, head) > 0) && (!oldest || cursorOf(since) !== resumeBefore(oldest))) {
+    const resume = oldest ? resumeBefore(oldest) : "0:0:~";
+    return { status: 410, body: { error: "cursor unknown", oldest: oldest ? cursorOf(oldest) : null, resume } };
+  }
   const rows = await store.listFeedSince(since ? { seq: since.seq ?? 0 } : null, limit + 1);
   const page = rows.slice(0, limit);
   return { status: 200, body: { ...frame(cluster, "replay", {}), events: page.map((r) => rowFrame(cluster, r)), nextCursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null } };
@@ -208,9 +214,13 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
     socket.once("close", detach); socket.once("error", detach); socket.once("end", detach);
     try {
       const oldest = await store.oldestFeed();
-      if (delivered && oldest && compareCursor(delivered, oldest) < 0 && cursorOf(delivered) !== resumeBefore(oldest)) {
-        client.send(frame(opts.cluster, "gap", { oldest: cursorOf(oldest), resume: resumeBefore(oldest) }));
-        delivered = parseCursor(resumeBefore(oldest));
+      const head0 = delivered ? await store.headFeed() : null;
+      const expired = delivered && oldest && compareCursor(delivered, oldest) < 0 && cursorOf(delivered) !== resumeBefore(oldest);
+      const unknown = delivered && (!head0 || compareCursor(delivered, head0) > 0) && (!oldest || cursorOf(delivered) !== resumeBefore(oldest));
+      if (expired || unknown) {
+        const resume = oldest ? resumeBefore(oldest) : "0:0:~";
+        client.send(frame(opts.cluster, "gap", { oldest: oldest ? cursorOf(oldest) : null, resume }));
+        delivered = parseCursor(resume);
       }
       if (delivered) for (;;) {
         if (client.closed) break;

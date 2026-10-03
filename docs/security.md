@@ -17,7 +17,8 @@
 ## What the program will not do
 
 - Move assets to any account the vault does not own, except the depositor's recorded payout
-  account, the protocol treasury, and withdrawals before launch.
+  account, the protocol treasury, withdrawals before launch or after unwind, and the
+  settlement caller receiving closed order-account rent.
 - Swap anything. Income is WSOL only; streams whose fees arrive in anything else are
   rejected at deposit.
 - Accept a client's word for anything it can read from the chain: eligibility, ownership,

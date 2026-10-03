@@ -1,9 +1,10 @@
 # Partner configs
 
-Four DBC configs, all protocol-owned. Each one fixes the raise target and the curve, so a
-launch picks a config and nothing else. Parameters are the SDK's `buildCurveWithMarketCap`
-inputs; `tests/devnet/setup.ts` turns them into on-chain `ConfigParameters` and creates them (devnet with a throwaway key; mainnet by the
-protocol owner from a signed command).
+Nine DBC configs, all protocol-owned: the four core configs below and five additional
+public presets in docs/presets.md. Each fixes the raise target and curve.
+`tests/harness/dbc.ts` selects the SDK market-cap or liquidity-weight builder from
+`curve.mode`; `tests/devnet/setup.ts` creates the core devnet set. For mainnet, the owner
+runs `tests/mainnet/setup.ts` for all nine, then `tests/mainnet/verify-configs.ts` for readback.
 
 | File | Migration fee | Creator share of it | Creation fee | Use |
 |---|---|---|---|---|

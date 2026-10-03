@@ -17,8 +17,9 @@ Common to every preset: fees collected in the quote token, a 1 % flat curve fee,
 of the after-Meteora curve fee (partner 25 %), DAMM v2 migration with the customizable fee
 option (compounding pool at 1 % fee with half of the LP fees reinvested), LP 80 % creator and
 20 % partner, both permanently locked, immutable metadata, a fixed supply of 1,000,000,000
-with 6 decimals, a 0.01 SOL creation fee (90 % to the partner, 10 % to Meteora). The stream
-presets (25, 50, 75) are for the vault program only; the plain presets are the public ones.
+with 6 decimals. The six public presets charge a 0.01 SOL creation fee (90 % to the partner,
+10 % to Meteora). The stream presets (25, 50, 75) charge no creation fee and are the vault
+program's designated presets; DBC itself permits other creators to launch on those configs.
 
 | Preset | Quote | Curve | Initial cap | Migration cap | Raise to graduate (R) | File |
 |---|---|---|---|---|---|---|

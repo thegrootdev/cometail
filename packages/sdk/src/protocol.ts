@@ -42,7 +42,7 @@ export function evidence(value: unknown, estimates: EstimateLabel[] = []): Evide
 }
 /** Cursors are "sequence:slot:signature": they sort numerically by the publication sequence (unique and strictly increasing), then by slot and signature; never lexically by the full string. */
 export function parseCursor(value: string): readonly [bigint, bigint, string] {
-  const m = /^(\d{1,12}):(\d{1,9}):([^:\s]{1,96})$/.exec(value);
+  const m = /^(\d{1,12}):(\d{1,12}):([^:\s]{1,96})$/.exec(value);
   if (!m) throw new ProtocolError("Invalid feed cursor");
   return [BigInt(m[1]!), BigInt(m[2]!), m[3]!];
 }

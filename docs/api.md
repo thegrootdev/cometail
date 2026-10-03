@@ -75,7 +75,11 @@ unique, strictly increasing in the order rows were published and shared by every
 row the indexer discovers late (an older slot found on a later scan) still arrives after
 everything delivered before it; the slot and the signature are information, never the
 order. Compare cursors by the first part; `since` is exclusive. A row's identity is its type,
-signature and ordinal, so a replayed or retried index never publishes a row twice.
+signature and ordinal, so a replayed or retried index never publishes a row twice. The
+sequence never restarts below a value an earlier database generation issued (a rebuild
+starts above the previous head and above the time in tenths of a second), and a cursor the
+server does not know, older than retention or beyond its head, always gets the explicit
+`gap` frame or the 410 `cursor unknown` answer with a `resume` cursor, never silence.
 
 ## Non-SOL quotes
 Every quote-denominated figure names its quote: `market.quoteMint` and `market.quoteDecimals`

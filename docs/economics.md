@@ -47,7 +47,9 @@ the fee after Meteora and 8% of the gross fee.
 | plain | 34.788 SOL | 0 | 0 | 34.788 SOL | creator 27.830 SOL | 6.958 SOL |
 
 Cash-out is the preset's percentage of the raise minus less than one lamport of rounding.
-There is no surplus in practice: swaps can't push past the raise target.
+Swaps stop at the migration price, but DBC accounts for any quote reserve excess above
+the threshold as surplus. Zero surplus is not an eligibility condition for external pools;
+the vault's one-time harvest path handles their creator surplus.
 
 The vault-internal splits (8/15, 1/2, 1/5) are constants in the program, not settings.
 The protocol's partner shares are claimed by the protocol owner's wallet directly through

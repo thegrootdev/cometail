@@ -9,8 +9,9 @@ worker running in keeper and indexer mode against devnet (README, "Running the w
 a wallet with a few devnet SOL; a second wallet to act as the buyer.
 
 Launch
-- [ ] `/launch`: name, symbol, metadata URL, optional first buy; the wallet shows one
-      transaction; the token page link appears with the signature.
+- [ ] `/launch`: name, symbol, logo upload with square crop and preview, optional links and
+      first buy; authorize the upload, then confirm the launch transaction. The app stores
+      the image and metadata; the token page shows the logo and launch signature.
 - [ ] Rejecting the wallet prompt shows an error and leaves nothing behind.
 
 Token page, bonding
@@ -29,6 +30,7 @@ Sell your tail
 - [ ] `/sell` lists the creator rights (bonding and graduated) and locked positions of the
       wallet, with reasons for anything ineligible.
 - [ ] A cap of 0.0006 shows "Encoded cap: 0.0006"; 0, negative and text are refused.
+- [ ] The stream token logo has the same crop, preview and upload flow as a plain launch.
 - [ ] The vault link appears right after the first transaction; cancelling a later wallet
       prompt stops the wizard with the vault link still shown.
 - [ ] The vault page of that Open vault (same browser session) offers Withdraw per stream

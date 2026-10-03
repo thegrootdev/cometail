@@ -48,9 +48,8 @@ async function main() {
           // the first scan of a fresh store announces nothing: every token would read as a launch.
           // The snapshot and the launch/graduation rows it implies commit together; the live push
           // follows the commit, so a crash in between leaves the rows in replay, never lost.
-          const announced = previous.size > 0 ? feedFromTokens(previous, tokens, (await store.observedSlot()) ?? 0) : [];
+          const announced = previous.size > 0 || (await store.getMeta("tokens_scanned_at")) !== null ? feedFromTokens(previous, tokens, await chain.connection.getSlot("confirmed")) : [];
           for (const r of await store.upsertTokensAndFeed(tokens, tokens.map((t) => t.mint), announced)) feedBus.emit("event", r);
-          await store.setMeta("tokens_scanned_at", String(Date.now()));
           log("token scan", { tokens: tokens.length, graduated: tokens.filter((t) => t.stage === "graduated").length });
         } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
       }

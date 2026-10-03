@@ -3,8 +3,9 @@
 The ordered switch from devnet to mainnet. Every step names who runs it and what it needs.
 Steps 1 to 3 send no transaction. Step 4 deploys the program and step 5 creates accounts:
 those are mainnet transactions, signed by the owner's wallet. The keeper started in step 6
-sends only for pools that have completed a curve on our configs, so on fresh configs the
-next transaction is the team's launch in step 9 (the intended sequence, not a guarantee). Every address this page produces is public and lands in
+has nothing to act on while the new protocol and watched configs are empty. Once launches
+exist it can harvest even before graduation, and migrate completed curves. The team's
+launch in step 9 is the intended next transaction, not a guarantee on permissionless configs. Every address this page produces is public and lands in
 `configs/mainnet.json`; no key and no keyed URL ever enters the repository.
 
 ## 1. Keys (first, before anything that names them)

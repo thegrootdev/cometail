@@ -105,6 +105,14 @@ export interface Store {
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
 export const SCHEMA_VERSION = 10;
+/** Where the feed sequence starts after a rebuild: above every sequence this database issued before
+ *  (its last head and its last floor) and above the time in tenths of a second, so a cursor from a
+ *  previous database generation, or one in the old slot-based format, always reads as expired and
+ *  gets an explicit gap with a resume cursor instead of silence. Twelve digits at most for the
+ *  SDK's cursor grammar. */
+export function feedSequenceFloor(previousFloor: number, previousHead: number): number {
+  return Math.min(999_999_999_999, Math.max(previousFloor, previousHead, Math.floor(Date.now() / 10)));
+}
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
@@ -141,9 +149,12 @@ class PgStore implements Store {
     await this.pool.query("create table if not exists meta (key text primary key, value text not null)");
     const r = await this.pool.query("select value from meta where key = 'schema'");
     const have = r.rows[0] ? Number(r.rows[0].value) : 0;
+    // the feed sequence never restarts below a value this database (or a previous one) issued
+    let previousHead = 0;
+    try { const h = await this.pool.query("select coalesce(max(seq), 0) as m from feed"); previousHead = Number(h.rows[0]?.m ?? 0); } catch { /* no feed table yet */ }
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      await this.pool.query("delete from meta where key <> 'schema'");
+      await this.pool.query("delete from meta where key not in ('schema', 'feed_seq_floor')");
       await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades, tokens, feed");
     }
     await this.pool.query(`
@@ -158,7 +169,13 @@ class PgStore implements Store {
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
       create table if not exists tokens (mint text primary key, data jsonb not null, volume24h numeric not null, updated_at bigint not null);
       create table if not exists feed (seq bigserial primary key, slot bigint not null, ordinal int not null, signature text not null, type text not null, vault text, mint text, data jsonb not null, provenance jsonb not null, at bigint not null, unique (type, signature, ordinal));`);
-    if (have !== SCHEMA_VERSION) await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
+    if (have !== SCHEMA_VERSION) {
+      const f = await this.pool.query("select value from meta where key = 'feed_seq_floor'");
+      const floor = feedSequenceFloor(Number(f.rows[0]?.value ?? 0), previousHead);
+      await this.pool.query("select setval('feed_seq_seq', $1, true)", [floor]);
+      await this.pool.query("insert into meta (key, value) values ('feed_seq_floor', $1) on conflict (key) do update set value = $1", [String(floor)]);
+      await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
+    }
   }
   async pruneStreams(vault: string, keep: string[]) { await this.pool.query("delete from streams where vault = $1 and not (stream = any($2))", [vault, keep]); }
   async pruneSky(keep: string[]) { await this.pool.query("delete from sky where not (pool = any($1))", [keep]); }
@@ -196,6 +213,7 @@ class PgStore implements Store {
       await this.upsertTokensWith(c, tokens);
       await c.query("delete from tokens where not (mint = any($1))", [keep]);
       const inserted = await this.appendFeedWith(c, feed);
+      await c.query("insert into meta (key, value) values ('tokens_scanned_at', $1) on conflict (key) do update set value = $1", [String(Date.now())]);
       await c.query("commit");
       return inserted;
     } catch (e) { try { await c.query("rollback"); } catch { /* connection gone */ } throw e; } finally { c.release(); }
@@ -255,9 +273,12 @@ class SqliteStore implements Store {
     this.db.exec("create table if not exists meta (key text primary key, value text not null)");
     const r = this.db.prepare("select value from meta where key = 'schema'").get();
     const have = r ? Number(r.value) : 0;
+    // the feed sequence never restarts below a value this database (or a previous one) issued
+    let previousHead = 0;
+    try { const h: any = this.db.prepare("select coalesce(max(seq), 0) as m from feed").get(); previousHead = Number(h?.m ?? 0); } catch { /* no feed table yet */ }
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      this.db.exec("delete from meta where key <> 'schema'");
+      this.db.exec("delete from meta where key not in ('schema', 'feed_seq_floor')");
       this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists feed; drop table if exists trades; drop table if exists tokens");
     }
     this.db.exec(`
@@ -272,7 +293,14 @@ class SqliteStore implements Store {
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
       create table if not exists tokens (mint text primary key, data text not null, volume24h text not null, updated_at integer not null);
       create table if not exists feed (seq integer primary key autoincrement, slot integer not null, ordinal integer not null, signature text not null, type text not null, vault text, mint text, data text not null, provenance text not null, at integer not null, unique (type, signature, ordinal));`);
-    if (have !== SCHEMA_VERSION) this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
+    if (have !== SCHEMA_VERSION) {
+      const f: any = this.db.prepare("select value from meta where key = 'feed_seq_floor'").get();
+      const floor = feedSequenceFloor(Number(f?.value ?? 0), previousHead);
+      this.db.exec("delete from sqlite_sequence where name = 'feed'");
+      this.db.prepare("insert into sqlite_sequence (name, seq) values ('feed', ?)").run(floor);
+      this.db.prepare("insert into meta (key, value) values ('feed_seq_floor', ?) on conflict (key) do update set value = excluded.value").run(String(floor));
+      this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
+    }
   }
   async pruneStreams(vault: string, keep: string[]) {
     const rows = this.db.prepare("select stream from streams where vault = ?").all(vault);
@@ -316,7 +344,7 @@ class SqliteStore implements Store {
   private pruneTokensSync(keep: string[]) { const rows = this.db.prepare("select mint from tokens").all(); const del = this.db.prepare("delete from tokens where mint = ?"); const k = new Set(keep); for (const r of rows) if (!k.has(r.mint)) del.run(r.mint); }
   async upsertTokensAndFeed(tokens: TokenRow[], keep: string[], feed: FeedRow[]) {
     this.db.exec("begin");
-    try { this.upsertTokensSync(tokens); this.pruneTokensSync(keep); const inserted = this.appendFeedSync(feed); this.db.exec("commit"); return inserted; }
+    try { this.upsertTokensSync(tokens); this.pruneTokensSync(keep); const inserted = this.appendFeedSync(feed); this.db.prepare("insert into meta (key, value) values ('tokens_scanned_at', ?) on conflict (key) do update set value = excluded.value").run(String(Date.now())); this.db.exec("commit"); return inserted; }
     catch (e) { try { this.db.exec("rollback"); } catch { /* already rolled back */ } throw e; }
   }
   async listTokens() { return this.db.prepare("select data from tokens").all().map((x: any) => JSON.parse(x.data)); }

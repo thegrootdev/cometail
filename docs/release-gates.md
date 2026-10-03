@@ -1,7 +1,8 @@
 # Release gates
 
 Nothing goes to mainnet until every one of these passes. They run as LiteSVM tests against
-the live mainnet Meteora binaries, in CI.
+the saved mainnet Meteora binaries with `pnpm --filter @cometail/tests gates`. The
+repository currently has no CI workflow; retain the local per-file results with the release.
 
 1. **Eligibility**: non-WSOL quotes, base-fee modes, transfer-hook pools, freeze
    authorities, disallowed extensions, migration-outcome mismatches, vested liquidity,
@@ -10,7 +11,8 @@ the live mainnet Meteora binaries, in CI.
 2. **Delegates** are cleared on every entry path; a pre-set delegate cannot claim after
    deposit.
 3. **Mixed-source split** moves only permanently locked liquidity and chosen fees.
-4. **Lifecycle**: deposits and withdrawals only before launch; harvest before launch
+4. **Lifecycle**: deposits only before launch; withdrawals before launch or after a valid
+   thirty-day unwind; harvest before launch
    rejected; withdrawal returns everything with fees attached; the migration window
    behaves.
 5. **One-time claims** already taken upstream don't block anything.
@@ -24,7 +26,8 @@ the live mainnet Meteora binaries, in CI.
    unsolicited tokens burned; on a partially filled bin the refunded principal and the fee
    share equal what an independent reader of the bin arrays computes.
 9. **Registration** is write-once; squatted pairs rejected; preset-pair fallback accepted;
-   the own position must be the right pool and role.
+   the own position must have canonical custody, the right pool and the required size.
+   Its creator/partner identity is not recorded on chain (docs/architecture.md).
 10. **Resources and ordering**: full CPI traces and compute for every instruction, launch
     depth measured, 50-bin orders in a v0 transaction, token account creation order.
 11. **Splits and provenance**: exact 8/15, 1/2 and 1/5 on real claims, only on the new

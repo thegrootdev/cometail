@@ -56,7 +56,7 @@ buyback mechanism, not a redeemable claim on income. If the stream token never g
 the depositor is not trapped: thirty days after launch without the curve reaching its
 threshold, `unwind` closes the vault for good, pays the depositor the income the vault
 collected and returns the stream token's creator rights in the same instruction; the deposited
-streams then go back through `withdraw_stream`. Nothing runs on an unwound vault again, whatever
+streams then go back through `withdraw_stream`. Harvesting, routing and settlement stay disabled, whatever
 the curve does later, and a later migration hands its creator position to the depositor; the
 curve itself keeps trading, so holders can sell back.
 
@@ -82,7 +82,7 @@ curve itself keeps trading, so holders can sell back.
 `deposit_dbc_rights_migrated` (graduated curve, with its creator position),
 `register_stream_position`, `deposit_position`, `deposit_position_split`,
 `withdraw_stream`, `launch`, `register_pair`, `register_own_position`, `cashout`,
-`harvest_dbc`, `harvest_position`, `harvest_one_time`, `route`, `settle`. There is no swap
+`harvest_dbc`, `harvest_position`, `harvest_one_time`, `route`, `settle`, `unwind`. There is no swap
 instruction and no instruction with a free destination.
 
 The chain records no role for a migrated position, so the program admits a migrated creator
