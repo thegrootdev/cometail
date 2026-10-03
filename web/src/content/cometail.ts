@@ -85,7 +85,8 @@ export const tokenPage = {
   youSell: "You sell",
   youReceive: "You receive about",
   minimum: "Minimum after 1% slippage",
-  quoteNote: "Quotes follow the pool as you type; the trade sends with the minimum shown.",
+  quoteNote: "Quotes follow the pool as you type; the trade sends with the minimum shown, or fails rather than take less.",
+  quoteStale: "The quote changed while you were trading. Review the new minimum and try again.",
   confirmed: "Confirmed",
   refreshing: "Updating balances…",
 } as const;

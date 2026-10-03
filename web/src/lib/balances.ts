@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { useConnection } from "@solana/wallet-adapter-react";
 import type { Connection, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 function useChainValue<T>(fn: () => Promise<T | null>, deps: unknown[], everyMs: number) {
   const [value, setValue] = useState<T | null>(null);
@@ -12,15 +13,20 @@ function useChainValue<T>(fn: () => Promise<T | null>, deps: unknown[], everyMs:
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true;
+    // a new key starts from unknown: a previous owner's or mint's balance is never shown under
+    // the new one; responses are sequenced so a slow older read cannot overwrite a newer one
+    setValue(null);
+    let seq = 0;
     const load = async () => {
+      const mine = ++seq;
       setLoading(true);
       try {
         const next = await fn();
-        if (live) setValue(next);
+        if (live && mine === seq) setValue(next);
       } catch {
-        // the last value stands; the next refresh tries again
+        // the last value for this key stands; the next refresh tries again
       } finally {
-        if (live) setLoading(false);
+        if (live && mine === seq) setLoading(false);
       }
     };
     void load();
@@ -46,12 +52,17 @@ export function useSolBalance(owner: PublicKey | null | undefined) {
   return { lamports: key ? r.value : null, loading: r.loading, reload: r.reload };
 }
 
-/** All token accounts of the owner for the mint, summed (Token and Token-2022 alike). */
+/** The balance a trade can spend: the owner's associated token account for the mint under the
+ *  mint's own token program (Token or Token-2022). The swap builders spend that account only, so
+ *  tokens held elsewhere are not counted; a missing account is zero. */
 export async function readTokenBalance(connection: Connection, mint: PublicKey, owner: PublicKey): Promise<bigint> {
-  const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint }, "confirmed");
-  let total = 0n;
-  for (const a of accounts.value) total += BigInt(String(a.account.data.parsed?.info?.tokenAmount?.amount ?? "0"));
-  return total;
+  const mintInfo = await connection.getAccountInfo(mint, "confirmed");
+  if (!mintInfo) return 0n;
+  const ata = getAssociatedTokenAddressSync(mint, owner, false, mintInfo.owner);
+  const info = await connection.getAccountInfo(ata, "confirmed");
+  if (!info) return 0n;
+  // SPL token account layout: amount is the u64 at offset 64 in both programs
+  return info.data.length >= 72 ? info.data.readBigUInt64LE(64) : 0n;
 }
 export function useTokenBalance(mint: PublicKey | null | undefined, owner: PublicKey | null | undefined) {
   const { connection } = useConnection();

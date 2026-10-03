@@ -5,7 +5,8 @@ import { CpAmm, getUnClaimLpFee, getTokenProgram } from "@meteora-ag/cp-amm-sdk"
 
 export function cpAmm(connection: Connection) { return new CpAmm(connection); }
 
-export async function dammSwapTx(connection: Connection, pool: PublicKey, payer: PublicKey, inputTokenMint: PublicKey, amountIn: BN, decimals: { a: number; b: number }, slippagePct = 1): Promise<{ tx: Transaction; minOut: BN; out: BN }> {
+/** `minimumAmountOut` pins the bound the user reviewed; without it the fresh quote's bound is used. */
+export async function dammSwapTx(connection: Connection, pool: PublicKey, payer: PublicKey, inputTokenMint: PublicKey, amountIn: BN, decimals: { a: number; b: number }, slippagePct = 1, minimumAmountOut?: BN): Promise<{ tx: Transaction; minOut: BN; out: BN }> {
   const amm = cpAmm(connection);
   const poolState: any = await amm.fetchPoolState(pool);
   const slot = await connection.getSlot();
@@ -13,10 +14,10 @@ export async function dammSwapTx(connection: Connection, pool: PublicKey, payer:
   const quote: any = amm.getQuote({ inAmount: amountIn, inputTokenMint, slippage: slippagePct, poolState, currentTime: time ?? Math.floor(Date.now() / 1000), currentSlot: slot, tokenADecimal: decimals.a, tokenBDecimal: decimals.b });
   const outputTokenMint = inputTokenMint.equals(poolState.tokenAMint) ? poolState.tokenBMint : poolState.tokenAMint;
   const tx = await amm.swap({
-    payer, pool, inputTokenMint, outputTokenMint, amountIn, minimumAmountOut: quote.minSwapOutAmount, tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint,
+    payer, pool, inputTokenMint, outputTokenMint, amountIn, minimumAmountOut: minimumAmountOut ?? quote.minSwapOutAmount, tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint,
     tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault, tokenAProgram: getTokenProgram(poolState.tokenAFlag), tokenBProgram: getTokenProgram(poolState.tokenBFlag), referralTokenAccount: null,
   });
-  return { tx, minOut: quote.minSwapOutAmount, out: quote.swapOutAmount };
+  return { tx, minOut: minimumAmountOut ?? quote.minSwapOutAmount, out: quote.swapOutAmount };
 }
 
 /** The quote alone, for the live preview while an amount is typed; the trade quotes again when sent. */

@@ -192,9 +192,13 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         const have = await readTokenBalance(connection, mint, publicKey);
         if (have < need) { setActionError(insufficientTokens(formatAmount(need, dec, { ticker }), formatAmount(have, dec, { ticker }))); return; }
       }
+      // the trade sends with the minimum the user reviewed: the displayed quote for this exact
+      // amount and side, never a fresh one computed behind the display
+      const reviewed = quote && quote.side === side && quote.inRaw === BigInt(raw.toString()) ? quote : null;
+      if (!reviewed) { setActionError(tokenPage.quoteStale); return; }
+      const minimumOut = new BN(reviewed.minOut.toString());
       let signature: string | null = null;
       if (bonding) {
-        const q: any = await curveQuote(connection, view, raw, side === "sell");
         signature = await run(
           () =>
             curveSwapTx(
@@ -202,7 +206,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
               pool,
               publicKey,
               raw,
-              q.minimumAmountOut,
+              minimumOut,
               side === "sell",
             ),
           [],
@@ -218,6 +222,8 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
               side === "buy" ? NATIVE_MINT : mint,
               raw,
               { a: dec, b: 9 },
+              1,
+              minimumOut,
             ).then((r) => r.tx),
           [],
           300_000,
@@ -383,7 +389,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                 <div className="mt-3 flex gap-3">
                   <button
                     onClick={trade}
-                    disabled={!publicKey || status.state === "sending"}
+                    disabled={!publicKey || status.state === "sending" || quoting || !quote || quote.side !== side || quote.inRaw !== (parseAmount(amount, side === "buy" ? 9 : dec) ?? -1n)}
                     className="rounded-full bg-ion px-5 py-2 font-semibold text-night disabled:opacity-40"
                   >
                     {status.state === "sending"
