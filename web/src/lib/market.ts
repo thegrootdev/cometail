@@ -91,7 +91,7 @@ export function useMarket<T>(path: string | null) {
           if (String(next.solUsd.status) === "fresh") next.solUsd.status = "ok";
         }
         if (live) { setData(next); setError(false); }
-      } catch { if (live && document.visibilityState === "visible") setError(true); }
+      } catch { if (live && document.visibilityState === "visible") { setError(true); setNotIndexed(false); } }
       finally {
         clearTimeout(timeout); busy = false;
         if (live) { setLoading(false); clearTimeout(timer); timer = setTimeout(load, notIndexedRef.current ? 12000 : 20000); }

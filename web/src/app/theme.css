@@ -1533,3 +1533,13 @@ body:before {
     padding-bottom: calc(84px + env(safe-area-inset-bottom));
   }
 }
+
+/* Trades card: the connect pill and the caption keep their distance. */
+.token-order-entry .wallet-adapter-button,
+.token-order-entry .wallet-placeholder {
+  margin-bottom: 18px;
+}
+.token-order-entry > p:last-child,
+.token-order-entry .caption {
+  margin-top: 6px;
+}

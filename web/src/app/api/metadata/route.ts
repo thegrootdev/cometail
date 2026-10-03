@@ -3,6 +3,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { PublicKey } from "@solana/web3.js";
 import { objectStorage } from "@/lib/server/storage";
 import { metadataProofMessage, MetadataIntent } from "@/lib/metadata-proof";
+import { validateLinks, webpInfo } from "@/lib/server/upload-checks";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -13,15 +14,7 @@ async function imaging() {
   try { return (await import("sharp")).default; } catch (e) { console.error("sharp unavailable", e); return null; }
 }
 
-/** The dimensions and animation flag of a WebP from its header (RIFF container; VP8, VP8L or VP8X). */
-export function webpInfo(b: Buffer): { width: number; height: number; animated: boolean } | null {
-  if (b.length < 30 || b.toString("ascii", 0, 4) !== "RIFF" || b.toString("ascii", 8, 12) !== "WEBP") return null;
-  const chunk = b.toString("ascii", 12, 16);
-  if (chunk === "VP8 ") return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff, animated: false };
-  if (chunk === "VP8L") { const b0 = b[21], b1 = b[22], b2 = b[23], b3 = b[24]; return { width: 1 + (b0 | ((b1 & 0x3f) << 8)), height: 1 + ((b1 >> 6) | (b2 << 2) | ((b3 & 0x0f) << 10)), animated: false }; }
-  if (chunk === "VP8X") return { width: 1 + b.readUIntLE(24, 3), height: 1 + b.readUIntLE(27, 3), animated: (b[20] & 0x02) !== 0 };
-  return null;
-}
+
 
 /** What the launch pages check before the form: is storage configured and is the image library loadable? */
 export async function GET() {
@@ -38,6 +31,7 @@ const recent = new Map<string, { count: number; until: number }>();
 function fail(error: string, status = 400) {
   return NextResponse.json({ error }, { status });
 }
+
 export async function POST(request: Request) {
   const expected =
     process.env.COMETAIL_APP_ORIGIN ?? new URL(request.url).origin;
@@ -87,6 +81,9 @@ export async function POST(request: Request) {
       return fail(
         "The token identity or upload authorization is invalid. Please try again.",
       );
+    const linksCheck = validateLinks(intent.links);
+    if (!linksCheck.ok) return fail(`The ${linksCheck.field === "x" ? "X" : linksCheck.field} link must be a full https address on its own site.`);
+    const links = linksCheck.links;
     const bytes = Buffer.from(await image.arrayBuffer());
     if (createHash("sha256").update(bytes).digest("hex") !== intent.imageHash)
       return fail("The image changed after authorization.", 403);
@@ -172,10 +169,13 @@ export async function POST(request: Request) {
         symbol: intent.symbol,
         description: intent.description,
         image: imageUrl,
+        ...(links.website ? { external_url: links.website } : {}),
         properties: {
           files: [{ uri: imageUrl, type: "image/webp" }],
           category: "image",
         },
+        // socials the way wallets and explorers read them
+        ...(Object.keys(links).length ? { extensions: { ...(links.x ? { twitter: links.x } : {}), ...(links.telegram ? { telegram: links.telegram } : {}), ...(links.discord ? { discord: links.discord } : {}), ...(links.website ? { website: links.website } : {}) } } : {}),
       }),
     );
     const uri = await storage.put(

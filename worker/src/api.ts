@@ -165,6 +165,17 @@ export async function solUsd(): Promise<{ solUsd: number; source: string; at: nu
 }
 
 
+/** The small identity of every token in the index, by mint and by either of its pools, for the Sky and vault answers. */
+async function tokenIdentities(store: Store) {
+  const byMint = new Map<string, { mint: string; name: string; symbol: string; imageUrl: string | null; stage: string; links: TokenRow["links"] }>();
+  const byPool = new Map<string, { mint: string; name: string; symbol: string; imageUrl: string | null; stage: string; links: TokenRow["links"] }>();
+  for (const t of await store.listTokens()) {
+    const id = { mint: t.mint, name: t.name, symbol: t.symbol, imageUrl: t.imageUrl, stage: t.stage, links: t.links ?? null };
+    byMint.set(t.mint, id); byPool.set(t.dbcPool, id); if (t.dammPool) byPool.set(t.dammPool, id);
+  }
+  return { byMint, byPool };
+}
+
 /** The envelope every token answer carries: what the numbers are, how complete they are, and the SOL price used for USD columns. */
 async function envelope(store: Store, opts: ApiOptions, data: unknown) {
   const cursors = await store.listPoolCursors();
@@ -191,7 +202,7 @@ function tokenView(t: TokenRow, solUsd: number | null) {
     fdvUsd = (Number(usd) / 100).toFixed(2);
   }
   return {
-    identity: { mint: t.mint, decimals: t.decimals, name: t.name, symbol: t.symbol, imageUrl: t.imageUrl, metadataUri: t.metadataUri, metadataStatus: t.metadataStatus, creator: t.creator, custody: t.custody, createdAtMs: t.createdAtMs, dbcPool: t.dbcPool, dammPool: t.dammPool, quoteMint: t.quoteMint, tokenKind: t.tokenKind, config: t.config, vault: t.vault, stage: t.stage },
+    identity: { mint: t.mint, decimals: t.decimals, name: t.name, symbol: t.symbol, imageUrl: t.imageUrl, metadataUri: t.metadataUri, metadataStatus: t.metadataStatus, creator: t.creator, custody: t.custody, createdAtMs: t.createdAtMs, dbcPool: t.dbcPool, dammPool: t.dammPool, quoteMint: t.quoteMint, tokenKind: t.tokenKind, config: t.config, vault: t.vault, stage: t.stage, links: t.links ?? null },
     market: { priceSol: t.priceSol, priceSource: t.priceSource, priceAtMs: t.priceAtMs, totalSupplyRaw: t.totalSupplyRaw, circulatingSupplyRaw: null, fdvUsd, marketCapUsd: null, valuationBasis: "fdv", liquidityLamports: t.liquidityLamports ?? null, liquidityBasis: t.liquidityBasis ?? null },
     volume24h: { lamports: t.volume24hLamports, buys: t.buys24h, sells: t.sells24h, windowEndMs: t.updatedAt, windowStartMs: t.updatedAt - 24 * 3600_000, complete: t.volumeComplete, status: t.volumeComplete ? "complete" : "partial" },
     holders: { count: t.holders, countedAtMs: t.holdersAtMs, status: t.holders === null ? "missing" : "ok", definition: "unique owners of token accounts with a nonzero balance of the mint, excluding the pools' own vaults; addresses, not people" },
@@ -267,13 +278,16 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       if (!buckets.take(client)) return send(429, { error: "rate limited" }, { "retry-after": "10" });
       const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 200)));
       if (url.pathname === "/api/health") return send(200, { ok: true, service: "cometail-indexer", time: Date.now() });
-      if (url.pathname === "/api/sky") return send(200, { streams: await store.listSky(limit) });
-      if (url.pathname === "/api/vaults") return send(200, { vaults: await store.listVaults() });
+      if (url.pathname === "/api/sky") { const tokens = await tokenIdentities(store); return send(200, { streams: (await store.listSky(limit)).map((r) => ({ ...r, token: tokens.byMint.get(r.baseMint) ?? null })) }); }
+      if (url.pathname === "/api/vaults") { const tokens = await tokenIdentities(store); return send(200, { vaults: (await store.listVaults()).map((v) => ({ ...v, stToken: tokens.byMint.get(String(v.data?.stMint ?? "")) ?? null })) }); }
       const m = url.pathname.match(/^\/api\/vaults\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
       if (m) {
         const vault = await store.getVault(m[1]);
         if (!vault) return send(404, { error: "no such vault" });
-        return send(200, { ...vault, streams: await store.listStreams(m[1]), events: await store.listEvents(m[1], limit), trades: await store.listTrades(m[1], limit) });
+        const tokens = await tokenIdentities(store);
+        // each stream names the token behind it: the DBC pool for rights, the DAMM pool for positions
+        const streams = (await store.listStreams(m[1])).map((s) => ({ ...s, token: tokens.byPool.get(String(s.data?.pool ?? "")) ?? null }));
+        return send(200, { ...vault, stToken: tokens.byMint.get(String(vault.data?.stMint ?? "")) ?? null, streams, events: await store.listEvents(m[1], limit), trades: await store.listTrades(m[1], limit) });
       }
       if (url.pathname === "/api/events") return send(200, { events: await store.listEvents(url.searchParams.get("vault"), limit) });
       if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return tokenRoutes(store, opts, url, send);

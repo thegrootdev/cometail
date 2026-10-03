@@ -10,6 +10,8 @@ export async function uploadIdentity(a: {
   image: File;
   owner: PublicKey;
   signMessage: ((message: Uint8Array) => Promise<Uint8Array>) | undefined;
+  /** Optional socials (https); the form validates them, the route again. */
+  links?: { x?: string; telegram?: string; discord?: string; website?: string };
 }) {
   if (!a.signMessage) throw new DesignedError(copy.messageRequired);
   const encoder = new TextEncoder();
@@ -34,6 +36,7 @@ export async function uploadIdentity(a: {
     ).join(""),
     issuedAt: Date.now(),
     origin: window.location.origin,
+    ...(a.links && Object.values(a.links).some(Boolean) ? { links: Object.fromEntries(Object.entries(a.links).filter(([, v]) => v && v.trim()).map(([k, v]) => [k, v!.trim()])) } : {}),
   };
   const signature = await a.signMessage(
     new TextEncoder().encode(metadataProofMessage(intent)),

@@ -225,7 +225,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           </Link>
         )}
       </div>
-      <TokenMarket mint={mintStr} />
+      <TokenMarket mint={mintStr} onChain={!!view} />
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
       {!loading && !error && !view && (
@@ -398,7 +398,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
             )}
           </Card>
         </div>
-        <TokenTrades mint={mintStr} decimals={dec} />
+        <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} />
         </>
       )}
     </Shell>

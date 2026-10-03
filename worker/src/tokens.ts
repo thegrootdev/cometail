@@ -56,18 +56,26 @@ export function parseMetaplexMetadata(data: Buffer): { name: string; symbol: str
   } catch { return null; }
 }
 
-const metadataJsonCache = new Map<string, { at: number; image: string | null; status: "ok" | "missing" | "unreachable" }>();
-async function imageFromUri(uri: string): Promise<{ image: string | null; status: "ok" | "missing" | "unreachable" }> {
-  if (!/^https?:\/\//.test(uri)) return { image: null, status: "missing" };
+export type Links = { x: string | null; telegram: string | null; discord: string | null; website: string | null };
+/** Social links as wallets and explorers read them: extensions.{twitter,telegram,discord,website} and external_url; https only. */
+export function linksFromMetadata(j: any): Links | null {
+  const ext = j && typeof j.extensions === "object" && j.extensions ? j.extensions : {};
+  const pick = (...vals: unknown[]) => { for (const v of vals) if (typeof v === "string" && /^https:\/\/[^\s]{4,200}$/.test(v)) return v; return null; };
+  const links: Links = { x: pick(ext.twitter, ext.x, j?.twitter), telegram: pick(ext.telegram, j?.telegram), discord: pick(ext.discord, j?.discord), website: pick(ext.website, j?.external_url, j?.website) };
+  return Object.values(links).some(Boolean) ? links : null;
+}
+const metadataJsonCache = new Map<string, { at: number; image: string | null; status: "ok" | "missing" | "unreachable"; links: Links | null }>();
+async function imageFromUri(uri: string): Promise<{ image: string | null; status: "ok" | "missing" | "unreachable"; links: Links | null }> {
+  if (!/^https?:\/\//.test(uri)) return { image: null, status: "missing", links: null };
   const cached = metadataJsonCache.get(uri);
   if (cached && Date.now() - cached.at < 6 * 3600_000) return cached;
-  let out: { image: string | null; status: "ok" | "missing" | "unreachable" };
+  let out: { image: string | null; status: "ok" | "missing" | "unreachable"; links: Links | null };
   try {
     const r = await fetch(uri, { signal: AbortSignal.timeout(6_000), headers: { accept: "application/json" } });
     const j: any = r.ok ? await r.json() : null;
     const image = j && typeof j.image === "string" && /^https?:\/\//.test(j.image) ? j.image : null;
-    out = { image, status: image ? "ok" : "missing" };
-  } catch { out = { image: null, status: "unreachable" }; }
+    out = { image, status: image ? "ok" : "missing", links: linksFromMetadata(j) };
+  } catch { out = { image: null, status: "unreachable", links: null }; }
   metadataJsonCache.set(uri, { at: Date.now(), ...out });
   return out;
 }
@@ -133,8 +141,8 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
         const parsed = mi ? parseMetaplexMetadata(mi.data) : null;
         if (parsed) { name = parsed.name; symbol = parsed.symbol; uri = parsed.uri; }
       }
-      let imageUrl: string | null = null;
-      if (uri) { const img = await imageFromUri(uri); imageUrl = img.image; metadataStatus = img.status; }
+      let imageUrl: string | null = null, links: Links | null = null;
+      if (uri) { const img = await imageFromUri(uri); imageUrl = img.image; metadataStatus = img.status; links = img.links; }
       // stage and price: the DBC pool while bonding, the DAMM v2 pool after graduation
       const progress = Number(pool.migrationProgress);
       const stage: TokenRow["stage"] = progress === 3 ? "graduated" : progress === 0 ? "bonding" : "completed";
@@ -165,7 +173,7 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
         priceSol, priceSource, priceAtMs: now, totalSupplyRaw: mint.supply.toString(),
         quoteRaisedLamports: quoteRaised.toString(), targetLamports: target.toString(),
         progressBps: target > 0n ? Number((quoteRaised * 10_000n) / target > 10_000n ? 10_000n : (quoteRaised * 10_000n) / target) : null,
-        holders: h.count, holdersAtMs: h.at, liquidityLamports, liquidityBasis,
+        holders: h.count, holdersAtMs: h.at, liquidityLamports, liquidityBasis, links,
         volume24hLamports: volume.toString(), buys24h: buys, sells24h: sells, volumeComplete: complete,
         createdAtMs: await createdAt(conn, r.baseMint, Number(cfg.activationType ?? 0), BigInt(pool.activationPoint.toString())), updatedAt: now,
       });
