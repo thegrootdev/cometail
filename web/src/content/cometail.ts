@@ -77,6 +77,7 @@ export const tokenPage = {
   sellTail: "Sell this tail",
   buy: "Buy",
   sellToken: "Sell",
+  enterAmount: "Enter an amount to get a quote.",
 } as const;
 
 export const vaultPage = {
@@ -383,6 +384,7 @@ export const market = {
   fxMissing: "USD reference unavailable. SOL values remain available.",
   fxStale: "USD reference is stale. USD figures are hidden until the rate refreshes; SOL values remain available.",
   empty: "No comets in this view yet.", emptyBody: "Try another name or stage, or launch the first one.",
+  notIndexed: "Not indexed yet.", notIndexedBody: "This comet is on the chain. The next scan picks it up and these numbers fill in on their own.",
   failed: "Market data is out of reach.", failedBody: "The last snapshot may still be visible. Try again to reconnect.",
   loading: "Mapping the market…", loadingBody: "Reading token identities, pool prices and observed trades.",
   retry: "Try again", more: "Next page", first: "Back to first page", stream: "Fee-stream token", plain: "Launch token",

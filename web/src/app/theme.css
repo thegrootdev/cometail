@@ -1475,3 +1475,61 @@ body:before {
   box-shadow: none;
   border-style: dashed;
 }
+
+/* Token header: one address chip with the explorer link beside it. */
+.address-with-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.address-explorer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--panel);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+/* Trades card: the hard shadows of the buttons stop above the caption. */
+.token-order-entry .mt-3.flex {
+  margin-bottom: 18px;
+}
+.token-order-entry .caption,
+.token-order-entry .text-sm {
+  position: relative;
+  clear: both;
+}
+.token-order-entry button:disabled {
+  opacity: 0.75;
+}
+/* The phone tab bar: slimmer, and every page keeps room beneath it. */
+@media (max-width: 760px) {
+  .mobile-nav {
+    padding: 5px 6px calc(5px + env(safe-area-inset-bottom));
+    column-gap: 2px;
+  }
+  .mobile-nav a {
+    font-size: 10px;
+    gap: 1px;
+    padding: 2px 0;
+    line-height: 1.1;
+  }
+  .mobile-nav a img {
+    width: 22px;
+    height: 22px;
+  }
+  .mobile-nav a[aria-current] img {
+    transform: translateY(-2px) scale(1.1);
+  }
+  .page-content {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+  .site-footer {
+    padding-bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+}

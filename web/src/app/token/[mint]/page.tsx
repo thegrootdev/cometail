@@ -1,5 +1,5 @@
 "use client";
-import { friendlyError } from "@/lib/errors";
+import { friendlyError, insufficientSol } from "@/lib/errors";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
 import { TokenMarket, TokenTrades } from "@/components/Market";
@@ -129,10 +129,11 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     : PublicKey.default;
   const doQuote = async () => {
     setActionError(null);
+    const raw = amountRaw();
+    if (!raw) { setActionError(tokenPage.enterAmount); return; }
     setQuoting(true);
     try {
-      const raw = amountRaw();
-      if (!raw || !view) return;
+      if (!view) return;
       if (bonding) {
         const q: any = await curveQuote(connection, view, raw, side === "sell");
         setQuote(
@@ -161,7 +162,14 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     setActionError(null);
     try {
       const raw = amountRaw();
-      if (!raw || !view || !publicKey) return;
+      if (!raw) { setActionError(tokenPage.enterAmount); return; }
+      if (!view || !publicKey) return;
+      // a buy needs the SOL plus network and account fees: say so before the wallet prompt
+      if (side === "buy") {
+        const need = BigInt(raw.toString()) + 10_000_000n;
+        const have = BigInt(await connection.getBalance(publicKey));
+        if (have < need) { setActionError(insufficientSol(need, have)); return; }
+      }
       if (bonding) {
         const q: any = await curveQuote(connection, view, raw, side === "sell");
         await run(
@@ -205,12 +213,9 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         title={meta?.name || short(mintStr)}
         body={meta?.symbol ? `$${meta.symbol}` : undefined}
       >
-        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={artwork ?? undefined} size="large" /><CopyAddress address={mintStr} /></div>
+        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={artwork ?? undefined} size="large" /><span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span></div>
       </PageHeader>
       <div className="detail-address">
-        <a href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer">
-          {short(mintStr)} ↗
-        </a>
         {view && (
           <Link
             href={`/sell?pool=${pool.toBase58()}`}
@@ -338,7 +343,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                 </label>
                 <div className="mt-3 flex gap-3">
                   <button
-                    disabled={quoting || !amountRaw()}
+                    disabled={quoting}
                     onClick={doQuote}
                     className="rounded-full border border-starlight/30 px-4 py-2 text-sm"
                   >

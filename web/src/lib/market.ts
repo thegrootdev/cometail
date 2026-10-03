@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState , useRef } from "react";
 import { API_URL, CLUSTER } from "./addresses";
 
 export type MetricStatus = "ok" | "partial" | "stale" | "unavailable";
@@ -57,12 +57,16 @@ export function normalizeToken(value: unknown): MarketToken {
 export function useMarket<T>(path: string | null) {
   const [data, setData] = useState<MarketEnvelope<T> | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState(false);
+  // a token the indexer has not scanned yet answers 404: not an outage, a wait; polling continues faster
+  const [notIndexed, setNotIndexed] = useState(false);
+  const notIndexedRef = useRef(false);
+  useEffect(() => { notIndexedRef.current = notIndexed; }, [notIndexed]);
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true, busy = false;
     let controller: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setData(null); setError(false); setLoading(!!path);
+    setData(null); setError(false); setNotIndexed(false); setLoading(!!path);
     if (!path) return;
     const load = async () => {
       if (!live || busy || document.visibilityState !== "visible") return;
@@ -70,7 +74,9 @@ export function useMarket<T>(path: string | null) {
       const timeout = setTimeout(() => controller?.abort(), 12000);
       try {
         const response = await fetch(`${API_URL}${path}`, { cache: "no-store", signal: controller.signal });
+        if (response.status === 404 && /^\/api\/tokens\/[^/?]+/.test(path)) { if (live) { setNotIndexed(true); setError(false); } return; }
         if (!response.ok) throw new Error("Market read failed");
+        if (live) setNotIndexed(false);
         const next = await response.json() as MarketEnvelope<T>;
         if (next.schemaVersion !== 1 || next.cluster !== CLUSTER || !next.coverage || !next.data) throw new Error("Market response is unavailable");
         const payload = next.data as Record<string, unknown>;
@@ -88,7 +94,7 @@ export function useMarket<T>(path: string | null) {
       } catch { if (live && document.visibilityState === "visible") setError(true); }
       finally {
         clearTimeout(timeout); busy = false;
-        if (live) { setLoading(false); clearTimeout(timer); timer = setTimeout(load, 20000); }
+        if (live) { setLoading(false); clearTimeout(timer); timer = setTimeout(load, notIndexedRef.current ? 12000 : 20000); }
       }
     };
     const visibility = () => {
@@ -98,7 +104,7 @@ export function useMarket<T>(path: string | null) {
     void load(); document.addEventListener("visibilitychange", visibility);
     return () => { live = false; clearTimeout(timer); controller?.abort(); document.removeEventListener("visibilitychange", visibility); };
   }, [path, tick]);
-  return { data, loading, error, reload: () => setTick(t => t + 1) };
+  return { data, loading, error, notIndexed, reload: () => setTick(t => t + 1) };
 }
 
 export function rawUnits(raw: string | null | undefined, decimals: number): string | null {

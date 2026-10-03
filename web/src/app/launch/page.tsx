@@ -1,5 +1,5 @@
 "use client";
-import { friendlyError } from "@/lib/errors";
+import { friendlyError, insufficientSol, LAUNCH_OVERHEAD_LAMPORTS } from "@/lib/errors";
 import { useState } from "react";
 import { CopyAddress } from "@/components/CopyAddress";
 import Link from "next/link";
@@ -47,6 +47,17 @@ export default function LaunchPage() {
     if (blocked) return;
     setError(null);
     try {
+      const [whole, fraction = ""] = (firstBuy || "0").split(".");
+      const lamports = firstBuy
+        ? new BN(whole).mul(new BN(1e9)).add(new BN(fraction.padEnd(9, "0")))
+        : undefined;
+      // the launch pays the first buy, the 0.01 SOL creation fee, the mint and metadata rent and the
+      // network fees (about 0.035 SOL): the wallet must hold that before anything is signed
+      {
+        const need = BigInt(lamports?.toString() ?? "0") + LAUNCH_OVERHEAD_LAMPORTS;
+        const have = BigInt(await connection.getBalance(publicKey));
+        if (have < need) { setError(insufficientSol(need, have)); return; }
+      }
       const { uri } = await uploadIdentity({
         name,
         symbol: symbol.toUpperCase(),
@@ -56,10 +67,6 @@ export default function LaunchPage() {
         signMessage,
       });
       const kp = Keypair.generate();
-      const [whole, fraction = ""] = (firstBuy || "0").split(".");
-      const lamports = firstBuy
-        ? new BN(whole).mul(new BN(1e9)).add(new BN(fraction.padEnd(9, "0")))
-        : undefined;
       const sig = await run(
         () =>
           launchTx(connection, {

@@ -91,10 +91,10 @@ function DirectoryResults({ path, cursor, onCursor, clear }: { path: string; cur
   </>;
 }
 export function TokenMarket({ mint }: { mint: string }) {
-  const { data, error, reload } = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mint)}`);
+  const { data, error, notIndexed, reload } = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mint)}`);
   return <section className="token-market" aria-label={copy.overview}>
     <div className="market-detail-heading"><h2>{copy.overview}</h2>{data && <span className="market-network">{data.cluster}</span>}</div>
-    {!data ? <DataState compact kind={error ? "error" : "loading"} title={error ? copy.failed : copy.loading} body={error ? copy.failedBody : copy.loadingBody} onRetry={error ? reload : undefined} /> : <>
+    {!data && notIndexed ? <DataState compact kind="loading" title={copy.notIndexed} body={copy.notIndexedBody} /> : !data ? <DataState compact kind={error ? "error" : "loading"} title={error ? copy.failed : copy.loading} body={error ? copy.failedBody : copy.loadingBody} onRetry={error ? reload : undefined} /> : <>
       <Snapshot data={data} error={error} onRetry={reload} /><TokenStats token={data.data} />
       <p className="market-footnote">{data.data.holders?.definition || copy.sourceNote} {data.data.holders?.countedAtMs && <>{copy.snapshot} {marketTime(data.data.holders.countedAtMs)}.</>}</p>
       <Valuation />
@@ -107,13 +107,14 @@ export function TokenTrades({ mint, decimals }: { mint: string; decimals: number
   return <section className="market-trades" aria-labelledby="recent-trades-title"><h2 id="recent-trades-title">{copy.trades}</h2><p>{copy.tradesBody}</p><TradeResults key={path} path={path} decimals={decimals} cursor={cursor} onCursor={setCursor} /></section>;
 }
 function TradeResults({ path, decimals, cursor, onCursor }: { path: string; decimals: number; cursor: string | null; onCursor: (c: string | null) => void }) {
-  const { data, error, reload } = useMarket<TradeList>(path);
+  const { data, error, notIndexed, reload } = useMarket<TradeList>(path);
   const [shown, setShown] = useState<MarketEnvelope<TradeList> | null>(null);
   const [fresh, setFresh] = useState<string[]>([]);
   const started = useRef(Date.now() / 1000);
   useEffect(() => { if (data) setShown(old => old ?? data); }, [data]);
   useEffect(() => { if (!fresh.length) return; const t = setTimeout(() => setFresh([]), 1800); return () => clearTimeout(t); }, [fresh]);
   const view = shown ?? data;
+  if (!view && notIndexed) return <DataState compact kind="loading" title={copy.notIndexed} body={copy.notIndexedBody} />;
   if (!view) return <DataState compact kind={error ? "error" : "loading"} title={error ? copy.failed : copy.loading} body={error ? copy.failedBody : copy.loadingBody} onRetry={error ? reload : undefined} />;
   const trades = Array.isArray(view.data?.trades) ? view.data.trades : [];
   const pending = data && JSON.stringify(view.data) !== JSON.stringify(data.data);

@@ -20,3 +20,12 @@ export function friendlyError(e: unknown, fallback: string = failures.actionFail
   if (/insufficient liquidity|slippage|exceeds desired|price impact/.test(m)) return failures.quoteFailed;
   return fallback;
 }
+
+/** Creation fee, mint and metadata rent and network fees of a plain launch, beyond the first buy. */
+export const LAUNCH_OVERHEAD_LAMPORTS = 35_000_000n;
+const solText = (lamports: bigint) => (Number(lamports) / 1e9).toFixed(3).replace(/\.?0+$/, "");
+/** The sentence shown before a wallet prompt when the balance cannot cover the action. */
+export function insufficientSol(needLamports: bigint, haveLamports: bigint): string {
+  const short = needLamports - haveLamports;
+  return `This needs about ${solText(needLamports)} SOL including fees, and this wallet holds ${solText(haveLamports)} SOL. Add at least ${solText(short > 0n ? short : 0n)} SOL and try again.`;
+}
