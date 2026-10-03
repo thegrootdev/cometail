@@ -41,8 +41,9 @@ SOL only (bin-array rent 0.071 SOL per array plus fees; 1 SOL to start). Never t
 
 ## 5. Worker (box, root)
 `/etc/cometail/worker.env`: `COMETAIL_RPC_URL` the keyed mainnet RPC; `COMETAIL_KEEPER_KEYPAIR`
-the step 4 file; `COMETAIL_MIGRATE_CONFIGS` the mainnet plain config; `COMETAIL_SKY_CONFIGS` the
-four mainnet configs (never empty on mainnet); `COMETAIL_DEMO_ACTORS` the owner's wallets and
+the step 4 file; `COMETAIL_MIGRATE_CONFIGS` the mainnet plain config and every preset config (long, flat,
+exp, stock-usdc, stock-xstock); `COMETAIL_SKY_CONFIGS` the four protocol configs plus the same
+five presets (never empty on mainnet); `COMETAIL_USDC_MINTS` mainnet USDC; `COMETAIL_DEMO_ACTORS` the owner's wallets and
 the keeper; `COMETAIL_MIN_ROUTE_LAMPORTS=100000000`; `COMETAIL_API_ORIGINS=https://cometail.fun`.
 Then `systemctl restart cometail-indexer@dev cometail-keeper@dev` and check
 `/api/health`, `/api/metrics` (cluster mainnet-beta, zero rows) and the keeper log for one pass.

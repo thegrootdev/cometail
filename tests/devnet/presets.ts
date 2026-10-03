@@ -63,8 +63,8 @@ async function main() {
   // 3. the four configs
   process.env.COMETAIL_QUOTE_USDC = state.quoteMints.usdc;
   process.env.COMETAIL_QUOTE_STOCK = state.quoteMints.stock;
-  const quoteOf: Record<string, PublicKey> = { long: NATIVE_MINT, flat: NATIVE_MINT, "stock-usdc": new PublicKey(state.quoteMints.usdc), "stock-xstock": new PublicKey(state.quoteMints.stock) };
-  for (const name of ["long", "flat", "stock-usdc", "stock-xstock"] as const) {
+  const quoteOf: Record<string, PublicKey> = { long: NATIVE_MINT, flat: NATIVE_MINT, exp: NATIVE_MINT, "stock-usdc": new PublicKey(state.quoteMints.usdc), "stock-xstock": new PublicKey(state.quoteMints.stock) };
+  for (const name of ["long", "flat", "exp", "stock-usdc", "stock-xstock"] as const) {
     if (await exists(connection, state.presets[name])) { console.log(`preset ${name}: ${state.presets[name]} (exists)`); continue; }
     const config = Keypair.generate();
     const ix = await dbcProgram.methods.createConfig(configParams(name)).accountsPartial({

@@ -27,8 +27,9 @@ export const ADDRESSES = {
   presets: {
     long: presetKey(process.env.NEXT_PUBLIC_LONG_CONFIG, "8cUQqkMkb7pU5LXdEBVtDgQoyAa77n388DGp7EfhBh6o"),
     flat: presetKey(process.env.NEXT_PUBLIC_FLAT_CONFIG, "8LtiCkfxkGzRkNLCQHc4ohudp3PxRNHbSCxHFkv5jin4"),
+    exp: presetKey(process.env.NEXT_PUBLIC_EXP_CONFIG, "13mkYqFj1MU1DX8XP5VmnWpwjmdnqymxFsfeF3zKdNPf"),
     stockUsdc: presetKey(process.env.NEXT_PUBLIC_STOCK_USDC_CONFIG, "3SGJgHzALLPm15owz5Tw83SQdaBzd8AoSFyMZHy3NxBe"),
-    stockXstock: presetKey(process.env.NEXT_PUBLIC_STOCK_XSTOCK_CONFIG, "Bh4ewCPyWfhBxot9nvNaNH3ZXNHM35vo8cykaaj19D6p"),
+    stockXstock: presetKey(process.env.NEXT_PUBLIC_STOCK_XSTOCK_CONFIG, "AKQKx6QymFZ3A8y7QfBdNxnkdCFGMLVFBU1Dkpe9LQNa"),
   },
   quoteMints: {
     wsol: new PublicKey("So11111111111111111111111111111111111111112"),

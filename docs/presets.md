@@ -25,13 +25,20 @@ presets (25, 50, 75) are for the vault program only; the plain presets are the p
 | Standard | WSOL | market caps, one segment | 20 SOL | 120 SOL | 34.788 SOL | `configs/plain.json` |
 | Long | WSOL | 16 segments, weights 1.3^i | 20 SOL | 360 SOL | 122.709 SOL | `configs/long.json` |
 | Flat | WSOL | 16 segments, 12 x 8 then 4 x 1 (liquidity in the lower band) | 60 SOL | 120 SOL | 47.601 SOL | `configs/flat.json` |
+| Exponential | WSOL | 16 segments, weights 1.3^-i (gentle first, steep late) | 20 SOL | 240 SOL | 30.675 SOL | `configs/exp.json` |
 | Stock, USDC | USDC (6 dp) | market caps, one segment | 2,000 USDC | 12,000 USDC | 3,478.78 USDC | `configs/stock-usdc.json` |
-| Stock, tokenized stock | a badged Token-2022 stock mint (8 dp) | market caps, one segment | 4 units | 24 units | 6.958 units | `configs/stock-xstock.json` |
+| Stock, tokenized stock | a badged Token-2022 stock mint (8 dp) | 16 segments, weights 1.2^i (slow discovery, thicker book near graduation) | 2 units | 16 units | 5.667 units | `configs/stock-xstock.json` |
 
 What each means for a creator: Standard graduates at a 120 SOL market cap after a 34.8 SOL
 raise; Long stretches price discovery three and a half times further before graduating; Flat
 keeps the price near its start for most of the raise, a fair launch, and graduates at the
-same 120 SOL cap; the two stock presets are the standard shape in the quote's own units.
+same 120 SOL cap; Exponential climbs gently then steeply and graduates on a smaller raise
+with the price up about twelve-fold, the shape that rewards early buyers most; the USDC
+preset is the standard shape in dollars. The stock preset is tuned for thinly traded or
+newly tokenized names: such a stock has little float and a wide spread, so the launch asks
+buyers for a small amount of it (5.7 units to graduate), never jumps the price between buys,
+and leaves most of the liquidity near graduation where the pool forms, which damps late
+volatility in a quote whose own market is thin.
 After graduation every preset leaves 80 % of the liquidity permanently locked in the
 creator's position, earning the creator the pool's fees for as long as it trades.
 
@@ -50,8 +57,9 @@ mint and a Token-2022 mint with the MetadataPointer extension):
 | Standard (plain) | `9utyJkkrmQnzdDJjLWQJRN2DocYkTobdwg7eveWmJ4Qj` | WSOL |
 | Long | `8cUQqkMkb7pU5LXdEBVtDgQoyAa77n388DGp7EfhBh6o` | WSOL |
 | Flat | `8LtiCkfxkGzRkNLCQHc4ohudp3PxRNHbSCxHFkv5jin4` | WSOL |
+| Exponential | `13mkYqFj1MU1DX8XP5VmnWpwjmdnqymxFsfeF3zKdNPf` | WSOL |
 | Stock, USDC | `3SGJgHzALLPm15owz5Tw83SQdaBzd8AoSFyMZHy3NxBe` | `9YSXk1YcKXHcTodgu4MuvKdRu7kW64Af61cKERH2Wtcd` |
-| Stock, tokenized stock | `Bh4ewCPyWfhBxot9nvNaNH3ZXNHM35vo8cykaaj19D6p` | `BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN` |
+| Stock, tokenized stock | `AKQKx6QymFZ3A8y7QfBdNxnkdCFGMLVFBU1Dkpe9LQNa` | `BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN` |
 
 Mainnet: created by the protocol owner on the day (docs/mainnet-runbook.md); addresses land in
 `configs/mainnet.json` and here.

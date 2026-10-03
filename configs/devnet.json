@@ -21,10 +21,14 @@
     "long": "8cUQqkMkb7pU5LXdEBVtDgQoyAa77n388DGp7EfhBh6o",
     "flat": "8LtiCkfxkGzRkNLCQHc4ohudp3PxRNHbSCxHFkv5jin4",
     "stock-usdc": "3SGJgHzALLPm15owz5Tw83SQdaBzd8AoSFyMZHy3NxBe",
-    "stock-xstock": "Bh4ewCPyWfhBxot9nvNaNH3ZXNHM35vo8cykaaj19D6p"
+    "exp": "13mkYqFj1MU1DX8XP5VmnWpwjmdnqymxFsfeF3zKdNPf",
+    "stock-xstock": "AKQKx6QymFZ3A8y7QfBdNxnkdCFGMLVFBU1Dkpe9LQNa"
   },
   "quoteMints": {
     "usdc": "9YSXk1YcKXHcTodgu4MuvKdRu7kW64Af61cKERH2Wtcd",
     "stock": "BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN"
+  },
+  "retired": {
+    "stock-xstock-2026-10-03-v1": "Bh4ewCPyWfhBxot9nvNaNH3ZXNHM35vo8cykaaj19D6p"
   }
 }
