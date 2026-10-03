@@ -3,7 +3,10 @@
 // buyback ladder and burn log from events, the disclosures, and the stream token's market.
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
-import { addresses } from "@/content/cometail";
+import { addresses, identity } from "@/content/cometail";
+import { TokenHeading } from "@/components/TokenHeading";
+import { SocialLinks } from "@/components/SocialLinks";
+import type { TokenIdentity } from "@/lib/token-display";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { PublicKey } from "@solana/web3.js";
@@ -51,7 +54,8 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
       if (fromApi)
         return {
           vault: fromApi.data,
-          streams: fromApi.streams.map((s) => s.data),
+          streams: fromApi.streams.map((s) => ({ ...s.data, token: s.token })),
+          stToken: fromApi.stToken ?? null,
           events: fromApi.events,
           updatedAt: fromApi.updatedAt,
         };
@@ -61,6 +65,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
       return {
         vault: new VaultClientStep6(connection).decodeVault(info.data),
         streams: [] as any[],
+        stToken: null as TokenIdentity | null,
         events: [] as any[],
         updatedAt: Date.now(),
       };
@@ -76,7 +81,8 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
   return (
     <Shell>
       <BackToSky />
-      <PageHeader eyebrow={c.vaultKicker} title={`Vault ${short(vaultStr)}`}>
+      <PageHeader eyebrow={c.vaultKicker} title={identity.vaultName}>
+        {v?.stMint && <TokenHeading token={data?.stToken} mint={String(v.stMint)} large />}
         {v ? (
           <Link href={`/token/${String(v.stMint)}`} className="button button-primary">
             Trade the stream token ↗
@@ -87,6 +93,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
           </button>
         )}
       </PageHeader>
+      <SocialLinks links={data?.stToken?.links} tokenName={data?.stToken?.name} />
       <div className="vault-addresses"><CopyAddress address={vaultStr} label={addresses.vault} />{v?.stMint && <CopyAddress address={String(v.stMint)} />}</div>
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
@@ -224,20 +231,14 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                   key={i}
                   className="flex flex-wrap items-center justify-between gap-2 py-2"
                 >
-                  <span>
-                    {KIND(s) === "dbcCreatorRights"
-                      ? "Creator rights"
-                      : "Locked position"}
-                    {s.isOwn ? " (the stream token's own)" : ""} ·{" "}
-                    <a
-                      className="text-ion"
-                      href={EXPLORER("address", String(s.pool))}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {short(String(s.pool))}
-                    </a>
-                  </span>
+                  <div className="vault-stream-identity">
+                    {s.token?.mint ? <Link href={`/token/${s.token.mint}`} className="token-cell"><TokenHeading token={s.token} mint={s.token.mint}/></Link> : <TokenHeading/>}
+                    <p className="source-kind">{KIND(s) === "dbcCreatorRights" ? identity.creatorFees : identity.positionFees}</p>
+                    <p className="source-availability">{identity.heldHere}</p>
+                    {s.token?.mint && <CopyAddress address={s.token.mint}/>}
+                    <SocialLinks links={s.token?.links} tokenName={s.token?.name}/>
+                    <a className="text-link" href={EXPLORER("address", String(s.pool))} target="_blank" rel="noopener noreferrer">{identity.viewPool} ↗</a>
+                  </div>
                   <span className="text-starlight/60">
                     {s.live?.lockedSharePct != null && (
                       <>

@@ -1,23 +1,22 @@
 "use client";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
-import { addresses, money } from "@/content/cometail";
+import { TokenHeading } from "@/components/TokenHeading";
+import { SocialLinks } from "@/components/SocialLinks";
+import { SourceStatus } from "@/components/SourceStatus";
+import { addresses, money, identity } from "@/content/cometail";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { PublicKey } from "@solana/web3.js";
 import { Shell, Card, ConnectWallet } from "@/components/Shell";
-import {
-  PageHeader,
-  DataState,
-  TokenAvatar,
-  Badge,
-} from "@/components/Experience";
+import { PageHeader, DataState, Badge } from "@/components/Experience";
 import { experience as copy, nav } from "@/content/cometail";
 import { api } from "@/lib/api";
 import { poolsByCreator } from "@/lib/dbc";
 import { cpAmm } from "@/lib/damm";
 import { useLoad } from "@/lib/hooks";
 import { short } from "@/lib/format";
+import { EXPLORER } from "@/lib/addresses";
+import { tokenForMint } from "@/lib/token-display";
 export default function PortfolioPage() {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
@@ -25,15 +24,17 @@ export default function PortfolioPage() {
   const { data, loading, error, reload } = useLoad(
     async () => {
       if (!publicKey) return null;
-      const [pools, positions, vaults] = await Promise.all([
+      const [pools, positions, vaults, sky] = await Promise.all([
         poolsByCreator(connection, publicKey),
         cpAmm(connection).getPositionsByUser(publicKey),
         api.vaults(),
+        api.sky(),
       ]);
       if (!vaults) throw Error(copy.failed);
       return {
         pools,
         positions,
+        streams: sky?.streams ?? [],
         vaults: vaults.vaults.filter((v) => String(v.data.depositor) === me),
       };
     },
@@ -72,23 +73,35 @@ export default function PortfolioPage() {
                 </Link>
               </DataState>
             ) : (
-              data.pools.map(({ pool, state }) => (
-                <div className="portfolio-item portfolio-owned" key={pool.toBase58()}>
-                <Link className="portfolio-owned-link" href={`/token/${new PublicKey(state.baseMint).toBase58()}`}>
-                  <span className="token-cell">
-                    <TokenAvatar seed={String(state.baseMint)} />
-                    <span>
-                      {short(String(state.baseMint))}
-                      <small>
-                        <span>{copy.accrued}</span><Money lamports={state.creatorQuoteFee.toString()} />
-                      </small>
-                    </span>
-                  </span>
-                  ↗
-                </Link>
-                <CopyAddress address={String(state.baseMint)} />
-                </div>
-              ))
+              data.pools.map(({ pool, state }) => {
+                const mint = String(state.baseMint),
+                  source = data.streams.find((s) => s.pool === pool.toBase58()),
+                  token = tokenForMint(source?.token, mint);
+                return (
+                  <div
+                    className="portfolio-item portfolio-owned"
+                    key={pool.toBase58()}
+                  >
+                    <Link
+                      className="portfolio-owned-link"
+                      href={`/token/${mint}`}
+                    >
+                      <TokenHeading token={token} mint={mint} />
+                    </Link>
+                    <p className="source-kind">{identity.creatorFees}</p>
+                    <SourceStatus stream={source} />
+                    <CopyAddress address={mint} />
+                    <SocialLinks links={token?.links} tokenName={token?.name} />
+                    <div className="portfolio-income">
+                      <span>{copy.accrued}</span>
+                      <Money lamports={state.creatorQuoteFee.toString()} />
+                    </div>
+                    <Link href={`/token/${mint}`} className="text-link">
+                      {identity.viewToken} ↗
+                    </Link>
+                  </div>
+                );
+              })
             )}
           </Card>
           <Card title={copy.vaults}>
@@ -99,20 +112,32 @@ export default function PortfolioPage() {
                 </Link>
               </DataState>
             ) : (
-              data.vaults.map((v) => (
-                <div className="portfolio-item portfolio-owned" key={v.vault}>
-                <Link className="portfolio-owned-link" href={`/vault/${v.vault}`}>
-                  <span>
-                    {short(v.vault)}
-                    <small>
-                      <span>{money.toSeller}</span><Money lamports={String(v.data.accounting?.toDepositor ?? 0)} />
-                    </small>
-                  </span>
-                  <Badge>{Object.keys(v.data.status ?? {})[0]}</Badge>
-                </Link>
-                {v.data.stMint && <CopyAddress address={String(v.data.stMint)} />}
-                </div>
-              ))
+              data.vaults.map((v) => {
+                const mint = v.data.stMint ? String(v.data.stMint) : null,
+                  token = mint ? tokenForMint(v.stToken, mint) : null;
+                return (
+                  <div className="portfolio-item portfolio-owned" key={v.vault}>
+                    <Link
+                      className="portfolio-owned-link"
+                      href={`/vault/${v.vault}`}
+                    >
+                      <TokenHeading token={token} mint={mint} />
+                    </Link>
+                    <Badge>{Object.keys(v.data.status ?? {})[0]}</Badge>
+                    {mint && <CopyAddress address={mint} />}
+                    <SocialLinks links={token?.links} tokenName={token?.name} />
+                    <div className="portfolio-income">
+                      <span>{money.toSeller}</span>
+                      <Money
+                        lamports={String(v.data.accounting?.toDepositor ?? 0)}
+                      />
+                    </div>
+                    <Link href={`/vault/${v.vault}`} className="text-link">
+                      {identity.viewVault} ↗
+                    </Link>
+                  </div>
+                );
+              })
             )}
           </Card>
           <Card title={copy.positions}>
@@ -123,18 +148,49 @@ export default function PortfolioPage() {
                 body={copy.noStreamsBody}
               />
             ) : (
-              data.positions.map((p) => (
-                <div className="portfolio-item" key={p.position.toBase58()}>
-                  <span>
-                    {short(p.position.toBase58())}
-                    <small>
-                      {short(new PublicKey(p.positionState.pool).toBase58())}
-                    </small>
-                  </span>
-                  <CopyAddress address={p.position.toBase58()} label={addresses.position} />
-                  <Badge tone="gold">{wizardPosition()}</Badge>
-                </div>
-              ))
+              data.positions.map((p) => {
+                const source = data.streams.find(
+                  (s) =>
+                    s.kind === "position" &&
+                    s.position === p.position.toBase58(),
+                );
+                const token = source
+                  ? tokenForMint(source.token, source.baseMint)
+                  : null;
+                return (
+                  <div
+                    className="portfolio-item portfolio-owned"
+                    key={p.position.toBase58()}
+                  >
+                    {token ? (
+                      <Link
+                        className="portfolio-owned-link"
+                        href={`/token/${token.mint}`}
+                      >
+                        <TokenHeading token={token} mint={token.mint} />
+                      </Link>
+                    ) : (
+                      <TokenHeading />
+                    )}
+                    <p className="source-kind">{identity.positionFees}</p>
+                    <SourceStatus stream={source} />
+                    {token && <CopyAddress address={token.mint} />}
+                    <CopyAddress
+                      address={p.position.toBase58()}
+                      label={addresses.position}
+                    />
+                    <SocialLinks links={token?.links} tokenName={token?.name} />
+                    <a
+                      href={EXPLORER("address", p.position.toBase58())}
+                      className="text-link"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {identity.viewPosition} ↗
+                    </a>
+                  </div>
+                );
+              })
             )}
           </Card>
         </div>
@@ -143,7 +199,4 @@ export default function PortfolioPage() {
       )}
     </Shell>
   );
-}
-function wizardPosition() {
-  return "DAMM V2";
 }

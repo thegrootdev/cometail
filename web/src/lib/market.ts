@@ -1,9 +1,11 @@
 "use client";
 import { useEffect, useState , useRef } from "react";
 import { API_URL, CLUSTER } from "./addresses";
+import type { TokenLinks } from "./token-display";
 
 export type MetricStatus = "ok" | "partial" | "stale" | "unavailable";
 export interface MarketToken {
+  links?: TokenLinks | null;
   mint: string; decimals: number; name: string | null; symbol: string | null;
   imageUrl: string | null; metadataStatus: "ok" | "missing" | "unreachable";
   creator: string; createdAtMs: number | null; dbcPool: string; dammPool: string | null;

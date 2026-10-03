@@ -20,6 +20,13 @@ import {
 } from "@/components/TokenIdentity";
 import { DataState, PageHeader , StorageNotice } from "@/components/Experience";
 import { uploadIdentity } from "@/lib/upload";
+import { SocialFields } from "@/components/SocialLinks";
+import { cleanLinks, linksValid, type TokenLinks } from "@/lib/token-display";
+import { api } from "@/lib/api";
+import { TokenHeading } from "@/components/TokenHeading";
+import { SocialLinks } from "@/components/SocialLinks";
+import { CopyAddress } from "@/components/CopyAddress";
+import { identity } from "@/content/cometail";
 import { wizard, splits, product, experience as c } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
@@ -172,6 +179,7 @@ function Wizard() {
     }
     return out;
   }, [publicKey?.toBase58()]);
+  const { data: catalogue } = useLoad(api.sky, [], 30000);
   const [picked, setPicked] = useState<Set<string>>(
     new Set(preselect ? [preselect] : []),
   );
@@ -180,6 +188,7 @@ function Wizard() {
   const [symbol, setSymbol] = useState("");
   const [image, setImage] = useState<TokenImage | null>(null);
   const [description, setDescription] = useState("");
+  const [links, setLinks] = useState<TokenLinks>({});
   const [preparing, setPreparing] = useState(false);
   const storage = useStorageReady();
   const blocked = storage.checked && !storage.ready;
@@ -191,6 +200,7 @@ function Wizard() {
   const chosen = eligible.filter((s) => picked.has(key(s)));
   const capQ64 = capToQ64(capSol, 6);
   const ready =
+    linksValid(links) &&
     chosen.length > 0 &&
     image &&
     !preparing &&
@@ -202,7 +212,7 @@ function Wizard() {
     !vaultKey;
 
   const launch = async () => {
-    if (!publicKey || !capQ64 || !image || preparing || blocked) return;
+    if (!publicKey || !capQ64 || !image || !linksValid(links) || preparing || blocked) return;
     setPreparing(true);
     try {
       const client = new VaultClientStep6(connection);
@@ -210,6 +220,7 @@ function Wizard() {
         name,
         symbol: `${product.streamTickerPrefix}${symbol.trim().toUpperCase()}`,
         description,
+        links: cleanLinks(links),
         image: image.file,
         owner: publicKey,
         signMessage,
@@ -413,29 +424,18 @@ function Wizard() {
                         }}
                         className="mt-1"
                       />
-                      <div className="text-sm">
-                        <div>
-                          {s.kind === "rights"
-                            ? wizard.rights
-                            : wizard.position}{" "}
-                          ·{" "}
-                          <Link
-                            href={`/token/${s.baseMint.toBase58()}`}
-                            className="text-ion"
-                          >
-                            {short(s.baseMint.toBase58())}
-                          </Link>
-                          {s.kind === "rights" && (
-                            <span className="text-starlight/60">
-                              {" "}
-                              · {wizard.stages[s.progress]} · <Money lamports={s.claimable.toString()} />{" "}
-                              {wizard.claimable}
-                            </span>
-                          )}
-                        </div>
+                      <div className="text-sm min-w-0">
+                        {(() => {
+                          const token = catalogue?.streams.find(row => row.baseMint === s.baseMint.toBase58())?.token;
+                          return <><Link href={`/token/${s.baseMint.toBase58()}`} className="token-cell"><TokenHeading token={token} mint={s.baseMint.toBase58()}/></Link>
+                            <p className="source-kind">{s.kind === "rights" ? identity.creatorFees : identity.positionFees}</p>
+                            <CopyAddress address={s.baseMint.toBase58()}/><SocialLinks links={token?.links} tokenName={token?.name}/>
+                          </>;
+                        })()}
+                        {s.kind === "rights" && <span className="source-kind">{wizard.stages[s.progress]} · <Money lamports={s.claimable.toString()}/> {wizard.claimable}</span>}
                         {!ok && (
                           <div className="text-xs text-starlight/50">
-                            {s.reasons.join("; ")}
+                            {identity.notSellable}
                           </div>
                         )}
                       </div>
@@ -499,6 +499,7 @@ function Wizard() {
                     placeholder={c.descriptionHint}
                   />
                 </label>
+                <SocialFields value={links} onChange={setLinks} />
                 <label className="mt-3 block text-sm">
                   {wizard.cap}
                   <input
@@ -571,6 +572,7 @@ function Wizard() {
               name={name}
               symbol={symbol ? `${product.streamTickerPrefix}${symbol}` : ""}
               image={image?.preview}
+              links={links}
             />
             <Card title={wizard.moneyTitle}>
               <ul className="space-y-3 text-sm text-starlight/80">

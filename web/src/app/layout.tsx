@@ -4,6 +4,7 @@ import { Providers } from "@/lib/providers";
 import "./globals.css";
 import "./theme.css";
 import "./market.css";
+import "./token-identity.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(product.url),

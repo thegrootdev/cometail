@@ -2,6 +2,8 @@
 import { friendlyError, insufficientSol } from "@/lib/errors";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
+import { SocialLinks } from "@/components/SocialLinks";
+import { metadataLinks } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
@@ -89,9 +91,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     });
     if (!response.ok) return null;
     const data = await response.json();
-    return typeof data.image === "string" && /^https?:\/\//.test(data.image)
-      ? (data.image as string)
-      : null;
+    return { image: typeof data.image === "string" && /^https?:\/\//.test(data.image) ? data.image as string : undefined, links: metadataLinks(data) };
   }, [meta?.uri]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
@@ -213,8 +213,9 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         title={meta?.name || short(mintStr)}
         body={meta?.symbol ? `$${meta.symbol}` : undefined}
       >
-        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={artwork ?? undefined} size="large" /><span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span></div>
+        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={artwork?.image} size="large" /><span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span></div>
       </PageHeader>
+      <SocialLinks links={artwork?.links} tokenName={meta?.name} />
       <div className="detail-address">
         {view && (
           <Link

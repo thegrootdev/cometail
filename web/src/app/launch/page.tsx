@@ -16,6 +16,8 @@ import {
 import { plainLaunch, experience as c } from "@/content/cometail";
 import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
+import { SocialFields } from "@/components/SocialLinks";
+import { cleanLinks, linksValid, type TokenLinks } from "@/lib/token-display";
 import { useTx , useStorageReady } from "@/lib/hooks";
 import { EXPLORER } from "@/lib/addresses";
 
@@ -26,6 +28,7 @@ export default function LaunchPage() {
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
   const [description, setDescription] = useState("");
+  const [links, setLinks] = useState<TokenLinks>({});
   const [image, setImage] = useState<TokenImage | null>(null);
   const [firstBuy, setFirstBuy] = useState("");
   const [mint, setMint] = useState<string | null>(null);
@@ -34,6 +37,7 @@ export default function LaunchPage() {
   const storage = useStorageReady();
   const blocked = storage.checked && !storage.ready;
   const valid =
+    linksValid(links) &&
     !!image &&
     new TextEncoder().encode(name.trim()).length > 0 &&
     new TextEncoder().encode(name.trim()).length <= 32 &&
@@ -62,6 +66,7 @@ export default function LaunchPage() {
         name,
         symbol: symbol.toUpperCase(),
         description,
+        links: cleanLinks(links),
         image: image.file,
         owner: publicKey,
         signMessage,
@@ -131,6 +136,7 @@ export default function LaunchPage() {
                 placeholder={c.descriptionHint}
               />
             </label>
+            <SocialFields value={links} onChange={setLinks} />
             <label className="field">
               {c.firstBuy} <span className="muted">{c.optional}</span>
               <div className="amount-input">
@@ -189,7 +195,7 @@ export default function LaunchPage() {
           )}
         </Card>
         <aside className="preview-column">
-          <IdentityPreview name={name} symbol={symbol} image={image?.preview} />
+          <IdentityPreview name={name} symbol={symbol} image={image?.preview} links={links} />
           <Card title={c.review}>
             <p className="creation-fee">{plainLaunch.creationFee}</p>
             <p className="disclosure-copy">{plainLaunch.intro}</p>

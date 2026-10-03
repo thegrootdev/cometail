@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Money, PriceReference } from "./Money";
 import { CopyAddress } from "./CopyAddress";
+import { TokenHeading } from "./TokenHeading";
+import { SocialLinks } from "./SocialLinks";
 import { useSolUsd } from "@/lib/prices";
 import { formatUsd, usdValue } from "@/lib/usd";
 import { market as copy, money } from "@/content/cometail";
@@ -82,8 +84,8 @@ function DirectoryResults({ path, cursor, onCursor, clear }: { path: string; cur
     {view.coverage.status !== "complete" && <p className="market-warning">{copy.historyPending}</p>}
     {tokens.length ? <div className="market-grid" aria-busy={loading}>{tokens.map(t => <article className="market-card" key={t.mint}>
       <Link className="market-card-link" href={`/token/${t.mint}`} aria-label={`${copy.view} ${t.name || short(t.mint)}`}>
-      <div className="market-identity"><TokenAvatar seed={t.mint} image={t.imageUrl ?? undefined} size="large" /><div><h3>{t.name || short(t.mint)}</h3><span>{t.symbol ? `$${t.symbol}` : short(t.mint)} · {t.tokenKind === "stream" ? copy.stream : copy.plain}</span></div><span className="market-arrow" aria-hidden="true">↗</span></div>
-      </Link><CopyAddress address={t.mint} />
+      <div className="market-identity"><TokenHeading token={t} mint={t.mint} large /><span className="market-arrow" aria-hidden="true">↗</span></div><span className="token-kind-note">{t.tokenKind === "stream" ? copy.stream : copy.plain}</span>
+      </Link><CopyAddress address={t.mint} /><SocialLinks links={t.links} tokenName={t.name} />
       <TokenStats token={t} /><Stage token={t} />
     </article>)}</div> : <DataState title={copy.empty} body={copy.emptyBody}><button type="button" className="button button-secondary" onClick={clear}>{copy.clear}</button></DataState>}
     <div className="market-pagination">{cursor && <button type="button" className="button button-secondary" onClick={() => onCursor(null)}>← {copy.first}</button>}{view.data?.nextCursor && <button type="button" className="button button-secondary" onClick={() => onCursor(view.data.nextCursor)}>{copy.more} →</button>}</div>

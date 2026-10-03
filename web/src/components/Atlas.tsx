@@ -9,7 +9,7 @@ import { Money } from "./Money";
 import { useSolUsd } from "@/lib/prices";
 import { formatUsd, usdValue } from "@/lib/usd";
 import { rawUnits } from "@/lib/market";
-import { money } from "@/content/cometail";
+import { money, identity } from "@/content/cometail";
 import { Stat } from "./Shell";
 import { DataState } from "./Experience";
 export function hash(s: string) {
@@ -277,7 +277,7 @@ export function StarAtlas({
             key={s.pool}
             href={`/token/${s.baseMint}`}
             tabIndex={0}
-            aria-label={`${copy.viewToken} ${short(s.baseMint)} · ${sol(s.claimableLamports)} ${copy.accrued}`}
+            aria-label={`${copy.viewToken} ${s.token?.name || identity.pendingName} · ${sol(s.claimableLamports)} ${copy.accrued}`}
           >
             <g transform={`translate(${x} ${y}) rotate(-24)`}>
               <circle
@@ -314,7 +314,7 @@ export function StarAtlas({
               fontSize={compact ? 13 : 10}
               fill="#92a7be"
             >
-              {short(s.baseMint, 3)}
+              {s.token?.symbol || identity.pendingTicker}
             </text>
             <text
               x={x + 12}

@@ -1,6 +1,10 @@
 "use client";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
+import { TokenHeading } from "@/components/TokenHeading";
+import { SocialLinks } from "@/components/SocialLinks";
+import { SourceStatus } from "@/components/SourceStatus";
+import { identity } from "@/content/cometail";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Shell } from "@/components/Shell";
@@ -8,12 +12,10 @@ import { StarAtlas, AtlasStats, loadSky } from "@/components/Atlas";
 import {
   PageHeader,
   DataState,
-  TokenAvatar,
   Badge,
 } from "@/components/Experience";
 import { experience as copy, sky, wizard } from "@/content/cometail";
 import { useLoad } from "@/lib/hooks";
-import { short } from "@/lib/format";
 export default function SkyPage() {
   const { data, loading, error, reload } = useLoad(loadSky, [], 30000);
   const [query, setQuery] = useState(""),
@@ -22,7 +24,7 @@ export default function SkyPage() {
   const shown = streams.filter(
     (s) =>
       (!eligible || s.eligible) &&
-      [s.pool, s.baseMint, s.creator].some((x) =>
+      [s.pool, s.baseMint, s.creator, s.token?.name || "", s.token?.symbol || ""].some((x) =>
         x.toLowerCase().includes(query.trim().toLowerCase()),
       ),
   );
@@ -50,9 +52,9 @@ export default function SkyPage() {
       </div>
       <div className="atlas-search">
         <input
-          aria-label={copy.search}
+          aria-label={identity.search}
           type="search"
-          placeholder={copy.search}
+          placeholder={identity.search}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -83,17 +85,11 @@ export default function SkyPage() {
                 <tr key={s.pool}>
                   <td data-label={copy.source}>
                     <Link className="token-cell" href={`/token/${s.baseMint}`}>
-                      <TokenAvatar seed={s.baseMint} />
-                      <span>
-                        <strong>{short(s.baseMint, 5)}</strong>
-                        <small>
-                          {s.kind === "position"
-                            ? `${sky.position} · ${s.custody} / ${s.lockedSharePct}% ${sky.ofLocked}`
-                            : `${s.custody} / ${s.creatorPct}% locked`}
-                        </small>
-                      </span>
+                      <TokenHeading token={s.token} mint={s.baseMint} />
                     </Link>
+                    <p className="source-kind">{s.kind === "position" ? identity.positionFees : identity.creatorFees}</p>
                     <CopyAddress address={s.baseMint} />
+                    <SocialLinks links={s.token?.links} tokenName={s.token?.name} />
                   </td>
                   <td data-label={copy.stage}>
                     <Badge tone={s.progress === 3 ? "gold" : "ion"}>
@@ -107,13 +103,7 @@ export default function SkyPage() {
                       : <Money lamports={s.realized30dLamports} />}
                   </td>
                   <td data-label={copy.eligibility}>
-                    {s.eligible ? (
-                      <Badge tone="gold">{copy.eligible}</Badge>
-                    ) : (
-                      <span className="muted" title={s.reasons.join("; ")}>
-                        {s.reasons[0] ?? "—"}
-                      </span>
-                    )}
+                    <SourceStatus stream={s} />
                   </td>
                   <td>
                     <Link
@@ -121,7 +111,7 @@ export default function SkyPage() {
                       href={`/token/${s.baseMint}`}
                       aria-label={`${copy.viewToken} ${s.baseMint}`}
                     >
-                      ↗
+                      {identity.viewToken} ↗
                     </Link>
                   </td>
                 </tr>

@@ -402,3 +402,21 @@ export const market = {
 export const addresses = { mint: "Mint", vault: "Vault", position: "Position", pool: "Pool", copy: "Copy", copied: "Copied", failed: "Copy failed", manual: "Select and copy address" } as const;
 
 export const money = { stale: "USD stale", missing: "USD unavailable", rate: "SOL/USD", liquidity: "Liquidity · USD", curveLiquidity: "Quote reserve on the curve", poolLiquidity: "Estimate · pool quote side × 2", unknownLiquidity: "Liquidity not indexed", fees: "Fees earned", toSeller: "Paid to seller" } as const;
+
+export const identity = {
+  token: "Token", pendingName: "Token identity pending", pendingSymbol: "Ticker not available yet", pendingTicker: "Pending",
+  vaultName: "Fee-stream vault", viewToken: "View token", viewVault: "Open vault", viewPosition: "View position", viewPool: "View pool",
+  creatorFees: "Creator fee stream", positionFees: "Locked liquidity fee stream",
+  sellable: "Fee stream can be sold", inVault: "In a vault · not available to sell",
+  programHeld: "Program-held · not available to sell", unknownOwner: "Owner unconfirmed · selling unavailable",
+  migrating: "Migrating · not ready to sell", notSellable: "Fee stream cannot be sold here",
+  unchecked: "Selling eligibility not checked", heldHere: "In this vault · not available to sell",
+  search: "Search by name, ticker or address", linksLabel: "Token links", newTab: "(opens a new tab)",
+  socialTitle: "Find your community", optional: "Optional", socialHint: "Add full HTTPS links. They'll appear with your token.",
+  social: {
+    x: { label: "X", placeholder: "https://x.com/yourproject", invalid: "Use an HTTPS link on x.com or twitter.com, up to 200 characters." },
+    telegram: { label: "Telegram", placeholder: "https://t.me/yourproject", invalid: "Use an HTTPS link on t.me, up to 200 characters." },
+    website: { label: "Website", placeholder: "https://yourproject.com", invalid: "Use a full HTTPS website link, up to 200 characters." },
+    discord: { label: "Discord", placeholder: "https://discord.gg/yourinvite", invalid: "Use an HTTPS link on discord.gg or discord.com, up to 200 characters." },
+  },
+} as const;

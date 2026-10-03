@@ -2,6 +2,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { experience as copy } from "@/content/cometail";
 import { TokenAvatar, Badge } from "./Experience";
+import { SocialLinks } from "./SocialLinks";
+import type { TokenLinks } from "@/lib/token-display";
 export type TokenImage = { file: File; preview: string };
 export function LogoUpload({
   onChange,
@@ -220,10 +222,12 @@ export function IdentityPreview({
   name,
   symbol,
   image,
+  links,
 }: {
   name: string;
   symbol: string;
   image?: string;
+  links?: TokenLinks;
 }) {
   return (
     <div className="identity-preview">
@@ -235,6 +239,7 @@ export function IdentityPreview({
           <small>{symbol ? `$${symbol}` : copy.symbolPreview}</small>
         </div>
       </div>
+      <SocialLinks links={links} tokenName={name} />
       <div className="preview-bottom">
         <span>METEORA / DBC</span>
         <Badge tone="ion">{copy.identity}</Badge>
