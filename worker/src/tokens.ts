@@ -7,6 +7,7 @@ import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, unpackMint, getTokenMetadata }
 import { Chain, DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID } from "./chain";
 import { SkyRow, Store, TokenRow } from "./store";
 import { log } from "./tx";
+import { fetchMetadataJson } from "./metadata";
 
 export const METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 const SYSTEM = new PublicKey("11111111111111111111111111111111");
@@ -50,7 +51,8 @@ export async function quoteDecimalsOf(conn: Connection, quoteMint: string): Prom
   const cached = quoteDecimalsCache.get(quoteMint);
   if (cached !== undefined) return cached;
   const info = await conn.getAccountInfo(new PublicKey(quoteMint));
-  const d = info && info.data.length >= 45 ? info.data[44] : 9;
+  if (!info || info.data.length < 45) throw new Error("quote mint unavailable");
+  const d = info.data[44];
   quoteDecimalsCache.set(quoteMint, d);
   return d;
 }
@@ -82,8 +84,7 @@ async function imageFromUri(uri: string): Promise<{ image: string | null; status
   if (cached && Date.now() - cached.at < 6 * 3600_000) return cached;
   let out: { image: string | null; status: "ok" | "missing" | "unreachable"; links: Links | null };
   try {
-    const r = await fetch(uri, { signal: AbortSignal.timeout(6_000), headers: { accept: "application/json" } });
-    const j: any = r.ok ? await r.json() : null;
+    const j: any = await fetchMetadataJson(uri);
     const image = j && typeof j.image === "string" && /^https?:\/\//.test(j.image) ? j.image : null;
     out = { image, status: image ? "ok" : "missing", links: linksFromMetadata(j) };
   } catch { out = { image: null, status: "unreachable", links: null }; }
@@ -137,7 +138,7 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
   for (const r of curves) {
     try {
       const poolInfo = poolInfos.get(r.pool), mintInfo = mintInfos.get(r.baseMint), cfgInfo = configInfos.get(r.config);
-      if (!poolInfo || !mintInfo || !cfgInfo) continue;
+      if (!poolInfo || !mintInfo || !cfgInfo) throw new Error("token scan incomplete");
       const pool: any = chain.dbc.coder.accounts.decode("virtualPool", poolInfo.data).poolState;
       const cfg: any = chain.dbc.coder.accounts.decode("poolConfig", cfgInfo.data);
       const program = mintInfo.owner.equals(TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
@@ -161,11 +162,12 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
       const dammInfo = r.dammPool ? dammInfos.get(r.dammPool) : null;
       let priceSol: string | null = null, priceSource: string | null = null;
       let liquidityLamports: string | null = null, liquidityBasis: TokenRow["liquidityBasis"] = null;
+      if (stage === "graduated" && r.dammPool && !dammInfo) throw new Error("graduated pool unavailable");
       if (stage === "graduated" && dammInfo) {
         const damm: any = chain.damm.coder.accounts.decode("pool", dammInfo.data);
         priceSol = sqrtPriceToSolPerToken(BigInt(damm.sqrtPrice.toString()), mint.decimals, quoteDecimals); priceSource = "damm";
         liquidityLamports = (BigInt(damm.tokenBAmount.toString()) * 2n).toString(); liquidityBasis = "damm-quote-x2";
-      } else {
+      } else if (stage !== "graduated") {
         liquidityLamports = BigInt(pool.quoteReserve.toString()).toString(); liquidityBasis = "curve-quote-reserve";
         priceSol = sqrtPriceToSolPerToken(BigInt(pool.sqrtPrice.toString()), mint.decimals, quoteDecimals); priceSource = "curve";
       }
@@ -189,7 +191,7 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
         volume24hLamports: volume.toString(), buys24h: buys, sells24h: sells, volumeComplete: complete,
         createdAtMs: await createdAt(conn, r.baseMint, Number(cfg.activationType ?? 0), BigInt(pool.activationPoint.toString())), updatedAt: now,
       });
-    } catch (e) { log("token row failed", { mint: r.baseMint, error: String((e as Error).message ?? e) }); }
+    } catch (e) { log("token row failed", { mint: r.baseMint, error: String((e as Error).message ?? e) }); throw e; }
   }
   return out;
 }

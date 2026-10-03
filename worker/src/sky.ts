@@ -142,7 +142,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
     const creatorTotal = (tradingFee * BigInt(creatorFeePct)) / 100n;
     const realized = creatorTotal > claimable ? creatorTotal - claimable : 0n;
     const option = cfg ? Number(cfg.migrationFeeOption) : -1;
-    const dammPool = cfg && option >= 0 && option < DAMM_V2_MIGRATION_CONFIGS.length ? derivePool(DAMM_V2_MIGRATION_CONFIGS[option], s.baseMint, quoteMint).toBase58() : null;
+    const dammPool = cfg && Number(cfg.migrationOption) === 1 && option >= 0 && option < DAMM_V2_MIGRATION_CONFIGS.length ? derivePool(DAMM_V2_MIGRATION_CONFIGS[option], s.baseMint, quoteMint).toBase58() : null;
     // the config reasons also govern the pool's positions; the progress reason is the curve's own
     if (progress === 3 && dammPool) positionWork.push({ curve: p, cfg, quoteMint, dammPool, configReasons: reasons.filter((r) => !r.includes("waiting for migration")) });
     const poolKey = p.pubkey.toBase58();

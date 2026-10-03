@@ -120,7 +120,12 @@ class Client {
   private buffer = Buffer.alloc(0);
   closed = false;
   constructor(public socket: net.Socket, public key: string) {}
-  send(obj: unknown) { if (!this.closed) this.socket.write(encodeText(JSON.stringify(obj))); }
+  send(obj: unknown) {
+    if (this.closed) return;
+    const encoded = encodeText(JSON.stringify(obj));
+    if (encoded.length + this.socket.writableLength > 1_048_576) { this.close(1013); return; }
+    this.socket.write(encoded);
+  }
   /** Parse whatever arrived: answer pings, honour close, ignore the rest (the client sends nothing the feed needs). */
   feed(chunk: Buffer) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
@@ -159,7 +164,10 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
   const perKey = new Map<string, number>();
   let lastCoverage = "";
   server.on("upgrade", async (req, socket: net.Socket, head) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    let url: URL;
+    try { url = new URL(req.url ?? "/", "http://localhost"); } catch {
+      socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"); return;
+    }
     const key = req.headers["sec-websocket-key"];
     const refuse = (code: number, text: string) => { socket.write(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\n\r\n`); socket.destroy(); };
     if (url.pathname !== "/api/feed" || typeof key !== "string" || !/websocket/i.test(String(req.headers.upgrade))) return refuse(404, "Not Found");
@@ -178,33 +186,50 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
     socket.on("data", (c: Buffer) => client.feed(c));
     socket.on("close", drop); socket.on("error", drop); socket.on("end", drop);
     if (head?.length) client.feed(head);
-    try {
-      // the backlog first, in order, then the hello with the head, then live rows
-      let cursor: Cursor | null = sinceCursor;
-      const oldest = await store.oldestFeed();
-      if (cursor && oldest && compareCursor(cursor, oldest) < 0 && cursorOf(cursor) !== resumeBefore(oldest)) {
-        client.send(frame(opts.cluster, "gap", { oldest: cursorOf(oldest), resume: resumeBefore(oldest) }));
-        cursor = parseCursor(resumeBefore(oldest));
+    let delivered: Cursor | null = sinceCursor;
+    let replaying = true;
+    const queued: FeedRow[] = [];
+    const live = (r: FeedRow) => {
+      if (client.closed) return;
+      if (replaying) {
+        if (queued.length >= 1000) { client.close(1013); return; }
+        queued.push(r);
+      } else if (!delivered || compareCursor(r, delivered) > 0) {
+        client.send(rowFrame(opts.cluster, r)); delivered = r;
       }
-      // live rows arriving during the replay are queued and sent after it, deduplicated by cursor
-      const queued: FeedRow[] = [];
-      const onLive = (r: FeedRow) => queued.push(r);
-      feedBus.on("event", onLive);
-      let delivered: Cursor | null = cursor;
-      if (cursor) for (;;) {
+    };
+    const detach = () => { feedBus.off("event", live); queued.length = 0; client.closed = true; };
+    // Keep one listener installed through every await in replay/hello/coverage.
+    feedBus.on("event", live);
+    socket.once("close", detach); socket.once("error", detach); socket.once("end", detach);
+    try {
+      const oldest = await store.oldestFeed();
+      if (delivered && oldest && compareCursor(delivered, oldest) < 0 && cursorOf(delivered) !== resumeBefore(oldest)) {
+        client.send(frame(opts.cluster, "gap", { oldest: cursorOf(oldest), resume: resumeBefore(oldest) }));
+        delivered = parseCursor(resumeBefore(oldest));
+      }
+      if (delivered) for (;;) {
+        if (client.closed) break;
         const rows = await store.listFeedSince(delivered, 500);
-        for (const r of rows) { client.send(rowFrame(opts.cluster, r)); delivered = r; }
+        for (const r of rows) {
+          if (client.closed) break;
+          client.send(rowFrame(opts.cluster, r)); delivered = r;
+        }
         if (rows.length < 500) break;
       }
-      feedBus.off("event", onLive);
-      for (const r of queued) if (!delivered || compareCursor(r, delivered) > 0) { client.send(rowFrame(opts.cluster, r)); delivered = r; }
       const headRow = await store.headFeed();
+      const coverage = await opts.coverage();
+      if (client.closed) return;
+      queued.sort(compareCursor);
+      for (const r of queued) if (!delivered || compareCursor(r, delivered) > 0) {
+        client.send(rowFrame(opts.cluster, r)); delivered = r;
+      }
+      queued.length = 0;
       client.send(frame(opts.cluster, "hello", { cursor: headRow ? cursorOf(headRow) : null, retentionSlots: FEED_RETENTION_SLOTS }));
-      client.send(frame(opts.cluster, "coverage", await opts.coverage()));
-      const live = (r: FeedRow) => { if (client.closed) return feedBus.off("event", live); if (!delivered || compareCursor(r, delivered) > 0) { client.send(rowFrame(opts.cluster, r)); delivered = r; } };
-      feedBus.on("event", live);
-      socket.on("close", () => feedBus.off("event", live));
+      client.send(frame(opts.cluster, "coverage", coverage));
+      replaying = false;
     } catch (e) {
+      feedBus.off("event", live); queued.length = 0;
       log("feed socket failed", { error: String((e as Error).message ?? e) });
       client.close(1011);
     }

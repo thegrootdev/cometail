@@ -315,7 +315,10 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
     return opts.origins.includes(o) ? o : null;
   };
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    let url: URL;
+    try { url = new URL(req.url ?? "/", "http://localhost"); } catch {
+      res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "bad URL" })); return;
+    }
     const origin = allowOrigin(req);
     const cors: Record<string, string> = origin ? { "access-control-allow-origin": origin, "vary": "Origin", "access-control-allow-methods": "GET", "access-control-max-age": "600" } : {};
     const send = (code: number, body: unknown, extra: Record<string, string> = {}) => {
@@ -330,7 +333,11 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       const forwarded = fromProxy ? String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() : "";
       const client = forwarded || remote;
       if (!buckets.take(client)) return send(429, { error: "rate limited" }, { "retry-after": "10" });
-      const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 200)));
+      const requestedLimit = url.searchParams.get("limit");
+      if (requestedLimit !== null && (!/^\d+$/.test(requestedLimit) || !Number.isSafeInteger(Number(requestedLimit)) || Number(requestedLimit) < 1)) {
+        return send(400, { error: "limit must be a positive integer" }, url.pathname === "/api/feed" ? { "access-control-allow-origin": "*" } : {});
+      }
+      const limit = Math.min(1000, Number(requestedLimit ?? 200));
       if (url.pathname === "/api/health") return send(200, { ok: true, service: "cometail-indexer", time: Date.now() });
       if (url.pathname === "/api/sky") { const tokens = await tokenIdentities(store); return send(200, { streams: (await store.listSky(limit)).map((r) => ({ ...r, token: tokens.byMint.get(r.baseMint) ?? null })) }); }
       if (url.pathname === "/api/vaults") { const tokens = await tokenIdentities(store); return send(200, { vaults: (await store.listVaults()).map((v) => ({ ...v, stToken: tokens.byMint.get(String(v.data?.stMint ?? "")) ?? null })) }); }
@@ -352,7 +359,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         const r = await replay(store, opts.cluster ?? "devnet", cursor, Math.min(500, limit));
         return send(r.status, r.body, { "access-control-allow-origin": "*", "cache-control": "no-store" });
       }
-      if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return tokenRoutes(store, opts, url, send);
+      if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return await tokenRoutes(store, opts, url, send);
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {
         // the whole store is read for this document: computed at most once per 30 s, shared by every caller
@@ -369,7 +376,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
     const cursors = await store.listPoolCursors();
     const pending = cursors.filter((c) => c.cursor.status !== "ok").length;
     const scanned = await store.getMeta("tokens_scanned_at");
-    return { status: pending ? "pending" : "complete", pendingPools: pending, lastSuccessfulAtMs: scanned ? Number(scanned) : null };
+    return { status: pending ? "partial" : scanned ? "complete" : "stale", pendingPools: pending, lastSuccessfulAtMs: scanned ? Number(scanned) : null };
   } });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
