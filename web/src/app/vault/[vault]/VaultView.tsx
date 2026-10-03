@@ -122,6 +122,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                 {STATUS(v)}
               </Badge>
               <a
+                className="text-link status-link"
                 href={EXPLORER("address", vaultStr)}
                 target="_blank"
                 rel="noreferrer"

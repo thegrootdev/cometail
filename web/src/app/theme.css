@@ -1792,3 +1792,41 @@ small, .caption {
   padding: 6px 0;
   margin: -6px 0;
 }
+
+/* Floor for the small print the base layer set at 8 to 10px: nothing under 11px on any screen. */
+.micro,
+.chapter .micro,
+.site-footer .micro,
+.network-badge,
+.built-on,
+.upload-drop p,
+.preview-identity small,
+.preview-bottom span,
+.atlas-legend,
+.atlas-legend span,
+.atlas-footnote,
+.atlas-footnote span,
+.atlas-toolbar .micro,
+.atlas-coordinates,
+.atlas-divider .text-link,
+.live-status,
+.art-caption,
+.art-label,
+.hero-footnote,
+.eyebrow,
+.stat-label,
+.badge,
+.form-step,
+.steps-rail,
+.crop-controls label,
+.crop-actions button,
+.stream-table th,
+.token-cell small,
+.mobile-nav a,
+.wallet-placeholder {
+  font-size: 11px !important;
+}
+.status-link {
+  font-size: 14px;
+  text-decoration-thickness: 2px;
+}
