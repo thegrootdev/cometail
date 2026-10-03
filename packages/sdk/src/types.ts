@@ -111,7 +111,8 @@ export interface FeedData {
 export type FeedType = keyof FeedData;
 type Origin<T> = { provenance: Provenance & { source: "chain" | "indexer" }; data: T & { basis?: string } } | { provenance: Provenance & { source: "estimate" }; data: T & { basis: string } };
 export type FeedEvent = { [K in FeedType]: { schemaVersion: 1; cluster: string; type: K; cursor: Cursor; observedSlot: number | null; generatedAtMs: number } & Origin<FeedData[K]> }[FeedType];
-export interface GapFrame { type: "gap"; oldest: Cursor; resume: Cursor }
+/** `oldest` is null when the feed is empty; `resume` is then the reset cursor "0:0:~", accepted before and after the first event. */
+export interface GapFrame { type: "gap"; oldest: Cursor | null; resume: Cursor }
 export type ControlFrame = GapFrame | { type: "hello"; cursor: Cursor | null; retentionSlots: number } | { type: "ping"; generatedAtMs: number } | ({ type: "coverage" } & Coverage);
 export type FeedFrame = FeedEvent | ControlFrame;
 export interface FeedReplay { schemaVersion: 1; cluster: string; type: "replay"; generatedAtMs: number; events: FeedEvent[]; nextCursor: Cursor | null }

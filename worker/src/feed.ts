@@ -27,6 +27,9 @@ export function parseCursor(s: string | null | undefined): Cursor | null {
 export const compareCursor = (a: { seq?: number }, b: { seq?: number }) => (a.seq ?? 0) - (b.seq ?? 0);
 /** The cursor to pass as `since` so that `oldest` itself is delivered (since is exclusive). */
 export const resumeBefore = (oldest: CursorLike): string => `${Math.max(0, (oldest.seq ?? 0) - 1)}:${oldest.slot}:~`;
+/** The reset cursor: before everything, accepted whether the feed is empty or not. */
+export const RESET_CURSOR = "0:0:~";
+const isReset = (c: CursorLike) => (c.seq ?? 0) === 0 && c.signature === "~";
 
 const now = () => Date.now();
 const chain = (signature: string, slot: number) => ({ source: "chain", signature, slot });
@@ -99,14 +102,16 @@ export function rowFrame(cluster: string, r: FeedRow) {
 /** Replay from an exclusive cursor: { events, nextCursor } or an expiry. */
 export async function replay(store: Store, cluster: string, since: CursorLike | null, limit: number): Promise<{ status: 200 | 410; body: any }> {
   const oldest = await store.oldestFeed();
-  if (since && oldest && compareCursor(since, oldest) < 0 && cursorOf(since) !== resumeBefore(oldest)) {
-    return { status: 410, body: { error: "cursor expired", oldest: cursorOf(oldest), resume: resumeBefore(oldest) } };
-  }
-  // a cursor beyond the head comes from another database generation: explicit, never silent
-  const head = since ? await store.headFeed() : null;
-  if (since && (!head || compareCursor(since, head) > 0) && (!oldest || cursorOf(since) !== resumeBefore(oldest))) {
-    const resume = oldest ? resumeBefore(oldest) : "0:0:~";
-    return { status: 410, body: { error: "cursor unknown", oldest: oldest ? cursorOf(oldest) : null, resume } };
+  if (since && !isReset(since)) {
+    if (oldest && compareCursor(since, oldest) < 0 && cursorOf(since) !== resumeBefore(oldest)) {
+      return { status: 410, body: { error: "cursor expired", oldest: cursorOf(oldest), resume: resumeBefore(oldest) } };
+    }
+    // a cursor beyond the head, or any cursor against an empty feed, comes from another database
+    // generation: explicit, never silent; the reset cursor it names is accepted from then on
+    const head = await store.headFeed();
+    if (!head || compareCursor(since, head) > 0) {
+      return { status: 410, body: { error: "cursor unknown", oldest: oldest ? cursorOf(oldest) : null, resume: oldest ? resumeBefore(oldest) : RESET_CURSOR } };
+    }
   }
   const rows = await store.listFeedSince(since ? { seq: since.seq ?? 0 } : null, limit + 1);
   const page = rows.slice(0, limit);
@@ -214,11 +219,11 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
     socket.once("close", detach); socket.once("error", detach); socket.once("end", detach);
     try {
       const oldest = await store.oldestFeed();
-      const head0 = delivered ? await store.headFeed() : null;
-      const expired = delivered && oldest && compareCursor(delivered, oldest) < 0 && cursorOf(delivered) !== resumeBefore(oldest);
-      const unknown = delivered && (!head0 || compareCursor(delivered, head0) > 0) && (!oldest || cursorOf(delivered) !== resumeBefore(oldest));
+      const head0 = delivered && !isReset(delivered) ? await store.headFeed() : null;
+      const expired = delivered && !isReset(delivered) && oldest && compareCursor(delivered, oldest) < 0 && cursorOf(delivered) !== resumeBefore(oldest);
+      const unknown = delivered && !isReset(delivered) && (!head0 || compareCursor(delivered, head0) > 0);
       if (expired || unknown) {
-        const resume = oldest ? resumeBefore(oldest) : "0:0:~";
+        const resume = oldest ? resumeBefore(oldest) : RESET_CURSOR;
         client.send(frame(opts.cluster, "gap", { oldest: oldest ? cursorOf(oldest) : null, resume }));
         delivered = parseCursor(resume);
       }

@@ -4,7 +4,8 @@ export class ProtocolError extends Error {
 }
 /** Retention has a gap. Reconcile before explicitly starting a new subscription. */
 export class FeedGapError extends ProtocolError {
-  constructor(public readonly oldest: string, public readonly resume: string) {
+  /** `oldest` is null when the server's feed is empty; `resume` is then the reset cursor, accepted before and after the first event. */
+  constructor(public readonly oldest: string | null, public readonly resume: string) {
     super("Feed history expired; reconcile before resuming"); this.name = "FeedGapError";
   }
 }
@@ -81,8 +82,11 @@ export function isFeedEvent(frame: FeedFrame): frame is FeedEvent {
 export function decodeFrame(value: unknown): FeedFrame {
   const v = object(value);
   if (v.type === "gap") {
-    const oldest = text(v.oldest), resume = text(v.resume);
-    if (compareCursors(resume, oldest) >= 0) throw new ProtocolError("Gap resume must precede oldest retained event");
+    const resume = text(v.resume);
+    if (v.oldest !== null) {
+      const oldest = text(v.oldest);
+      if (compareCursors(resume, oldest) >= 0) throw new ProtocolError("Gap resume must precede oldest retained event");
+    } else parseCursor(resume);
     return v as unknown as ControlFrame;
   }
   if (v.type === "hello") {

@@ -79,7 +79,9 @@ signature and ordinal, so a replayed or retried index never publishes a row twic
 sequence never restarts below a value an earlier database generation issued (a rebuild
 starts above the previous head and above the time in tenths of a second), and a cursor the
 server does not know, older than retention or beyond its head, always gets the explicit
-`gap` frame or the 410 `cursor unknown` answer with a `resume` cursor, never silence.
+`gap` frame or the 410 `cursor unknown` answer with a `resume` cursor, never silence. When the
+feed is empty the gap's `oldest` is null and `resume` is the reset cursor `0:0:~`, which the
+server accepts before and after the first event.
 
 ## Non-SOL quotes
 Every quote-denominated figure names its quote: `market.quoteMint` and `market.quoteDecimals`

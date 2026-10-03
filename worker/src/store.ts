@@ -106,7 +106,7 @@ export interface Store {
  *  the source of truth for every row here), never patched by guessing at old encodings. */
 export const SCHEMA_VERSION = 10;
 /** Where the feed sequence starts after a rebuild: above every sequence this database issued before
- *  (its last head and its last floor) and above the time in tenths of a second, so a cursor from a
+ *  (its allocator's last value, which outlives pruned rows, and its last floor) and above the time in tenths of a second, so a cursor from a
  *  previous database generation, or one in the old slot-based format, always reads as expired and
  *  gets an explicit gap with a resume cursor instead of silence. Twelve digits at most for the
  *  SDK's cursor grammar. */
@@ -152,6 +152,8 @@ class PgStore implements Store {
     // the feed sequence never restarts below a value this database (or a previous one) issued
     let previousHead = 0;
     try { const h = await this.pool.query("select coalesce(max(seq), 0) as m from feed"); previousHead = Number(h.rows[0]?.m ?? 0); } catch { /* no feed table yet */ }
+    // the allocator remembers what pruning forgot: the sequence object's last value outlives every row
+    try { const q = await this.pool.query("select last_value, is_called from feed_seq_seq"); if (q.rows[0]?.is_called) previousHead = Math.max(previousHead, Number(q.rows[0].last_value)); } catch { /* no sequence yet */ }
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
       await this.pool.query("delete from meta where key not in ('schema', 'feed_seq_floor')");
@@ -276,6 +278,8 @@ class SqliteStore implements Store {
     // the feed sequence never restarts below a value this database (or a previous one) issued
     let previousHead = 0;
     try { const h: any = this.db.prepare("select coalesce(max(seq), 0) as m from feed").get(); previousHead = Number(h?.m ?? 0); } catch { /* no feed table yet */ }
+    // the allocator remembers what pruning forgot: sqlite_sequence keeps the last value issued after every row is gone
+    try { const q: any = this.db.prepare("select seq from sqlite_sequence where name = 'feed'").get(); if (q) previousHead = Math.max(previousHead, Number(q.seq)); } catch { /* no sequence row yet */ }
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
       this.db.exec("delete from meta where key not in ('schema', 'feed_seq_floor')");
