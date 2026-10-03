@@ -13,7 +13,7 @@
 // non-zero.
 //
 //   cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> \
-//     COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v COMETAIL_QUOTE_STOCK=<stock mint> \
+//     COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v COMETAIL_QUOTE_STOCK=Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh \
 //     DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/setup.ts
 //   The real run adds ADMIN_KEYPAIR=<path to the owner's keypair file, mode 600, outside the repo>
 //   and drops DRY_RUN. State: configs/mainnet.json (public addresses only).

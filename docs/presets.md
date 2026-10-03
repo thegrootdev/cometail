@@ -27,7 +27,7 @@ presets (25, 50, 75) are for the vault program only; the plain presets are the p
 | Flat | WSOL | 16 segments, 12 x 8 then 4 x 1 (liquidity in the lower band) | 60 SOL | 120 SOL | 47.601 SOL | `configs/flat.json` |
 | Exponential | WSOL | 16 segments, weights 1.3^-i (gentle first, steep late) | 20 SOL | 240 SOL | 30.675 SOL | `configs/exp.json` |
 | Stock, USDC | USDC (6 dp) | market caps, one segment | 2,000 USDC | 12,000 USDC | 3,478.78 USDC | `configs/stock-usdc.json` |
-| Stock, tokenized stock | a badged Token-2022 stock mint (8 dp) | 16 segments, weights 1.2^i (more depth near graduation; sharper early price movement) | 2 units | 16 units | 5.667 units | `configs/stock-xstock.json` |
+| Stock, tokenized stock | NVIDIA xStock (NVDAx, `Xsc9qvGR…`, badged Token-2022, 8 dp) on mainnet; a stand-in mint on devnet | 16 segments, weights 1.2^i (more depth near graduation; sharper early price movement) | 2 units | 16 units | 5.667 units | `configs/stock-xstock.json` |
 
 What each means for a creator: Standard graduates at a 120 SOL market cap after a 34.8 SOL
 raise; Long stretches price discovery three and a half times further before graduating; Flat

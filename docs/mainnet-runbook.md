@@ -31,7 +31,7 @@ The keeper: operating SOL only (bin-array rent 0.071 SOL per array plus fees), 1
 ```
 cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> \
   COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v \
-  COMETAIL_QUOTE_STOCK=<stock mint, see 3b> \
+  COMETAIL_QUOTE_STOCK=Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh \
   DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/setup.ts
 ```
 `tests/mainnet/setup.ts` refuses any cluster but mainnet, then runs a preflight: the
@@ -47,12 +47,15 @@ the real stream configs and treasury, so before step 5 it is reported SKIPPED. A
 simulation fails the run. The dry run writes nothing: `configs/mainnet.json` is written by
 the real run only. Keep the output with the deployment record.
 
-### 3b. The stock quote (read-only scan 2026-10-03, rerun at setup for the chosen mint)
-All Backed xStocks carry a DBC token badge. By holders and depth: NVIDIA xStock (NVDAx,
+### 3b. The stock quote: NVDAx (chosen by the owner 2026-10-03)
+`COMETAIL_QUOTE_STOCK` and `NEXT_PUBLIC_QUOTE_STOCK` are NVIDIA xStock,
+`Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh` (Token-2022, 8 decimals, DBC token badge
+`mfacWnGh1Kn5ttHMMaNZhRZbCjvGrDQyDyZgqaR9vBM`). The scan behind the choice (read-only,
+2026-10-03): all Backed xStocks carry a DBC token badge. By holders and depth: NVIDIA xStock (NVDAx,
 `Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh`, 8 decimals) 172,851 holders, 0.01 % price
 impact on a 10,000 USD buy and 0.13 % on 100,000; SP500 xStock (SPYx,
-`XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`) 81,422 holders, 0.04 % and 0.12 %. The owner
-picks; the setup script verifies the badge of whatever mint is given.
+`XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`) 81,422 holders, 0.04 % and 0.12 %. The setup
+script verifies the badge of the mint it is given on the day.
 
 ## 4. Deploy the program (owner)
 `docs/deploy.md`: `solana program deploy` with the reviewed ELF (the hash in the release
@@ -130,7 +133,7 @@ NEXT_PUBLIC_EXP_CONFIG=<presets.exp>
 NEXT_PUBLIC_STOCK_USDC_CONFIG=<presets.stock-usdc>
 NEXT_PUBLIC_STOCK_XSTOCK_CONFIG=<presets.stock-xstock>
 NEXT_PUBLIC_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
-NEXT_PUBLIC_QUOTE_STOCK=<the stock mint from 3b>
+NEXT_PUBLIC_QUOTE_STOCK=Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh
 ```
 Storage stays as configured (`COMETAIL_STORAGE_PROVIDER=r2`, `COMETAIL_MEDIA_ORIGIN`,
 `COMETAIL_APP_ORIGIN=https://cometail.fun`, `R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
