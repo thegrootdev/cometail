@@ -23,7 +23,7 @@ test('all REST routes keep exact wire paths/shapes and identify estimates',async
  case '/api/vaults/'+mint:return json({vault:mint,data:{},streams:[{stream:mint,data:{},token:null}],events:[{signature:'a',slot:3,data:{}}],trades:[{signature:'b',slot:4,amountIn:'999',buy:true}]});
  case '/api/events':return json({schemaVersion:1,cluster:'devnet',type:'replay',generatedAtMs:100,events:[{signature:'a',slot:3,data:{}}]});
  case '/api/tokens/'+mint:return json(envelope(token));
- case '/api/tokens/'+mint+'/trades':return json(envelope({trades:[{signature:'a',slot:3,baseAmountRaw:null,quoteAmountLamports:null}],nextCursor:null}));
+ case '/api/tokens/'+mint+'/trades':return json(envelope({trades:[{signature:'a',slot:3,baseAmountRaw:null,quoteAmountLamports:null,quoteMint:'So11111111111111111111111111111111111111112',quoteDecimals:9,executionPriceQuote:null,executionPriceSol:null}],nextCursor:null}));
  case '/api/metrics':return json({generatedAt:10,incomplete:true,plainLaunches:{volumeEstimateLamports:{independent:'125',demo:'0',unattributed:'0'}}});
  case '/api/prices':return json({solUsd:120,source:'jupiter',at:5,quotes:{future:'kept'}});
  case '/api/health':return json({ok:true,service:'cometail-indexer',time:10});default:throw Error(u.pathname)}});
@@ -53,7 +53,7 @@ test('replay rejects nonadvancing/misordered cursors and surfaces retention 410'
  await assert.rejects(clientWith(async()=>json({error:'cursor expired'},410)).replay({since:'1:0:abc'}),e=>e instanceof ApiError&&e.status===410);
 });
 test('all seven event types validate; estimates require basis and exact raw strings',()=>{
- const cases={launch:{mint,name:'X',symbol:'X',imageUrl:null,creator:mint,config:mint,dbcPool:mint,tokenKind:'plain'},trade:{mint,pool:mint,venue:'curve',side:'buy',baseAmountRaw:'1',quoteAmountLamports:'2',executionPriceSol:null,trader:mint,signature:'abc'},graduation:{mint,dbcPool:mint,dammPool:mint,signature:'abc'},harvest:frame().data,bid:{vault:mint,order:mint,bins:2,grossLamports:'1',signature:'abc'},fill:{vault:mint,order:mint,burnedStRaw:'1',unfilledLamports:'2',signature:'abc'},cashout:{vault:mint,depositorLamports:'1',signature:'abc'}};
+ const cases={launch:{mint,name:'X',symbol:'X',imageUrl:null,creator:mint,config:mint,dbcPool:mint,tokenKind:'plain'},trade:{mint,pool:mint,venue:'curve',side:'buy',baseAmountRaw:'1',quoteAmountLamports:'2',executionPriceSol:null,quoteMint:mint,quoteDecimals:9,executionPriceQuote:null,trader:mint,signature:'abc'},graduation:{mint,dbcPool:mint,dammPool:mint,signature:'abc'},harvest:frame().data,bid:{vault:mint,order:mint,bins:2,grossLamports:'1',signature:'abc'},fill:{vault:mint,order:mint,burnedStRaw:'1',unfilledLamports:'2',signature:'abc'},cashout:{vault:mint,depositorLamports:'1',signature:'abc'}};
  for(const[type,data]of Object.entries(cases))assert.equal(decodeFrame(frame(undefined,{type,data})).type,type);
  assert.throws(()=>decodeFrame(frame(undefined,{provenance:{source:'estimate'}})),ProtocolError);
  assert.equal(decodeFrame(frame(undefined,{provenance:{source:'estimate'},data:{...frame().data,basis:'aggregate fees'}})).data.basis,'aggregate fees');

@@ -321,6 +321,16 @@ body .wallet-adapter-button:active:not(:disabled),
 .text-link:hover {
   color: var(--dust);
 }
+/* On the yellow notice cards the ion link has no contrast; links there are ink. */
+.form-notice .text-link,
+.form-notice a {
+  color: var(--ink);
+  text-decoration-color: var(--ink);
+}
+.form-notice .text-link:hover,
+.form-notice a:hover {
+  color: var(--panel-deep);
+}
 
 /* Inputs sit in the card's deep fill with the same outline language. */
 input:not([type="range"]):not([type="checkbox"]),
@@ -411,6 +421,7 @@ input[type="range"] {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 44px;
 }
 .brand-link .brand-mascot {
   width: 44px;
@@ -1763,3 +1774,21 @@ body:before {
 @media (max-width: 760px) { .presets-grid { grid-template-columns: 1fr; } .preset-facts dd { font-size: 17px; } }
 
 .panel .form-notice:not(.form-notice-quiet) { color: var(--ink); }
+
+/* Code samples scroll inside their card instead of widening the page. */
+pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  -webkit-overflow-scrolling: touch;
+}
+small, .caption {
+  font-size: max(11px, 0.8em);
+}
+
+/* Inline links are finger-sized without moving the text around them. */
+.text-link {
+  display: inline-block;
+  padding: 6px 0;
+  margin: -6px 0;
+}

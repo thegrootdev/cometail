@@ -175,7 +175,7 @@ export function StarAtlas({
       const income = Number(s.realized30dLamports ?? s.realizedEstimateLamports) + Number(s.claimableLamports);
       tops.set(s.quoteMint, Math.max(tops.get(s.quoteMint) ?? 1, income));
     }
-    return streams.slice(0, compact ? 12 : 60).map((s) => {
+    const placed = streams.slice(0, compact ? 12 : 60).map((s) => {
       const income =
         Number(s.realized30dLamports ?? s.realizedEstimateLamports) +
         Number(s.claimableLamports);
@@ -190,6 +190,23 @@ export function StarAtlas({
           ((compact ? 85 : 140) * Math.log1p(income)) / Math.log1p(tops.get(s.quoteMint) ?? 1),
       };
     });
+    // Labels must not sit on each other: in reading order, push a label below any earlier
+    // label whose box it overlaps (the comet keeps its own head; only the text moves).
+    const glyph = compact ? 9 : 6.5, lineHeight = compact ? 40 : 30;
+    const boxes: { left: number; right: number; top: number; bottom: number }[] = [];
+    return placed
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+      .map((c) => {
+        const chars = Math.max((c.s.token?.symbol || "PENDING").length, feeLabel(c.s).length);
+        const left = c.x + 12, right = left + chars * glyph;
+        let top = c.y + 8;
+        for (const box of boxes) {
+          if (left < box.right && right > box.left && top < box.bottom && top + lineHeight > box.top) top = box.bottom + 2;
+        }
+        top = Math.min(top, 350);
+        boxes.push({ left, right, top, bottom: top + lineHeight });
+        return { ...c, labelY: top + 14 };
+      });
   }, [streams, compact]);
   const width = compact ? 540 : 1080;
   return (
@@ -270,7 +287,7 @@ export function StarAtlas({
             +60°
           </text>
         </g>
-        {comets.map(({ s, x, y, len }) => (
+        {comets.map(({ s, x, y, len, labelY }) => (
           <a
             key={s.pool}
             href={`/token/${s.baseMint}`}
@@ -307,18 +324,18 @@ export function StarAtlas({
             </g>
             <text
               x={x + 12}
-              y={y + 22}
+              y={labelY}
               fontFamily="Nunito,sans-serif"
-              fontSize={compact ? 13 : 10}
+              fontSize={compact ? 16 : 11}
               fill="#92a7be"
             >
               {s.token?.symbol || identity.pendingTicker}
             </text>
             <text
               x={x + 12}
-              y={y + (compact ? 40 : 37)}
+              y={labelY + (compact ? 18 : 15)}
               fontFamily="Nunito,sans-serif"
-              fontSize={compact ? 13 : 10}
+              fontSize={compact ? 16 : 11}
               fill="#f5c451a0"
             >
               {feeLabel(s)}

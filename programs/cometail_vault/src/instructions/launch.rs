@@ -195,8 +195,13 @@ pub fn register_pair(ctx: Context<RegisterPair>) -> Result<()> {
         .and_then(|x| 10u128.checked_pow(pair.parameters.base_fee_power_factor as u32).and_then(|p| x.checked_mul(p)))
         .ok_or(VaultError::Overflow)?;
     require!(base_fee <= MAX_PAIR_BASE_FEE, VaultError::Ineligible);
-    let now = Clock::get()?.unix_timestamp as u64;
-    require!(pair.activation_point <= now, VaultError::Ineligible);
+    let clock = Clock::get()?;
+    let activation_now = match pair.activation_type {
+        0 => clock.slot,
+        1 => u64::try_from(clock.unix_timestamp).map_err(|_| VaultError::Ineligible)?,
+        _ => return err!(VaultError::Ineligible),
+    };
+    require!(pair.activation_point <= activation_now, VaultError::Ineligible);
     require_keys_eq!(pair.pre_activation_swap_address, Pubkey::default(), VaultError::Ineligible);
     let bound = math::bin_bound(pair.bin_step, v.policy.max_price_q64, st_is_x).ok_or(VaultError::InvalidPolicy)?;
     let bin_step = pair.bin_step;

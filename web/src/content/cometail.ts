@@ -71,6 +71,7 @@ export const sky = {
 } as const;
 
 export const tokenPage = {
+  sending: "Sending…",
   curve: "Bonding curve",
   progress: "to graduation",
   trades: "Trades",
@@ -132,6 +133,7 @@ export const vaultPage = {
     "If this stream token's curve never reaches its threshold, the seller is not stuck. Thirty days after launch, while the curve is still below its threshold, the seller can unwind: the streams go back to the seller's wallet with any income the vault collected from them, and the vault closes for good. The stream token keeps trading on its curve, so holders can sell back; a later graduation changes nothing for a closed vault.",
   unwind: {
     title: "Unwind this vault",
+    sending: "Sending…",
     readFailed: "We could not check the curve. Retry to see whether this vault can unwind.",
     retry: "Check again",
     bodyWaiting: "If the curve is still below its threshold by then, you can unwind from",

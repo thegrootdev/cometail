@@ -1,5 +1,5 @@
 import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade } from "./types.js";
-import { array, compareCursors, decodeEnvelope, decodeFrame, isFeedEvent, evidence, number, object, parseCursor, ProtocolError, text } from "./protocol.js";
+import { array, compareCursors, decodeEnvelope, decodeFrame, isFeedEvent, evidence, number, object, parseCursor, ProtocolError, text, tradeQuote } from "./protocol.js";
 import { FeedSubscription } from "./feed.js";
 import type { FeedOptions } from "./feed.js";
 export interface ClientOptions {
@@ -18,7 +18,7 @@ function token(value: unknown): Token {
   text(id.mint); number(id.decimals); text(market.totalSupplyRaw);
   object(r.volume24h); object(r.holders); object(r.bonding);
   const labels: EstimateLabel[] = [];
-  if (market.fdvUsd !== null) labels.push(label("market.fdvUsd", "Derived fully diluted value from total supply, indexed price and the response's quote-to-USD reference; not circulating market cap."));
+  if (typeof market.fdvUsd === "string") labels.push(label("market.fdvUsd", "Derived fully diluted value from total supply, indexed price and the response's quote-to-USD reference; not circulating market cap."));
   if (market.liquidityBasis === "damm-quote-x2") labels.push(label("market.liquidityLamports", "Graduated pool quote side multiplied by two; a liquidity estimate."));
   return row<Token>(r, labels);
 }
@@ -74,7 +74,7 @@ export class CometailClient {
   async trades(mint: Address, q: { cursor?: string; limit?: number } = {}, options?: RequestOptions): Promise<Envelope<{ trades: Trade[]; nextCursor: string | null }>> {
     const r = decodeEnvelope(await this.get(`/api/tokens/${address(mint)}/trades` + query(q, 100), options)), d = object(r.data);
     if (d.nextCursor !== null) text(d.nextCursor);
-    return { ...r, ...evidence(r), data: { ...d, trades: array(d.trades).map(v => event<Trade>(v)) } } as Envelope<{ trades: Trade[]; nextCursor: string | null }>;
+    return { ...r, ...evidence(r), data: { ...d, trades: array(d.trades).map(v => { const t = event<Trade>(v); tradeQuote(t as unknown as Record<string, unknown>); return t; }) } } as Envelope<{ trades: Trade[]; nextCursor: string | null }>;
   }
   async sky(q: { limit?: number } = {}, options?: RequestOptions): Promise<{ streams: SkyStream[] } & Evidence> {
     const r = object(await this.get("/api/sky" + query(q), options));

@@ -13,6 +13,7 @@ import { ataIx, ensureAta, balance, wrapSol, createMint, mintTo } from "../harne
 import * as dbc from "../harness/dbc";
 import * as damm from "../harness/damm";
 import * as dlmm from "../harness/dlmm";
+import { dlmmProgram } from "../harness/programs";
 
 const policy = { maxSpendPerPeriod: new BN(5_000_000_000), periodSeconds: new BN(3600), maxOutstandingOrders: 4, maxBinsPerOrder: 20, maxPriceQ64: new BN(1).shln(64).muln(10) };
 
@@ -144,4 +145,36 @@ describe("launch, migration, own position, cash-out, pair registration", () => {
     expect(v.binBound).eq(v.stIsX ? 231 : -231);
     expectFail(svm, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: pair.pair })], [keeper], "Duplicate");
   });
+  for (const activationType of [0, 1]) {
+    it(`register_pair uses activation clock ${activationType}: future rejected, exact boundary accepted`, async () => {
+      const h = await setup(1);
+      const { svm, client, creator, keeper, cv, stMint } = h;
+      const L = await client.launch({ vault: cv.vault, depositor: creator.publicKey, stMint: stMint.publicKey, config: h.cfgs[1], preset: 1, streamIndex: 1, metadata: { name: "tail", symbol: "tTKN", uri: "https://cometail.fun/t.json" } });
+      send(svm, [L.ix], [creator, stMint], { cu: 800_000 });
+      const keeperQuote = wrapSol(svm, keeper, new BN(2_000_000_000));
+      const keeperSt = ensureAta(svm, keeper, stMint.publicKey, keeper.publicKey);
+      await dbc.buy(svm, keeper, L.pool, keeperQuote, keeperSt, new BN(100_000_000));
+      const pair = await dlmm.initPairIx({ x: stMint.publicKey, y: NATIVE_MINT, funder: keeper.publicKey, userTokenX: keeperSt, userTokenY: keeperQuote, binStep: 100, baseFactor: 1000 });
+      const clock = svm.getClock();
+      const activationPoint = (activationType === 0 ? clock.slot : clock.unixTimestamp) + 10_000n;
+      const decoded: any = dlmmProgram.coder.instruction.decode(pair.ix.data);
+      decoded.data.params.activationType = activationType;
+      decoded.data.params.activationPoint = new BN(activationPoint.toString());
+      pair.ix.data = dlmmProgram.coder.instruction.encode(decoded.name, decoded.data);
+      send(svm, [pair.ix], [keeper], { cu: 400_000 });
+      const state = dlmm.getPair(svm, pair.pair);
+      expect(state.activationType).eq(activationType);
+      expect(state.activationPoint.toString()).eq(activationPoint.toString());
+      const ix = await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: pair.pair });
+      const before = Buffer.from(svm.getAccount(cv.vault)!.data);
+      expectFail(svm, [ix], [keeper], "Ineligible");
+      expect(Buffer.from(svm.getAccount(cv.vault)!.data).equals(before)).true;
+      if (activationType === 0) clock.slot = activationPoint;
+      else clock.unixTimestamp = activationPoint;
+      svm.setClock(clock);
+      send(svm, [ix], [keeper]);
+      expect(client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data)).dlmmPair.equals(pair.pair)).true;
+    });
+  }
+
 });

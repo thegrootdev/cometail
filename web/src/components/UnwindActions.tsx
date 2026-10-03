@@ -74,7 +74,7 @@ export function UnwindActions({ vault, v, streams, onChange }: { vault: string; 
       {belowThreshold && <p className="caption mt-2">{copy.whatHappens}</p>}
       {ready && status.state !== "done" && (
         <button type="button" className="button button-secondary mt-4" onClick={unwind} disabled={status.state === "sending"}>
-          {status.state === "sending" ? "Sending…" : copy.action}
+          {status.state === "sending" ? copy.sending : copy.action}
         </button>
       )}
       {status.state === "done" && (

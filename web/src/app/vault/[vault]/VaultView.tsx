@@ -33,6 +33,14 @@ const UnwindActions = dynamic(
   { loading: () => <DataState kind="loading" compact /> },
 );
 
+/** A per-token price as a plain decimal with four significant digits, never in exponent notation. */
+function plainPrice(value: string | number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  const places = Math.max(0, Math.min(18, 3 - Math.floor(Math.log10(n))));
+  return n.toFixed(places).replace(/\.?0+$/, "");
+}
+
 const STATUS = (v: any) => (v?.status ? Object.keys(v.status)[0] : "unknown");
 const KIND = (s: any) => (s?.kind ? Object.keys(s.kind)[0] : "");
 
@@ -197,7 +205,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                       <ul className="ladder-bins">
                         {bins.map((b: any) => (
                           <li key={b.id}>
-                            <span>{Number(b.price).toPrecision(4)} SOL/token</span>
+                            <span>{plainPrice(b.price)} SOL/token</span>
                             <span className={b.status === "filled" ? "text-dust" : "text-ion"}>
                               {b.remaining === null
                                 ? `${sol(String(b.amount))} · ${vaultPage.unknownFill}`
@@ -214,7 +222,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                     );
                   })()}
                   <p className="caption mt-3">
-                    {vaultPage.poolPrice}: {Number(v.live.ladder.activePrice).toPrecision(4)} SOL/token · {ago(Math.floor(v.live.updatedAt / 1000))}
+                    {vaultPage.poolPrice}: {plainPrice(v.live.ladder.activePrice)} SOL/token · {ago(Math.floor(v.live.updatedAt / 1000))}
                   </p>
                 </div>
               )}

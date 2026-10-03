@@ -407,7 +407,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                     className="rounded-full bg-ion px-5 py-2 font-semibold text-night disabled:opacity-40"
                   >
                     {status.state === "sending"
-                      ? "Sending…"
+                      ? tokenPage.sending
                       : side === "buy"
                         ? tokenPage.buy
                         : tokenPage.sellToken}

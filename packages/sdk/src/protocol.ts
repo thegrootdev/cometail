@@ -68,6 +68,12 @@ const nullable: Record<string, readonly string[]> = {
   bid: ["order", "grossLamports"], fill: ["order", "burnedStRaw", "unfilledLamports"],
   cashout: ["depositorLamports"], unwind: ["stMint", "dbcPool", "incomeReturned"],
 };
+/** The quote the trade settled in: always present on the wire; the SOL price is null unless the quote is WSOL. */
+export function tradeQuote(d: Record<string, unknown>): void {
+  text(d.quoteMint);
+  if (typeof d.quoteDecimals !== "number" || !Number.isInteger(d.quoteDecimals) || d.quoteDecimals < 0 || d.quoteDecimals > 20) throw new ProtocolError("Invalid quoteDecimals");
+  if (d.executionPriceQuote !== null) text(d.executionPriceQuote);
+}
 /** Control frames also carry schemaVersion on the worker; discriminate by type. */
 export function isFeedEvent(frame: FeedFrame): frame is FeedEvent {
   return !["hello", "ping", "coverage", "gap"].includes(frame.type);
@@ -103,6 +109,7 @@ export function decodeFrame(value: unknown): FeedFrame {
   if (v.type === "trade") {
     if ((d.venue !== null && !["curve", "damm"].includes(String(d.venue))) || !["buy", "sell"].includes(String(d.side))) throw new ProtocolError("Invalid trade side/venue");
     if (d.executionPriceSol !== null) text(d.executionPriceSol);
+    tradeQuote(d);
   }
   if (v.type === "unwind" && d.incomeReturned !== null && !/^\d+$/.test(text(d.incomeReturned))) throw new ProtocolError("Invalid incomeReturned raw amount");
   if (v.type === "bid" && (typeof d.bins !== "number" || !Number.isSafeInteger(d.bins) || d.bins < 0)) throw new ProtocolError("Invalid bin count");

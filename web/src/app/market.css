@@ -128,8 +128,11 @@
 /* Portfolio summaries keep the dollar amount primary even inside compact metadata. */
 .portfolio-owned-link .money-pair { display: flex; margin-top: 4px; color: var(--dust); font-size: 18px; font-weight: 800; line-height: 1.3; }
 .portfolio-owned-link small > span:first-child:not(.money-pair) { display: block; }
-.money-pair .money-sol { font-size: clamp(10px, .65em, 12px); }
+.money-pair .money-sol { font-size: clamp(11px, .7em, 12px); }
 .money-unavailable { font-size: 13px; }
 
 .atlas-stats .stat-value { white-space: normal; }
 .money-quote { overflow-wrap: anywhere; }
+
+/* Small print stays readable: nothing under 11px, and code never widens the page. */
+.market-trade-table small, .market-footnote, .market-trade-table td small { font-size: max(11px, .72em); }

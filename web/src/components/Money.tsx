@@ -15,12 +15,15 @@ export function Money({ lamports, sol, price = false, secondary = true, quote, q
   const rate = quoteRate ?? (asset.mint === WSOL ? solRate : { value: null, source: null, at: null, status: "missing" as const });
   const amount = lamports !== undefined ? asset.decimals === null ? null : rawUnits(lamports === null ? null : String(lamports), asset.decimals) : sol;
   const usd = usdValue(amount, rate);
-  const quoteText = amount === null || amount === undefined ? "—" : `${marketNumber(amount, price ? 9 : 5)} ${asset.symbol}`;
+  const quoteNumber = amount === null || amount === undefined ? "—" : marketNumber(amount, price ? 9 : 5);
+  const quoteText = amount === null || amount === undefined ? "—" : `${quoteNumber} ${asset.symbol}`;
+  // Without a USD rate the quote amount takes the headline slot and its unit the small line, so a
+  // long price never wraps inside the number; the rate's status reads small as well.
   return <span className="money-pair" data-price-status={rate.status}>
     <span className={usd === null ? "money-quote" : "money-usd"}>
-      {usd === null ? quoteText : formatUsd(usd, price)}
+      {usd === null ? quoteNumber : formatUsd(usd, price)}
     </span>
-    {secondary && <small className="money-sol">{usd !== null ? quoteText : rate.status === "stale" ? money.stale : money.missing}</small>}
+    {secondary && <small className="money-sol">{usd !== null ? quoteText : amount === null || amount === undefined ? (rate.status === "stale" ? money.stale : money.missing) : `${asset.symbol} · ${rate.status === "stale" ? money.stale : money.missing}`}</small>}
   </span>;
 }
 export function PriceReference() {

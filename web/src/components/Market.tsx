@@ -15,6 +15,8 @@ import { short } from "@/lib/format";
 import { MarketEnvelope, MarketToken, TradeList, TokenList, useMarket, rawUnits, marketNumber, marketTime } from "@/lib/market";
 import { DataState, TokenAvatar } from "./Experience";
 
+/** The API's definitions start lowercase; a footnote starts a sentence. */
+const sentence = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 function Snapshot({ data, error = false, onRetry }: { data: MarketEnvelope<unknown> | null; error?: boolean; onRetry: () => void }) {
   const stale = error || data?.coverage.status === "stale";
   return <div className={`market-snapshot ${stale ? "market-stale" : ""}`} role="status">
@@ -46,7 +48,7 @@ function TokenStats({ token, observedAt }: { token: MarketToken; observedAt: num
   const holders = token.holders?.status === "unavailable" ? null : token.holders?.count;
   return <dl className="market-stats">
     <Metric label={copy.price} value={<Money sol={price} price quote={asset} quoteRate={rate} />} exact={token.priceQuote} note={token.priceStatus === "stale" ? copy.stale : undefined} />
-    <Metric label={copy.fdv} value={rate.status === "fresh" ? formatUsd(fdv) : rate.status === "stale" ? money.stale : money.missing} />
+    <Metric label={copy.fdv} value={rate.status === "fresh" ? formatUsd(fdv) : <span className="money-pair"><span className="money-quote">—</span><small className="money-sol">{rate.status === "stale" ? money.stale : money.missing}</small></span>} />
     <Metric label={copy.volume} value={<Money quote={asset} quoteRate={rate} lamports={token.volumeStatus === "stale" ? null : token.volume24hLamports} />} note={!token.complete || token.volumeStatus === "partial" ? copy.partial : token.volumeStatus === "stale" ? copy.stale : undefined} />
     <Metric label={copy.holders} value={marketNumber(holders, 0)} note={token.holders?.status === "stale" ? copy.stale : token.holders?.status === "partial" ? copy.partial : undefined} />
     <Metric label={money.liquidity} value={<Money quote={asset} quoteRate={rate} lamports={token.liquidityBasis ? token.liquidityLamports ?? null : null} />} note={token.liquidityBasis === "curve-quote-reserve" ? money.curveLiquidity : token.liquidityBasis === "damm-quote-x2" ? money.poolLiquidity : money.unknownLiquidity} />
@@ -107,7 +109,7 @@ export function TokenMarket({ mint, onChain = false }: { mint: string; onChain?:
     <div className="market-detail-heading"><h2>{copy.overview}</h2>{data && <span className="market-network">{data.cluster}</span>}</div>
     {!data && notIndexed && onChain ? <DataState compact kind="loading" title={copy.notIndexed} body={copy.notIndexedBody} /> : !data ? <DataState compact kind={error ? "error" : "loading"} title={error ? copy.failed : copy.loading} body={error ? copy.failedBody : copy.loadingBody} onRetry={error ? reload : undefined} /> : <>
       <Snapshot data={data} error={error} onRetry={reload} /><TokenStats token={data.data} observedAt={error ? 0 : data.generatedAtMs} />
-      <p className="market-footnote">{data.data.holders?.definition || copy.sourceNote} {data.data.holders?.countedAtMs && <>{copy.snapshot} {marketTime(data.data.holders.countedAtMs)}.</>}</p>
+      <p className="market-footnote">{sentence(data.data.holders?.definition || copy.sourceNote)} {data.data.holders?.countedAtMs && <>{copy.snapshot} {marketTime(data.data.holders.countedAtMs)}.</>}</p>
       <Valuation />
     </>}
   </section>;
