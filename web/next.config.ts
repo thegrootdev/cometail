@@ -9,10 +9,8 @@ const nextConfig: NextConfig = {
   // deployment ships the native image library and its platform packages
   outputFileTracingRoot: path.join(__dirname, ".."),
   serverExternalPackages: ["sharp"],
-  // the library loads its platform package at run time, which tracing cannot see: name it
-  outputFileTracingIncludes: {
-    "/api/metadata": ["../node_modules/.pnpm/@img+sharp-*/**/*", "../node_modules/.pnpm/sharp@*/**/*"],
-  },
+  // the native image library is optional at run time (the upload route accepts the browser's own
+  // crop without it), so no tracing includes reach outside the project root
   // one host: anything that arrives on www goes to the same path on the apex with a 308, pages
   // and API routes alike (config redirects run before the file system, so /api is covered).
   // The query string is carried over. Vercel's own apex -> www redirect must be off, or the
