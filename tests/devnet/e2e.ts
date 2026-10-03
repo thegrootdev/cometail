@@ -51,11 +51,12 @@ async function finish(a: { connection: Connection; chain: Chain; client: VaultCl
   const bidIds = (order?.bins ?? []).map((b) => b.id);
   const lowest = Math.min(...bidIds, before.activeId);
   const touched = Array.from({ length: before.activeId - lowest + 2 }, (_, i) => lowest - 1 + i);
-  // sell enough stream token to cross the upper bins and part of the lowest one: 60% of the
-  // ladder's WSOL at the current bin price (1.01^bin lamports per raw unit); selling past the
-  // ladder would make DLMM look for liquidity beyond its internal bitmap
+  // sell enough stream token to cross the upper bins and part of the lowest one: 92% of the
+  // ladder's WSOL at the current bin price (1.01^bin lamports per raw unit); the keeper's ladder
+  // front-loads its nearest bid, so less than that fills only the first bin without crossing it;
+  // selling past the ladder would make DLMM look for liquidity beyond its internal bitmap
   const ladderWsol = (order?.bins ?? []).reduce((acc, b) => acc + b.amount, 0n);
-  const amountIn = new BN(Math.floor((Number(ladderWsol) * 0.6) / Math.pow(1.01, before.activeId)).toString());
+  const amountIn = new BN(Math.floor((Number(ladderWsol) * 0.92) / Math.pow(1.01, before.activeId)).toString());
   await send(connection, [await dlmmSwapIx(connection, { pair: pair.pair, user: buyer.publicKey, amountIn, binIds: touched })], [buyer], { cu: 800_000, label: "buyer sells stream tokens into the pair" });
   const after = await dlmmPair(connection, pair.pair);
   step("sell into the ladder", { activeBefore: before.activeId, activeAfter: after.activeId, bids: bidIds });
@@ -174,11 +175,22 @@ describe("devnet end-to-end", () => {
     const keeperSt = ata(stMint.publicKey, keeper.publicKey);
     await send(connection, [ataIx(buyer.publicKey, stMint.publicKey, keeper.publicKey), createTransferInstruction(ata(stMint.publicKey, buyer.publicKey), keeperSt, buyer.publicKey, BigInt(1_000_000))], [buyer], { label: "buyer hands the keeper a little stream token" });
     await send(connection, wrapSolIxs(keeper.publicKey, new BN(50_000_000)), [keeper], { label: "keeper wraps 0.05 SOL" });
+    // the keeper creates and registers the pair itself on its first Live pass; this step only
+    // fills in whatever it left out (an older keeper, or a pass that stopped early)
     const pair = await dlmm.initPairIx({ x: stMint.publicKey, y: NATIVE_MINT, funder: keeper.publicKey, userTokenX: keeperSt, userTokenY: ata(NATIVE_MINT, keeper.publicKey), binStep: 100, baseFactor: 1000, activeId });
-    await send(connection, [pair.ix], [keeper], { cu: 400_000, label: "DLMM pair" });
-    const arrays = [...new Set([activeId - 25, activeId, activeId + 25].map((b) => Math.floor(b / 70)))];
-    for (const i of arrays) await send(connection, [await dlmm.initBinArrayIx(pair.pair, i, keeper.publicKey)], [keeper], { cu: 1_400_000, label: `bin array ${i}` });
-    await send(connection, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: pair.pair })], [keeper], { label: "register_pair" });
+    if (await connection.getAccountInfo(pair.pair)) log("DLMM pair exists (keeper-made)", { pair: pair.pair.toBase58() });
+    else await send(connection, [pair.ix], [keeper], { cu: 400_000, label: "DLMM pair" });
+    const liveActive = (await dlmmPair(connection, pair.pair)).activeId as number;
+    const arrays = [...new Set([liveActive - 25, liveActive, liveActive + 25].map((b) => Math.floor(b / 70)))];
+    for (const i of arrays) {
+      const ix = await dlmm.initBinArrayIx(pair.pair, i, keeper.publicKey);
+      const addr = ix.keys.find((k) => k.isWritable && !k.isSigner)?.pubkey;
+      if (addr && (await connection.getAccountInfo(addr))) continue;
+      await send(connection, [ix], [keeper], { cu: 1_400_000, label: `bin array ${i}` });
+    }
+    const vNow = client.decodeVault(Buffer.from((await connection.getAccountInfo(cv.vault))!.data));
+    if (vNow.dlmmPair.equals(pair.pair)) log("register_pair done by the keeper");
+    else await send(connection, [await client.registerPair({ vault: cv.vault, signer: keeper.publicKey, lbPair: pair.pair })], [keeper], { label: "register_pair" });
     const pairState = await dlmmPair(connection, pair.pair);
     step("pair", { pair: pair.pair.toBase58(), activeId, stIsX: pairState.tokenXMint.equals(stMint.publicKey), arrays });
 

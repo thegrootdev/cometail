@@ -57,7 +57,7 @@ export function UnwindActions({ vault, v, streams, onChange }: { vault: string; 
   return (
     <Card title={copy.title} className="mt-6 unwind-card">
       {progress === null ? <p>{copy.checking}</p> : progress !== MigrationProgress.PreBondingCurve ? <p>{copy.graduatedInstead}</p> : ready ? <p>{copy.bodyReady}</p> : <p>{copy.bodyWaiting} <strong>{when}</strong>.</p>}
-      <p className="caption mt-2">{copy.whatHappens}</p>
+      {belowThreshold && <p className="caption mt-2">{copy.whatHappens}</p>}
       {ready && status.state !== "done" && (
         <button type="button" className="button button-secondary mt-4" onClick={unwind} disabled={status.state === "sending"}>
           {status.state === "sending" ? "Sending…" : copy.action}

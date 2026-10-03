@@ -1,6 +1,6 @@
 // Async counterparts of the LiteSVM harness builders, for a real cluster: every account the
 // Meteora instructions need is derived, so a step needs at most one read.
-import { BN } from "@coral-xyz/anchor";
+import { BN, utils as anchorUtils } from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY, Transaction, TransactionInstruction, ComputeBudgetProgram, sendAndConfirmTransaction } from "@solana/web3.js";
 import { AccountLayout, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { deriveDammV2EventAuthority, deriveDammV2MigrationMetadataAddress, deriveDammV2PoolAddress, deriveDammV2PoolAuthority, deriveDammV2TokenVaultAddress, derivePositionAddress, derivePositionNftAccount, buildCurveWithMarketCap } from "@meteora-ag/dynamic-bonding-curve-sdk";
@@ -20,16 +20,36 @@ export async function send(connection: Connection, ixs: TransactionInstruction[]
   if (opts.cu) tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: opts.cu }));
   tx.add(...ixs);
   tx.feePayer = signers[0].publicKey;
+  // the signature of every attempt is kept: a transaction that lands after its confirmation timed
+  // out is reported as landed, never re-sent (a re-send would fail on the accounts it created)
+  const sent: string[] = [];
+  const landed = async (): Promise<string | null> => {
+    if (!sent.length) return null;
+    const statuses = (await connection.getSignatureStatuses(sent)).value;
+    for (let i = 0; i < sent.length; i++) { const st = statuses[i]; if (st && !st.err && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return sent[i]; }
+    return null;
+  };
   let last: unknown;
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
-      const sig = await sendAndConfirmTransaction(connection, tx, signers, { commitment: "confirmed", skipPreflight: false });
-      log(opts.label ?? "tx", { signature: sig });
+      const latest = await connection.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = latest.blockhash;
+      tx.lastValidBlockHeight = latest.lastValidBlockHeight;
+      tx.signatures = [];
+      tx.sign(...signers);
+      const sig = anchorUtils.bytes.bs58.encode(tx.signature!);
+      sent.push(sig);
+      await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 2 });
+      const res = await connection.confirmTransaction({ signature: sig, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, "confirmed");
+      if (res.value.err) throw new Error(`transaction ${sig} failed: ${JSON.stringify(res.value.err)}`);
+      log(opts.label ?? "tx", { signature: sig, attempt });
       return sig;
     } catch (e: any) {
       last = e;
       const m = String(e?.message ?? e);
-      if (/Blockhash not found|429|Too Many|timed out|block height exceeded/i.test(m) && attempt < 4) { await new Promise((r) => setTimeout(r, 2500 * attempt)); tx.recentBlockhash = undefined; continue; }
+      const already = await landed();
+      if (already) { log(opts.label ?? "tx", { signature: already, note: "landed after the confirmation timed out" }); return already; }
+      if (/Blockhash not found|429|Too Many|timed out|block height exceeded|already in use|AlreadyProcessed/i.test(m) && attempt < 4) { await new Promise((r) => setTimeout(r, 2500 * attempt)); continue; }
       throw new Error(`${opts.label ?? "tx"} failed: ${m}\n${(e?.logs ?? []).join("\n")}`);
     }
   }
