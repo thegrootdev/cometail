@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Money, PriceReference } from "./Money";
 import { CopyAddress } from "./CopyAddress";
+import { formatAmount } from "@/lib/amounts";
 import { TokenHeading } from "./TokenHeading";
 import { SocialLinks } from "./SocialLinks";
 import { useSolUsd } from "@/lib/prices";
@@ -103,12 +104,12 @@ export function TokenMarket({ mint, onChain = false }: { mint: string; onChain?:
     </>}
   </section>;
 }
-export function TokenTrades({ mint, onChain = false, decimals }: { mint: string; onChain?: boolean; decimals: number }) {
+export function TokenTrades({ mint, onChain = false, decimals, symbol = null }: { mint: string; onChain?: boolean; decimals: number; symbol?: string | null }) {
   const [cursor, setCursor] = useState<string | null>(null);
   const path = `/api/tokens/${encodeURIComponent(mint)}/trades?${new URLSearchParams({ limit: "12", ...(cursor ? { cursor } : {}) })}`;
-  return <section className="market-trades" aria-labelledby="recent-trades-title"><h2 id="recent-trades-title">{copy.trades}</h2><p>{copy.tradesBody}</p><TradeResults key={path} path={path} onChain={onChain} decimals={decimals} cursor={cursor} onCursor={setCursor} /></section>;
+  return <section className="market-trades" aria-labelledby="recent-trades-title"><h2 id="recent-trades-title">{copy.trades}</h2><p>{copy.tradesBody}</p><TradeResults key={path} path={path} onChain={onChain} decimals={decimals} symbol={symbol} cursor={cursor} onCursor={setCursor} /></section>;
 }
-function TradeResults({ path, decimals, cursor, onCursor, onChain = false }: { path: string; decimals: number; cursor: string | null; onCursor: (c: string | null) => void; onChain?: boolean }) {
+function TradeResults({ path, decimals, cursor, onCursor, onChain = false, symbol = null }: { path: string; decimals: number; cursor: string | null; onCursor: (c: string | null) => void; onChain?: boolean; symbol?: string | null }) {
   const { data, error, notIndexed, reload } = useMarket<TradeList>(path);
   const [shown, setShown] = useState<MarketEnvelope<TradeList> | null>(null);
   const [fresh, setFresh] = useState<string[]>([]);
@@ -126,7 +127,7 @@ function TradeResults({ path, decimals, cursor, onCursor, onChain = false }: { p
     {view.coverage.status !== "complete" && <p className="market-warning">{copy.historyPending}</p>}
     {trades.length ? <div className="market-trade-scroll"><table className="market-trade-table"><thead><tr><th>{copy.side}</th><th>{copy.amount}</th><th>{copy.quote}</th><th>{copy.venue}</th><th>{copy.when}</th><th>{copy.receipt}</th></tr></thead><tbody>{trades.map(t => <tr key={t.id} className={fresh.includes(t.id) ? "market-new-trade" : undefined}>
       <td data-label={copy.side}><span className={`trade-side trade-${t.side}`}>{t.side === "buy" ? copy.buy : copy.sell}</span></td>
-      <td data-label={copy.amount} title={rawUnits(t.baseAmountRaw, decimals) ?? undefined}>{marketNumber(rawUnits(t.baseAmountRaw, decimals), 3)}</td>
+      <td data-label={copy.amount} title={rawUnits(t.baseAmountRaw, decimals) ?? undefined}>{/^\d+$/.test(t.baseAmountRaw) ? formatAmount(BigInt(t.baseAmountRaw), decimals, { ticker: symbol ?? undefined, maxFraction: 2 }) : "—"}</td>
       <td data-label={copy.quote} title={rawUnits(t.quoteAmountLamports, 9) ?? undefined}><Money lamports={t.quoteAmountLamports} /></td>
       <td data-label={copy.venue}>{t.venue === "curve" ? copy.curve : copy.pool}</td><td data-label={copy.when}>{marketTime(t.blockTimeSec ? t.blockTimeSec * 1000 : null)}</td>
       <td data-label={copy.receipt}><a href={EXPLORER("tx", t.signature)} target="_blank" rel="noopener noreferrer" aria-label={`${copy.receipt} ${t.signature}`}>{short(t.signature)} ↗</a><small>{t.traderKind === "authority" ? `${copy.trader}: ${t.trader ? short(t.trader) : "—"}` : t.traderKind === "feePayer" ? copy.payer : copy.unknownTrader}</small></td>

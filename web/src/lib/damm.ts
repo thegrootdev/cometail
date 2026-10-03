@@ -19,6 +19,16 @@ export async function dammSwapTx(connection: Connection, pool: PublicKey, payer:
   return { tx, minOut: quote.minSwapOutAmount, out: quote.swapOutAmount };
 }
 
+/** The quote alone, for the live preview while an amount is typed; the trade quotes again when sent. */
+export async function dammQuote(connection: Connection, pool: PublicKey, inputTokenMint: PublicKey, amountIn: BN, decimals: { a: number; b: number }, slippagePct = 1): Promise<{ out: BN; minOut: BN }> {
+  const amm = cpAmm(connection);
+  const poolState: any = await amm.fetchPoolState(pool);
+  const slot = await connection.getSlot();
+  const time = await connection.getBlockTime(slot);
+  const quote: any = amm.getQuote({ inAmount: amountIn, inputTokenMint, slippage: slippagePct, poolState, currentTime: time ?? Math.floor(Date.now() / 1000), currentSlot: slot, tokenADecimal: decimals.a, tokenBDecimal: decimals.b });
+  return { out: quote.swapOutAmount, minOut: quote.minSwapOutAmount };
+}
+
 /** Claimable fees of a position right now. */
 export async function pendingFees(connection: Connection, pool: PublicKey, position: PublicKey): Promise<{ feeA: BN; feeB: BN } | null> {
   const amm = cpAmm(connection);

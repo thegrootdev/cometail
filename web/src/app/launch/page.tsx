@@ -13,10 +13,13 @@ import {
   IdentityPreview,
   type TokenImage,
 } from "@/components/TokenIdentity";
-import { plainLaunch, experience as c } from "@/content/cometail";
+import { plainLaunch, amounts, experience as c } from "@/content/cometail";
 import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
 import { SocialFields } from "@/components/SocialLinks";
+import { AmountInput } from "@/components/AmountInput";
+import { useSolBalance } from "@/lib/balances";
+import { formatAmount, inputValue, parseAmount, spendable } from "@/lib/amounts";
 import { cleanLinks, linksValid, type TokenLinks } from "@/lib/token-display";
 import { useTx , useStorageReady } from "@/lib/hooks";
 import { EXPLORER } from "@/lib/addresses";
@@ -36,14 +39,22 @@ export default function LaunchPage() {
   const [error, setError] = useState<string | null>(null);
   const storage = useStorageReady();
   const blocked = storage.checked && !storage.ready;
+  const solBalance = useSolBalance(publicKey);
+  // the typed first buy as lamports: 0n when empty, null when malformed
+  const firstBuyRaw = firstBuy.trim() ? parseAmount(firstBuy, 9) : 0n;
+  const need = (firstBuyRaw ?? 0n) + LAUNCH_OVERHEAD_LAMPORTS;
+  // the shortfall is said at the field, before anything is signed
+  const shortfall = publicKey && firstBuyRaw !== null && solBalance.lamports !== null && solBalance.lamports < need ? insufficientSol(need, solBalance.lamports) : null;
+  const quickBuys = [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} SOL`, value: v })), { label: amounts.max, value: solBalance.lamports === null ? null : inputValue(spendable(solBalance.lamports, LAUNCH_OVERHEAD_LAMPORTS) ?? 0n, 9) }];
   const valid =
     linksValid(links) &&
+    firstBuyRaw !== null &&
+    !shortfall &&
     !!image &&
     new TextEncoder().encode(name.trim()).length > 0 &&
     new TextEncoder().encode(name.trim()).length <= 32 &&
     new TextEncoder().encode(symbol.trim().toUpperCase()).length > 0 &&
-    new TextEncoder().encode(symbol.trim().toUpperCase()).length <= 10 &&
-    (!firstBuy || /^\d{1,9}(\.\d{1,9})?$/.test(firstBuy));
+    new TextEncoder().encode(symbol.trim().toUpperCase()).length <= 10;
   const busy = preparing || status.state === "sending";
   const submit = async () => {
     if (!valid || !image || !publicKey || busy) return;
@@ -51,10 +62,7 @@ export default function LaunchPage() {
     if (blocked) return;
     setError(null);
     try {
-      const [whole, fraction = ""] = (firstBuy || "0").split(".");
-      const lamports = firstBuy
-        ? new BN(whole).mul(new BN(1e9)).add(new BN(fraction.padEnd(9, "0")))
-        : undefined;
+      const lamports = firstBuyRaw && firstBuyRaw > 0n ? new BN(firstBuyRaw.toString()) : undefined;
       // the launch pays the first buy, the 0.01 SOL creation fee, the mint and metadata rent and the
       // network fees (about 0.035 SOL): the wallet must hold that before anything is signed
       {
@@ -85,6 +93,7 @@ export default function LaunchPage() {
         [kp],
       );
       if (sig) setMint(kp.publicKey.toBase58());
+      solBalance.reload();
     } catch (e) {
       setError(friendlyError(e, c.launchFailure));
     } finally {
@@ -137,23 +146,17 @@ export default function LaunchPage() {
               />
             </label>
             <SocialFields value={links} onChange={setLinks} />
-            <label className="field">
-              {c.firstBuy} <span className="muted">{c.optional}</span>
-              <div className="amount-input">
-                <input
-                  value={firstBuy}
-                  onChange={(e) => setFirstBuy(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="0.00"
-                />
-                <span>SOL</span>
-              </div>
-              <small>
-                {firstBuy && !/^\d{1,9}(\.\d{1,9})?$/.test(firstBuy)
-                  ? c.buyInvalid
-                  : c.firstBuyHint}
-              </small>
-            </label>
+            <AmountInput
+              label={`${c.firstBuy} · ${c.optional}`}
+              unit="SOL"
+              value={firstBuy}
+              onChange={setFirstBuy}
+              balance={!publicKey ? undefined : solBalance.lamports === null ? null : formatAmount(solBalance.lamports, 9, { ticker: "SOL" })}
+              quick={quickBuys}
+              hint={publicKey ? amounts.maxKeepsFees : c.firstBuyHint}
+              error={firstBuyRaw === null ? c.buyInvalid : shortfall}
+              disabled={busy}
+            />
           </fieldset>
           <div className="form-actions">
             {connected ? (

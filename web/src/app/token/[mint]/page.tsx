@@ -1,5 +1,10 @@
 "use client";
-import { friendlyError, insufficientSol } from "@/lib/errors";
+import { friendlyError, insufficientSol, insufficientTokens } from "@/lib/errors";
+import { AmountInput } from "@/components/AmountInput";
+import { readTokenBalance, useSolBalance, useTokenBalance } from "@/lib/balances";
+import { formatAmount, inputValue, parseAmount, share, spendable } from "@/lib/amounts";
+import { useSolUsd } from "@/lib/prices";
+import { formatUsd, usdValue } from "@/lib/usd";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
 import { SocialLinks } from "@/components/SocialLinks";
@@ -7,7 +12,7 @@ import { metadataLinks } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
-import { use, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { PublicKey } from "@solana/web3.js";
 import { useConnection } from "@solana/wallet-adapter-react";
@@ -20,7 +25,7 @@ import {
   BackToSky,
 } from "@/components/Experience";
 import { Shell, Card, Stat, ConnectWallet } from "@/components/Shell";
-import { tokenPage, experience as c, failures } from "@/content/cometail";
+import { tokenPage, amounts, experience as c, failures } from "@/content/cometail";
 import { EXPLORER } from "@/lib/addresses";
 import {
   claimCreatorFeesTx,
@@ -32,7 +37,7 @@ import {
   readMetadata,
   MigrationProgress,
 } from "@/lib/dbc";
-import { dammSwapTx } from "@/lib/damm";
+import { dammQuote, dammSwapTx } from "@/lib/damm";
 import { useLoad, useTx } from "@/lib/hooks";
 import { short, sol, units } from "@/lib/format";
 
@@ -97,7 +102,11 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const [quoting, setQuoting] = useState(false);
   const [amount, setAmount] = useState("");
   const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [quote, setQuote] = useState<string | null>(null);
+  const [quote, setQuote] = useState<{ inRaw: bigint; out: bigint; minOut: bigint; side: "buy" | "sell" } | null>(null);
+  const quoteSeq = useRef(0);
+  const rate = useSolUsd();
+  const solBalance = useSolBalance(publicKey);
+  const tokenBalance = useTokenBalance(mint, publicKey);
   const graduated = view?.progress === MigrationProgress.CreatedPool;
   const bonding = view?.progress === MigrationProgress.PreBondingCurve;
   const progressPct = view
@@ -117,62 +126,76 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     : new BN(0);
   const isCreator = !!(publicKey && view && view.creator.equals(publicKey));
   const dec = view?.decimals ?? 6;
+  const ticker = meta?.symbol || "tokens";
+  /** Lamports kept back on a buy for the network fee and the token account. */
+  const TRADE_RESERVE = 10_000_000n;
   const amountRaw = () => {
-    const n = Number(amount);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return side === "buy"
-      ? new BN(Math.round(n * 1e9))
-      : new BN(Math.round(n * 10 ** dec));
+    const raw = parseAmount(amount, side === "buy" ? 9 : dec);
+    return raw && raw > 0n ? new BN(raw.toString()) : null;
   };
+  const solWithUsd = (lamports: bigint) => {
+    const usd = usdValue(inputValue(lamports, 9), rate);
+    // small SOL amounts keep six decimals so a minimum after slippage never reads the same as the quote
+    return `${formatAmount(lamports, 9, { ticker: "SOL", maxFraction: lamports < 100_000_000n ? 6 : 4 })}${usd === null ? "" : ` · ${formatUsd(usd)}`}`;
+  };
+  const quickAmounts = side === "buy"
+    ? [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} SOL`, value: v })), { label: amounts.max, value: solBalance.lamports === null ? null : inputValue(spendable(solBalance.lamports, TRADE_RESERVE) ?? 0n, 9) }]
+    : [25, 50, 75, 100].map((p) => ({ label: `${p}%`, value: tokenBalance.raw === null ? null : inputValue(share(tokenBalance.raw, p), dec) }));
   const dammPool = view
     ? derivedDammPool(mint, view.migrationFeeOption)
     : PublicKey.default;
-  const doQuote = async () => {
-    setActionError(null);
+  // the quote follows the typed amount: a short debounce, the newest request wins, the trade
+  // quotes again when it is sent
+  useEffect(() => {
     const raw = amountRaw();
-    if (!raw) { setActionError(tokenPage.enterAmount); return; }
+    const seq = ++quoteSeq.current;
+    if (!raw || !view || (!bonding && !graduated)) { setQuote(null); setQuoting(false); return; }
     setQuoting(true);
-    try {
-      if (!view) return;
-      if (bonding) {
-        const q: any = await curveQuote(connection, view, raw, side === "sell");
-        setQuote(
-          side === "buy"
-            ? `${units(q.outputAmount, dec)} tokens`
-            : sol(q.outputAmount),
-        );
-      } else if (graduated) {
-        const r = await dammSwapTx(
-          connection,
-          dammPool,
-          publicKey ?? view.creator,
-          side === "buy" ? NATIVE_MINT : mint,
-          raw,
-          { a: dec, b: 9 },
-        );
-        setQuote(side === "buy" ? `${units(r.out, dec)} tokens` : sol(r.out));
+    const timer = setTimeout(async () => {
+      try {
+        let out: BN, minOut: BN;
+        if (bonding) {
+          const q: any = await curveQuote(connection, view, raw, side === "sell");
+          out = q.outputAmount; minOut = q.minimumAmountOut;
+        } else {
+          const q = await dammQuote(connection, dammPool, side === "buy" ? NATIVE_MINT : mint, raw, { a: dec, b: 9 });
+          out = q.out; minOut = q.minOut;
+        }
+        if (seq !== quoteSeq.current) return;
+        setQuote({ inRaw: BigInt(raw.toString()), out: BigInt(out.toString()), minOut: BigInt(minOut.toString()), side });
+        setActionError(null);
+      } catch (e) {
+        if (seq !== quoteSeq.current) return;
+        setQuote(null);
+        setActionError(friendlyError(e, failures.quoteFailed));
+      } finally {
+        if (seq === quoteSeq.current) setQuoting(false);
       }
-    } catch (e) {
-      setActionError(friendlyError(e, failures.actionFailed));
-    } finally {
-      setQuoting(false);
-    }
-  };
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amount, side, view?.quoteReserve?.toString(), view?.progress, dec, status.state === "done" ? status.signature : null]);
   const trade = async () => {
     setActionError(null);
     try {
       const raw = amountRaw();
       if (!raw) { setActionError(tokenPage.enterAmount); return; }
       if (!view || !publicKey) return;
-      // a buy needs the SOL plus network and account fees: say so before the wallet prompt
+      // a buy needs the SOL plus network and account fees, a sell needs the tokens: say so before
+      // the wallet prompt, from a fresh read
       if (side === "buy") {
-        const need = BigInt(raw.toString()) + 10_000_000n;
+        const need = BigInt(raw.toString()) + TRADE_RESERVE;
         const have = BigInt(await connection.getBalance(publicKey));
         if (have < need) { setActionError(insufficientSol(need, have)); return; }
+      } else {
+        const need = BigInt(raw.toString());
+        const have = await readTokenBalance(connection, mint, publicKey);
+        if (have < need) { setActionError(insufficientTokens(formatAmount(need, dec, { ticker }), formatAmount(have, dec, { ticker }))); return; }
       }
+      let signature: string | null = null;
       if (bonding) {
         const q: any = await curveQuote(connection, view, raw, side === "sell");
-        await run(
+        signature = await run(
           () =>
             curveSwapTx(
               connection,
@@ -186,7 +209,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           300_000,
         );
       } else if (graduated) {
-        await run(
+        signature = await run(
           () =>
             dammSwapTx(
               connection,
@@ -200,7 +223,10 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           300_000,
         );
       }
+      if (signature) setAmount("");
       reload();
+      solBalance.reload();
+      tokenBalance.reload();
     } catch (e) {
       setActionError(friendlyError(e, failures.actionFailed));
     }
@@ -330,26 +356,31 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                     </button>
                   ))}
                 </div>
-                <label className="mt-4 block text-sm">
-                  {side === "buy" ? "SOL in" : "Tokens in"}
-                  <input
-                    value={amount}
-                    onChange={(e) => {
-                      setAmount(e.target.value);
-                      setQuote(null);
-                    }}
-                    inputMode="decimal"
-                    className="mt-1 w-full rounded-lg border border-starlight/15 bg-night px-3 py-2"
-                  />
-                </label>
+                <AmountInput
+                  label={side === "buy" ? tokenPage.solIn : tokenPage.tokensIn}
+                  unit={side === "buy" ? "SOL" : ticker}
+                  value={amount}
+                  onChange={setAmount}
+                  balance={!publicKey ? undefined : side === "buy" ? (solBalance.lamports === null ? null : formatAmount(solBalance.lamports, 9, { ticker: "SOL" })) : (tokenBalance.raw === null ? null : formatAmount(tokenBalance.raw, dec, { ticker }))}
+                  quick={quickAmounts}
+                  hint={side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined}
+                  disabled={status.state === "sending"}
+                />
+                {(quote || quoting) && (
+                  <div className="quote-card" aria-busy={quoting} aria-live="polite">
+                    {quote ? (
+                      <>
+                        <div className="quote-row"><span>{quote.side === "buy" ? tokenPage.youPay : tokenPage.youSell}</span><strong>{quote.side === "buy" ? solWithUsd(quote.inRaw) : formatAmount(quote.inRaw, dec, { ticker })}</strong></div>
+                        <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.side === "buy" ? formatAmount(quote.out, dec, { ticker }) : solWithUsd(quote.out)}</strong></div>
+                        <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{quote.side === "buy" ? formatAmount(quote.minOut, dec, { ticker }) : solWithUsd(quote.minOut)}</strong></div>
+                        <p className="quote-note">{tokenPage.quoteNote}</p>
+                      </>
+                    ) : (
+                      <p className="quote-note">{tokenPage.quoting}</p>
+                    )}
+                  </div>
+                )}
                 <div className="mt-3 flex gap-3">
-                  <button
-                    disabled={quoting}
-                    onClick={doQuote}
-                    className="rounded-full border border-starlight/30 px-4 py-2 text-sm"
-                  >
-                    {quoting ? "Quoting…" : "Quote"}
-                  </button>
                   <button
                     onClick={trade}
                     disabled={!publicKey || status.state === "sending"}
@@ -371,9 +402,6 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                   <p role="alert" className="form-error">
                     {actionError}
                   </p>
-                )}
-                {quote && (
-                  <p className="mt-3 text-sm text-starlight/80">≈ {quote}</p>
                 )}
                 {status.state === "error" && (
                   <p className="mt-3 text-sm text-red-300">{status.message}</p>
@@ -399,7 +427,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
             )}
           </Card>
         </div>
-        <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} />
+        <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} />
         </>
       )}
     </Shell>

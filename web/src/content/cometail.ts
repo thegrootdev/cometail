@@ -78,6 +78,25 @@ export const tokenPage = {
   buy: "Buy",
   sellToken: "Sell",
   enterAmount: "Enter an amount to get a quote.",
+  solIn: "SOL in",
+  tokensIn: "Tokens in",
+  quoting: "Getting a quote…",
+  youPay: "You pay",
+  youSell: "You sell",
+  youReceive: "You receive about",
+  minimum: "Minimum after 1% slippage",
+  quoteNote: "Quotes follow the pool as you type; the trade sends with the minimum shown.",
+  confirmed: "Confirmed",
+  refreshing: "Updating balances…",
+} as const;
+
+export const amounts = {
+  balance: "Balance",
+  balanceUnknown: "…",
+  quick: "Quick amounts",
+  max: "MAX",
+  maxKeepsFees: "MAX keeps enough SOL for the launch fee and network fees.",
+  maxKeepsTradeFees: "MAX keeps 0.01 SOL for network and account fees.",
 } as const;
 
 export const vaultPage = {
@@ -285,7 +304,7 @@ export const experience = {
   previewNote: "Your image and identity, as they’ll appear in the atlas.",
   namePlaceholder: "Your comet’s name",
   symbolPlaceholder: "COMET",
-  firstBuy: "First buy · SOL",
+  firstBuy: "First buy",
   optional: "Optional",
   buyInvalid: "Use a non-negative SOL amount with up to 9 decimal places.",
   identityLimit:

@@ -33,3 +33,8 @@ export function insufficientSol(needLamports: bigint, haveLamports: bigint): str
   const short = needLamports > haveLamports ? needLamports - haveLamports : 0n;
   return `This needs about ${solText(needLamports)} SOL including fees, and this wallet holds ${solText(haveLamports)} SOL. Add at least ${solTextUp(short)} SOL and try again.`;
 }
+
+/** The sentence shown before a wallet prompt when the wallet holds fewer tokens than the sell. */
+export function insufficientTokens(needText: string, haveText: string): string {
+  return `This sell needs ${needText}, and this wallet holds ${haveText}. Lower the amount and try again.`;
+}
