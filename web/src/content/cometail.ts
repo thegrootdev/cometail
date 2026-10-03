@@ -37,6 +37,9 @@ export const failures = {
     "The network didn’t confirm in time. Check your wallet’s activity before trying again, so you don’t send it twice.",
   busy: "The network is busy right now. Wait a moment and try again.",
   quoteFailed: "That amount can’t be filled at the moment. Try a smaller amount.",
+  unwindTooEarly: "The thirty days since launch have not passed yet. Nothing was sent.",
+  unwindGraduated: "The curve reached its threshold, so this vault graduates instead of unwinding. Nothing was sent.",
+  registerPositionFirst: "This stream's pool has migrated, and its creator position must be registered on the stream before it can leave. Use \"Register the migrated position\" first, then withdraw. Nothing was sent.",
   txFailed: "The transaction didn’t go through. Nothing was charged beyond network fees. Try again, and tell us on X if it keeps failing.",
   actionFailed: "That didn’t work. Try again in a moment.",
 } as const;
@@ -89,6 +92,7 @@ export const tokenPage = {
   quoteStale: "The quote changed while you were trading. Review the new minimum and try again.",
   confirmed: "Confirmed",
   refreshing: "Updating balances…",
+  streamUnwindNote: "This is a stream token. If its curve is still below its threshold thirty days after launch, the seller can close the vault behind it and take the fee streams back. The token keeps trading on this curve either way; holders can sell back here.",
 } as const;
 
 export const amounts = {
@@ -125,7 +129,23 @@ export const vaultPage = {
   authority:
     "The vault program is upgradeable by the protocol owner and that is not planned to change. Meteora's DBC and DAMM v2 programs are upgradeable by Meteora, and a Meteora operator can change how much of a compounding pool's fees are claimable. Every number on this page depends on those facts.",
   noGraduation:
-    "If this stream token never graduates, the launch is still final: the seller's cash-out never happens and the buyback ladder never starts. The deposited streams keep accruing to the vault.",
+    "If this stream token's curve never reaches its threshold, the seller is not stuck. Thirty days after launch, while the curve is still below its threshold, the seller can unwind: the streams go back to the seller's wallet with any income the vault collected from them, and the vault closes for good. The stream token keeps trading on its curve, so holders can sell back; a later graduation changes nothing for a closed vault.",
+  unwind: {
+    title: "Unwind this vault",
+    bodyWaiting: "If the curve is still below its threshold by then, you can unwind from",
+    bodyReady: "Thirty days have passed and the curve is still below its threshold. You can close this vault for good and take your streams back.",
+    whatHappens: "Your streams return to your wallet, with the income the vault collected from them. The stream token keeps trading on its curve; holders can sell back. This cannot be undone.",
+    action: "Unwind and take my streams back",
+    done: "Unwound. Withdraw each stream below to move it back to your wallet.",
+    unwound: "This vault was unwound by its seller. Its streams have gone or are going back to the seller; nothing runs here any more.",
+    graduatedInstead: "The curve reached its threshold, so this vault graduates instead of unwinding.",
+    tooEarly: "The thirty days since launch have not passed yet.",
+    checking: "Reading the curve…",
+    incomeReturned: "Returned to the seller at unwind",
+    registerPosition: "Register the migrated position",
+    registerPositionWhy: "This stream's pool has migrated. Its creator position is registered on the stream first, then both leave together.",
+    noPositionYet: "The migrated position was not found on the vault yet. Try again in a moment.",
+  },
 } as const;
 
 export const wizard = {
@@ -151,7 +171,7 @@ export const wizard = {
   ],
   withdrawLock:
     "Streams can be withdrawn until you launch. A bonding-curve stream that has completed its curve but not migrated yet cannot be moved until it migrates.",
-  irreversible: "Launching is final. After launch, streams stay in the vault.",
+  irreversible: "Launching is final while the curve is live. If the curve is still below its threshold thirty days after launch, you can unwind: your streams come back with the income the vault collected, and the vault closes for good.",
   connect: "Connect the wallet that owns the streams.",
   step1: "1. Your streams",
   step2: "2. Your share at graduation",

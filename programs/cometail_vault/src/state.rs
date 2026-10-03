@@ -23,6 +23,9 @@ pub enum VaultStatus {
     Open,
     Launched,
     Live,
+    /// Closed for good by the depositor after the unwind window passed without graduation:
+    /// deposited streams go back through `withdraw_stream`, nothing else runs again.
+    Unwound,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default, Debug, InitSpace)]

@@ -195,7 +195,7 @@ pub fn deposit_position_split(ctx: Context<DepositPositionSplit>, permanent_lock
 }
 
 // ---------------------------------------------------------------------------------------
-// withdraw_stream: Open only. Rights go back through DBC; an NFT in cp-amm's PDA account
+// withdraw_stream: Open or Unwound (the vault's own rights leave inside `unwind`). Rights go back through DBC; an NFT in cp-amm's PDA account
 // goes back by handing the account's authority to the depositor, any other vault-owned
 // account by a token transfer; fees untouched. The Stream and every StreamIndex it owns
 // close to the depositor, so the sources can enter a vault again.
@@ -237,7 +237,8 @@ pub struct WithdrawStream<'info> {
 }
 
 pub fn withdraw_stream(ctx: Context<WithdrawStream>) -> Result<()> {
-    require!(ctx.accounts.vault.status == VaultStatus::Open, VaultError::WrongStatus);
+    // before launch, or after an unwind: both hand every stream back to the depositor
+    require!(ctx.accounts.vault.status == VaultStatus::Open || ctx.accounts.vault.status == VaultStatus::Unwound, VaultError::WrongStatus);
     require_keys_eq!(ctx.accounts.vault.depositor, ctx.accounts.depositor.key(), VaultError::NotDepositor);
     let s = &ctx.accounts.stream;
     let expected_index_key = if s.kind == StreamKind::DbcCreatorRights { s.pool } else { s.position };
@@ -249,6 +250,17 @@ pub fn withdraw_stream(ctx: Context<WithdrawStream>) -> Result<()> {
         let config = ctx.accounts.dbc_config.as_ref().ok_or(VaultError::AccountMismatch)?;
         require_keys_eq!(pool.key(), s.pool, VaultError::AccountMismatch);
         require_keys_eq!(config.key(), s.config, VaultError::AccountMismatch);
+        // a migrated pool hands its creator position to the vault: that position must be
+        // registered on this stream before the rights leave, or the NFT would stay behind
+        if s.position == Pubkey::default() {
+            require_keys_eq!(*pool.owner, dbc::ID, VaultError::ForeignAccount);
+            let data = pool.try_borrow_data()?;
+            let disc = <dbc::accounts::VirtualPool as anchor_lang::Discriminator>::DISCRIMINATOR;
+            let size = core::mem::size_of::<dbc::types::PoolState>();
+            require!(data.len() >= 8 + size && data[..8] == *disc, VaultError::ForeignAccount);
+            let p: &dbc::types::PoolState = bytemuck::from_bytes(&data[8..8 + size]);
+            require!(p.migration_progress != DBC_PROGRESS_CREATED_POOL, VaultError::RegisterPositionFirst);
+        }
         dbc::cpi::transfer_pool_creator(CpiContext::new_with_signer(ctx.accounts.dbc_program.key(), dbc::cpi::accounts::TransferPoolCreator {
             virtual_pool: pool.to_account_info(), config: config.to_account_info(), creator: ctx.accounts.vault.to_account_info(),
             new_creator: ctx.accounts.depositor.to_account_info(), event_authority: ctx.accounts.dbc_event_authority.to_account_info(), program: ctx.accounts.dbc_program.to_account_info(),

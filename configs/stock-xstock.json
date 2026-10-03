@@ -1,9 +1,9 @@
 {
-  "name": "plain",
+  "name": "stock-xstock",
   "token": {
     "tokenType": 0,
     "tokenBaseDecimal": 6,
-    "tokenQuoteDecimal": 9,
+    "tokenQuoteDecimal": 8,
     "tokenAuthorityOption": 1,
     "totalTokenSupply": 1000000000,
     "leftover": 0
@@ -52,9 +52,15 @@
     "cliffDurationFromMigrationTime": 0
   },
   "activationType": 0,
-  "initialMarketCap": 20,
-  "migrationMarketCap": 120,
+  "initialMarketCap": 4,
+  "migrationMarketCap": 24,
   "curve": {
     "mode": "marketCap"
+  },
+  "quote": {
+    "kind": "stock",
+    "mintEnv": "COMETAIL_QUOTE_STOCK",
+    "decimals": 8,
+    "tokenBadge": true
   }
 }

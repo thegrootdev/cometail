@@ -3,7 +3,7 @@ import { friendlyError } from "@/lib/errors";
 import { StorageNotice } from "./Experience";
 // An Open vault seen by its depositor: withdraw any stream, or finish the launch. This is the
 // resume path for a wizard that stopped between transactions.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import {
   TOKEN_2022_PROGRAM_ID,
@@ -22,10 +22,13 @@ import { uploadIdentity } from "@/lib/upload";
 import {
   openVault,
   product,
+  vaultPage,
   wizard,
   experience as c,
 } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
+import { loadPool, MigrationProgress } from "@/lib/dbc";
+import { cpAmm } from "@/lib/damm";
 import { useTx , useStorageReady } from "@/lib/hooks";
 import { short } from "@/lib/format";
 
@@ -76,8 +79,42 @@ export function OpenVaultActions({
   const isDepositor = !!(
     publicKey && String(v.depositor) === publicKey.toBase58()
   );
+  // a DBC-rights stream whose pool migrated before its creator position was registered cannot
+  // leave yet: the position is registered first, then the withdrawal takes both
+  const [needsRegistration, setNeedsRegistration] = useState<Record<number, boolean>>({});
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const next: Record<number, boolean> = {};
+      for (const s of streams) {
+        if (KIND(s) !== "dbcCreatorRights" || String(s.position) !== PublicKey.default.toBase58()) continue;
+        try {
+          const pool = await loadPool(connection, new PublicKey(String(s.pool)));
+          next[Number(s.index)] = !!pool && pool.progress === MigrationProgress.CreatedPool;
+        } catch { /* unreadable pool: the withdrawal reports the program's answer */ }
+      }
+      if (live) setNeedsRegistration(next);
+    })();
+    return () => { live = false; };
+  }, [connection, streams]);
   if (!isDepositor) return null;
   const vaultPk = new PublicKey(vault);
+  const registerPosition = async (s: any, index: number) => {
+    setError(null);
+    try {
+      const dammPool = new PublicKey(String(s.derivedDammPool));
+      const positions = await cpAmm(connection).getUserPositionByPool(dammPool, vaultPk);
+      const mine = positions[0];
+      if (!mine) { setError(vaultPage.unwind.noPositionYet); return; }
+      await run(async () => new Transaction().add(await client.registerStreamPosition({
+        vault: vaultPk, stream: deriveStream(vaultPk, index), payer: publicKey!, dbcPool: new PublicKey(String(s.pool)), dbcConfig: new PublicKey(String(s.config)), dammPool,
+        position: mine.position, nftAccount: mine.positionNftAccount,
+      })), [], 300_000);
+      onChange();
+    } catch (e) {
+      setError(friendlyError(e, c.launchFailure));
+    }
+  };
   const withdraw = async (s: any, index: number) => {
     const stream = deriveStream(vaultPk, index);
     const dbc = KIND(s) === "dbcCreatorRights";
@@ -171,9 +208,10 @@ export function OpenVaultActions({
       setPreparing(false);
     }
   };
+  const unwound = Object.keys(v?.status ?? {})[0] === "unwound";
   return (
-    <Card title={openVault.title} className="mt-6">
-      <p className="text-sm text-starlight/70">{openVault.intro}</p>
+    <Card title={unwound ? vaultPage.unwind.title : openVault.title} className="mt-6">
+      <p className="text-sm text-starlight/70">{unwound ? vaultPage.unwind.done : openVault.intro}</p>
       <ul className="mt-3 space-y-2 text-sm">
         {streams.map((s: any, i: number) => (
           <li key={i} className="flex items-center justify-between gap-3">
@@ -191,16 +229,28 @@ export function OpenVaultActions({
                 {short(String(s.pool))}
               </a>
             </span>
-            <button
-              onClick={() => withdraw(s, Number(s.index))}
-              disabled={preparing || status.state === "sending"}
-              className="rounded-full border border-starlight/30 px-3 py-1 text-xs"
-            >
-              {openVault.withdraw}
-            </button>
+            {needsRegistration[Number(s.index)] ? (
+              <button
+                onClick={() => registerPosition(s, Number(s.index))}
+                disabled={preparing || status.state === "sending"}
+                className="rounded-full border border-starlight/30 px-3 py-1 text-xs"
+                title={vaultPage.unwind.registerPositionWhy}
+              >
+                {vaultPage.unwind.registerPosition}
+              </button>
+            ) : (
+              <button
+                onClick={() => withdraw(s, Number(s.index))}
+                disabled={preparing || status.state === "sending"}
+                className="rounded-full border border-starlight/30 px-3 py-1 text-xs"
+              >
+                {openVault.withdraw}
+              </button>
+            )}
           </li>
         ))}
       </ul>
+      {!unwound && (<>
       <p className="mt-4 text-xs text-starlight/50">{openVault.mintKeyNote}</p>
       <fieldset
         disabled={preparing || status.state === "sending"}
@@ -272,6 +322,7 @@ export function OpenVaultActions({
           {preparing ? c.uploading : openVault.launch}
         </button>
       </div>
+      </>)}
       {error && (
         <p role="alert" className="form-error">
           {error}

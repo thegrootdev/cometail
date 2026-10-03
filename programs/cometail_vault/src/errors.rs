@@ -34,4 +34,10 @@ pub enum VaultError {
     Principal,
     #[msg("Stream token mint does not match the vault")]
     WrongMint,
+    #[msg("The unwind window since launch has not passed")]
+    TooEarly,
+    #[msg("The curve reached its threshold: the vault graduates instead of unwinding")]
+    NotUnwindable,
+    #[msg("The pool migrated: register its creator position on this stream before withdrawing")]
+    RegisterPositionFirst,
 }

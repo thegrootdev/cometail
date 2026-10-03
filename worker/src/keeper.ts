@@ -25,7 +25,7 @@ export interface KeeperContext { chain: Chain; cfg: Config; keeper: Keypair; lut
 /** Above this many bins the ladder needs a v0 transaction with the vault's lookup table. */
 const LEGACY_BIN_LIMIT = 12;
 
-const STATUS = (v: any): "open" | "launched" | "live" => Object.keys(v.status)[0] as any;
+const STATUS = (v: any): "open" | "launched" | "live" | "unwound" => Object.keys(v.status)[0] as any;
 const KIND = (s: any): "dbcCreatorRights" | "dammV2Position" => Object.keys(s.kind)[0] as any;
 
 export async function keeperPass(ctx: KeeperContext): Promise<void> {
@@ -51,6 +51,7 @@ async function vaultPass(ctx: KeeperContext, protocol: any, entry: Decoded): Pro
   const vaultPk = entry.pubkey;
   const status = STATUS(vault);
   if (status === "open") return; // nothing to do until the depositor launches
+  if (status === "unwound") return; // closed for good by the depositor: nothing runs again
 
   // 1. the vault's own curve: migrate when the curve is complete, then register and cash out
   const ownPool = await chain.dbcPool(vault.dbcPool);

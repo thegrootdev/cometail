@@ -17,6 +17,9 @@ export function friendlyError(e: unknown, fallback: string = failures.actionFail
   if (/insufficient lamports|insufficient funds|attempt to debit|custom program error: 0x1\b|not enough sol/.test(m)) return failures.notEnoughSol;
   if (/blockhash|block height exceeded|expired|timed out|timeout|was not confirmed/.test(m)) return failures.txExpired;
   if (/429|rate limit|too many requests|server responded with/.test(m)) return failures.busy;
+  if (/tooearly|unwind window/.test(m)) return failures.unwindTooEarly;
+  if (/notunwindable|graduates instead/.test(m)) return failures.unwindGraduated;
+  if (/registerpositionfirst|register its creator position/.test(m)) return failures.registerPositionFirst;
   if (/insufficient liquidity|slippage|exceeds desired|price impact/.test(m)) return failures.quoteFailed;
   return fallback;
 }

@@ -100,7 +100,7 @@ pub struct HarvestDbc<'info> {
 
 pub fn harvest_dbc(ctx: Context<HarvestDbc>) -> Result<()> {
     let c = &ctx.accounts.common;
-    require!(c.vault.status != VaultStatus::Open, VaultError::WrongStatus);
+    require!(c.vault.status == VaultStatus::Launched || c.vault.status == VaultStatus::Live, VaultError::WrongStatus);
     require!(c.stream.kind == StreamKind::DbcCreatorRights, VaultError::AccountMismatch);
     let (base_vault, quote_vault, base_mint) = {
         let p = ctx.accounts.dbc_pool.load()?;
@@ -161,7 +161,7 @@ pub struct HarvestPosition<'info> {
 
 pub fn harvest_position(ctx: Context<HarvestPosition>) -> Result<()> {
     let c = &ctx.accounts.common;
-    require!(c.vault.status != VaultStatus::Open, VaultError::WrongStatus);
+    require!(c.vault.status == VaultStatus::Launched || c.vault.status == VaultStatus::Live, VaultError::WrongStatus);
     require!(c.stream.position != Pubkey::default(), VaultError::AccountMismatch);
     let (a_vault, b_vault, a_mint) = {
         let p = ctx.accounts.damm_pool.load()?;
@@ -212,7 +212,7 @@ pub struct HarvestOneTime<'info> {
 
 pub fn harvest_one_time(ctx: Context<HarvestOneTime>) -> Result<()> {
     let c = &ctx.accounts.common;
-    require!(c.vault.status != VaultStatus::Open, VaultError::WrongStatus);
+    require!(c.vault.status == VaultStatus::Launched || c.vault.status == VaultStatus::Live, VaultError::WrongStatus);
     require!(c.stream.kind == StreamKind::DbcCreatorRights && !c.stream.is_own, VaultError::AccountMismatch);
     let (fee_pending, surplus_pending) = {
         let p = ctx.accounts.dbc_pool.load()?;

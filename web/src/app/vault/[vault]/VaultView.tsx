@@ -28,6 +28,10 @@ const OpenVaultActions = dynamic(
   () => import("@/components/OpenVaultActions").then(m => m.OpenVaultActions),
   { loading: () => <DataState kind="loading" compact /> },
 );
+const UnwindActions = dynamic(
+  () => import("@/components/UnwindActions").then(m => m.UnwindActions),
+  { loading: () => <DataState kind="loading" compact /> },
+);
 
 const STATUS = (v: any) => (v?.status ? Object.keys(v.status)[0] : "unknown");
 const KIND = (s: any) => (s?.kind ? Object.keys(s.kind)[0] : "");
@@ -54,7 +58,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
       if (fromApi)
         return {
           vault: fromApi.data,
-          streams: fromApi.streams.map((s) => ({ ...s.data, token: s.token })),
+          streams: fromApi.streams.map((s) => ({ ...s.data, stream: s.stream, token: s.token })),
           stToken: fromApi.stToken ?? null,
           events: fromApi.events,
           updatedAt: fromApi.updatedAt,
@@ -129,12 +133,19 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                   value={<Money lamports={str(acc.harvestedGross)} />}
                   tone="dust"
                 />
-                <Stat label="kept for buybacks" value={<Money lamports={str(acc.income)} />} />
+                <Stat label={STATUS(v) === "unwound" ? "allocated to buybacks before the unwind" : "kept for buybacks"} value={<Money lamports={str(acc.income)} />} />
                 <Stat
-                  label="to the seller"
+                  label="to the seller (harvest shares)"
                   value={<Money lamports={str(acc.toDepositor)} />}
                   tone="plain"
                 />
+                {STATUS(v) === "unwound" && (
+                  <Stat
+                    label={vaultPage.unwind.incomeReturned}
+                    value={<Money lamports={String((data.events.find((e: any) => e.name === "unwound")?.data?.incomeReturned) ?? "0")} />}
+                    tone="plain"
+                  />
+                )}
                 <Stat
                   label="to the protocol"
                   value={<Money lamports={str(acc.toProtocol)} />}
@@ -209,7 +220,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
               )}
             </Card>
           </div>
-          {STATUS(v) === "open" && (
+          {(STATUS(v) === "open" || STATUS(v) === "unwound") && (
             <OpenVaultActions
               vault={vaultStr}
               v={v}
@@ -217,6 +228,10 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
               onChange={reload}
             />
           )}
+          {STATUS(v) === "launched" && (
+            <UnwindActions vault={vaultStr} v={v} streams={data.streams} onChange={reload} />
+          )}
+          {STATUS(v) === "unwound" && <p className="form-notice mt-4">{vaultPage.unwind.unwound}</p>}
           <Card title={vaultPage.streams} className="mt-6">
             {data.streams.length === 0 && (
               <DataState

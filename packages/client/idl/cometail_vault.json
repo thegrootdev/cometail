@@ -2175,6 +2175,117 @@
       ]
     },
     {
+      "name": "unwind",
+      "discriminator": [
+        66,
+        99,
+        1,
+        75,
+        47,
+        72,
+        63,
+        85
+      ],
+      "accounts": [
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.st_mint",
+                "account": "Vault"
+              }
+            ]
+          },
+          "relations": [
+            "own_stream"
+          ]
+        },
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "own_stream",
+          "docs": [
+            "The vault's own creator-rights stream, written at launch: its deposit_ts is the launch time.",
+            "It closes here, with its index, once the rights are the depositor's again."
+          ],
+          "writable": true
+        },
+        {
+          "name": "own_stream_index",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  114,
+                  101,
+                  97,
+                  109,
+                  45,
+                  105,
+                  110,
+                  100,
+                  101,
+                  120
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "vault.dbc_pool",
+                "account": "Vault"
+              }
+            ]
+          }
+        },
+        {
+          "name": "dbc_pool",
+          "writable": true
+        },
+        {
+          "name": "dbc_config"
+        },
+        {
+          "name": "income_wsol",
+          "writable": true
+        },
+        {
+          "name": "depositor_wsol",
+          "writable": true
+        },
+        {
+          "name": "dbc_program",
+          "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+        },
+        {
+          "name": "dbc_event_authority"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "update_protocol",
       "discriminator": [
         206,
@@ -2619,6 +2730,19 @@
         122,
         75
       ]
+    },
+    {
+      "name": "Unwound",
+      "discriminator": [
+        122,
+        36,
+        236,
+        137,
+        74,
+        98,
+        38,
+        164
+      ]
     }
   ],
   "errors": [
@@ -2701,6 +2825,21 @@
       "code": 6015,
       "name": "WrongMint",
       "msg": "Stream token mint does not match the vault"
+    },
+    {
+      "code": 6016,
+      "name": "TooEarly",
+      "msg": "The unwind window since launch has not passed"
+    },
+    {
+      "code": 6017,
+      "name": "NotUnwindable",
+      "msg": "The curve reached its threshold: the vault graduates instead of unwinding"
+    },
+    {
+      "code": 6018,
+      "name": "RegisterPositionFirst",
+      "msg": "The pool migrated: register its creator position on this stream before withdrawing"
     }
   ],
   "types": [
@@ -4790,6 +4929,38 @@
       }
     },
     {
+      "name": "Unwound",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "st_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "dbc_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "income_returned",
+            "type": "u64"
+          },
+          {
+            "name": "launched_at",
+            "type": "i64"
+          },
+          {
+            "name": "unwound_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
       "name": "UserRewardInfo",
       "serialization": "bytemuck",
       "repr": {
@@ -5021,6 +5192,9 @@
           },
           {
             "name": "Live"
+          },
+          {
+            "name": "Unwound"
           }
         ]
       }

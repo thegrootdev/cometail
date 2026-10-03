@@ -53,12 +53,17 @@ redemption claim and no guaranteed price floor. Orders can exhaust; fee income a
 prices can fall. Burning reduces supply but does not guarantee appreciation. Bid placement
 is exposed to manipulation and adverse selection. The vault is a disclosed, rule-bound
 buyback mechanism, not a redeemable claim on income. If the stream token never graduates,
-the launch is still final: no cash-out, no ladder, but the vault keeps harvesting.
+the depositor is not trapped: thirty days after launch without the curve reaching its
+threshold, `unwind` closes the vault for good, pays the depositor the income the vault
+collected and returns the stream token's creator rights in the same instruction; the deposited
+streams then go back through `withdraw_stream`. Nothing runs on an unwound vault again, whatever
+the curve does later, and a later migration hands its creator position to the depositor; the
+curve itself keeps trading, so holders can sell back.
 
 ## Accounts
 
 - `Protocol`: admin, keeper, treasury, the three stream configs, a routing pause flag.
-- `Vault`: depositor and their payout account, status (Open, Launched, Live), the stream
+- `Vault`: depositor and their payout account, status (Open, Launched, Live, Unwound), the stream
   token's DBC pool and derived DAMM v2 pool, the DLMM pair and its orientation, the
   vault's own position, the income and placeholder WSOL accounts, routing policy and
   state, accounting totals, and two counters: `stream_count` (the next stream's index,

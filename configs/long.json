@@ -1,12 +1,12 @@
 {
-  "name": "plain",
+  "name": "long",
   "token": {
     "tokenType": 0,
     "tokenBaseDecimal": 6,
     "tokenQuoteDecimal": 9,
     "tokenAuthorityOption": 1,
     "totalTokenSupply": 1000000000,
-    "leftover": 0
+    "leftover": 1000
   },
   "fee": {
     "baseFeeParams": {
@@ -53,8 +53,26 @@
   },
   "activationType": 0,
   "initialMarketCap": 20,
-  "migrationMarketCap": 120,
+  "migrationMarketCap": 360,
   "curve": {
-    "mode": "marketCap"
+    "mode": "liquidityWeights",
+    "liquidityWeights": [
+      1.0,
+      1.3,
+      1.69,
+      2.197,
+      2.8561,
+      3.7129,
+      4.8268,
+      6.2749,
+      8.1573,
+      10.6045,
+      13.7858,
+      17.9216,
+      23.2981,
+      30.2875,
+      39.3738,
+      51.1859
+    ]
   }
 }

@@ -1,0 +1,113 @@
+/** Base58 addresses/signatures and raw integers stay strings; amounts never become JS numbers. */
+export type Address = string;
+export type RawAmount = string;
+export type Cursor = string;
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type JsonObject = { [key: string]: Json };
+export interface Provenance {
+  source: "chain" | "indexer" | "estimate";
+  signature?: string;
+  slot?: number;
+  scannedAtMs?: number;
+}
+export interface EstimateLabel { path: string; source: "estimate"; basis: string }
+/** SDK annotations. Missing wire provenance is explicitly labelled indexer, never chain. */
+export interface Evidence { provenance: Provenance; estimates: EstimateLabel[] }
+export interface Coverage { status: "complete" | "partial" | "stale"; pendingPools: number; lastSuccessfulAtMs: number | null }
+export interface SolUsd { value: number; source: string; observedAtMs: number; status: "fresh" | "stale"; valuationBasis: "market" | "reference" }
+export interface Envelope<T> extends Evidence {
+  schemaVersion: 1; cluster: string; generatedAtMs: number; observedSlot: number | null;
+  coverage: Coverage; solUsd: SolUsd | null; data: T;
+}
+export interface TokenLinks { x: string | null; telegram: string | null; discord: string | null; website: string | null }
+export type Stage = "bonding" | "completed" | "graduated";
+export type Custody = "wallet" | "program" | "unknown";
+export interface TokenIdentity {
+  mint: Address; name: string; symbol: string; imageUrl: string | null; stage: Stage; links: TokenLinks | null;
+}
+export interface Token extends Evidence {
+  identity: TokenIdentity & {
+    decimals: number; metadataUri: string | null; metadataStatus: "ok" | "missing" | "unreachable";
+    creator: Address; custody: Custody; createdAtMs: number | null; dbcPool: Address; dammPool: Address | null;
+    quoteMint: Address; tokenKind: "plain" | "stream"; config: Address; vault: Address | null;
+  };
+  market: {
+    priceSol: string | null; priceSource: string | null; priceAtMs: number; totalSupplyRaw: RawAmount;
+    circulatingSupplyRaw: null; fdvUsd: string | null; marketCapUsd: null; valuationBasis: "fdv";
+    liquidityLamports: RawAmount | null; liquidityBasis: "curve-quote-reserve" | "damm-quote-x2" | null;
+  };
+  volume24h: { lamports: RawAmount; buys: number; sells: number; windowEndMs: number; windowStartMs: number; complete: boolean; status: "complete" | "partial" };
+  holders: { count: number | null; countedAtMs: number | null; status: "missing" | "ok"; definition: string };
+  bonding: { progressBps: number | null; quoteRaisedLamports: RawAmount; targetLamports: RawAmount; migrationStage: Stage };
+  updatedAtMs: number;
+}
+export interface TokenList { tokens: Token[]; total: number; nextCursor: string | null; sort: "volume24h" | "newest"; stage: string }
+export interface Trade extends Evidence {
+  id: string; signature: string; ordinal: number; slot: number; blockTimeSec: number | null;
+  pool: Address; venue: "curve" | "damm" | null; side: "buy" | "sell";
+  baseAmountRaw: RawAmount | null; quoteAmountLamports: RawAmount | null; executionPriceSol: string | null;
+  trader: Address; traderKind: "authority" | "feePayer";
+}
+export interface SkyStream extends Evidence {
+  pool: Address; config: Address; baseMint: Address; quoteMint: Address; creator: Address; custody: Custody;
+  progress: number; eligible: boolean; reasons: string[]; creatorPct: number; partnerPct: number; creatorFeePct: number;
+  claimableLamports: RawAmount; realizedEstimateLamports: RawAmount;
+  realized7dLamports: RawAmount | null; realized30dLamports: RawAmount | null; vault: Address | null;
+  tradingFeeLamports: RawAmount; dammPool: Address | null; updatedAt: number;
+  kind?: "curve" | "position"; position?: Address | null; owner?: Address; lockedSharePct?: number;
+  token: TokenIdentity | null;
+}
+/** Open account objects retain fields added by the program/indexer without discarding them. */
+export interface VaultAccount {
+  [key: string]: unknown;
+  depositor: Address; stMint: Address; status: Record<string, JsonObject>; preset: number;
+  dbcPool: Address; dammPool: Address; dlmmPair: Address; streamCount: number; activeStreams: number;
+  accounting: Record<"harvestedGross" | "toDepositor" | "toProtocol" | "income" | "cashedOut" | "routedGross" | "refundedPrincipal" | "orderFeesWsol" | "burnedSt", RawAmount>;
+  reconciliation?: { fromEvents: Record<string, RawAmount>; matches: boolean; mismatches: string[]; checkedAt: number };
+  live?: { updatedAt: number; ladder: JsonObject | null };
+}
+export interface Vault extends Evidence { vault: Address; data: VaultAccount; updatedAt: number; stToken: TokenIdentity | null }
+export interface Stream extends Evidence {
+  stream: Address;
+  data: { [key: string]: unknown; vault: Address; index: number; kind: Record<string, JsonObject>; isOwn: boolean; pool: Address; harvested: RawAmount };
+  token: TokenIdentity | null;
+}
+export interface VaultEvent extends Evidence { signature: string; idx: number; slot: number; blockTime: number | null; name: string; vault: Address | null; data: JsonObject }
+/** /vaults/:vault uses the store's trade shape, different from /tokens/:mint/trades. */
+export interface VaultTrade extends Evidence {
+  signature: string; idx: number; slot: number; blockTime: number | null; pool: Address; vault: Address | null;
+  trader: Address; traderKind: "authority" | "feePayer"; buy: boolean; amountIn: RawAmount; amountOut: RawAmount;
+  venue?: "curve" | "damm"; baseAmountRaw?: RawAmount; quoteAmountLamports?: RawAmount; executionPriceSol?: string | null;
+}
+export interface VaultDetail extends Vault { streams: Stream[]; events: VaultEvent[]; trades: VaultTrade[] }
+export type Classified<T> = { independent: T; demo: T; unattributed: T };
+export interface Metrics extends Evidence {
+  generatedAt: number; demoActors: Address[]; incomplete: boolean; notes: string[];
+  plainLaunches: { count: Classified<number>; tradingFeeLamports: Classified<RawAmount>; volumeEstimateLamports: Classified<RawAmount> };
+  recurringIncomeLamports: { external: Classified<RawAmount>; own: Classified<RawAmount> };
+  oneTimeProceedsLamports: { external: Classified<RawAmount>; own: Classified<RawAmount> };
+  depositors: { independent: number; demo: number };
+  buyers: { distinct: Classified<number>; buyVolumeLamports: Classified<RawAmount>; purchases: number; sales: number; poolsPending: number };
+  launchTraders: { distinct: Classified<number>; trades: number }; bidDepthLamports: Classified<RawAmount>;
+  fillsAndBurns: { settledWithBurn: Classified<number>; burnedSt: Classified<RawAmount> };
+  refundedPrincipalLamports: Classified<RawAmount>;
+}
+export interface Prices extends Evidence { solUsd: number; source: string; at: number }
+export interface Health extends Evidence { ok: boolean; service: string; time: number }
+export interface FeedData {
+  launch: { mint: Address; name: string; symbol: string; imageUrl: string | null; creator: Address; config: Address; dbcPool: Address; tokenKind: "plain" | "stream" };
+  trade: { mint: Address; pool: Address; venue: "curve" | "damm"; side: "buy" | "sell"; baseAmountRaw: RawAmount; quoteAmountLamports: RawAmount; executionPriceSol: string | null; trader: Address; signature: string };
+  graduation: { mint: Address; dbcPool: Address; dammPool: Address; signature: string };
+  harvest: { vault: Address; stream: Address; incomeLamports: RawAmount; signature: string };
+  bid: { vault: Address; order: Address; bins: number; grossLamports: RawAmount; signature: string };
+  fill: { vault: Address; order: Address; burnedStRaw: RawAmount; unfilledLamports: RawAmount; signature: string };
+  cashout: { vault: Address; depositorLamports: RawAmount; signature: string };
+}
+export type FeedType = keyof FeedData;
+type Origin<T> = { provenance: Provenance & { source: "chain" | "indexer" }; data: T & { basis?: string } } | { provenance: Provenance & { source: "estimate" }; data: T & { basis: string } };
+export type FeedEvent = { [K in FeedType]: { schemaVersion: 1; cluster: string; type: K; cursor: Cursor; observedSlot: number | null; generatedAtMs: number } & Origin<FeedData[K]> }[FeedType];
+export type ControlFrame = { type: "hello"; cursor: Cursor | null; retentionSlots: number } | { type: "ping"; generatedAtMs: number } | ({ type: "coverage" } & Coverage);
+export type FeedFrame = FeedEvent | ControlFrame;
+export interface FeedReplay { events: FeedEvent[]; nextCursor: Cursor | null }
+export interface RequestOptions { signal?: AbortSignal }
+export interface TokenQuery { sort?: "volume24h" | "newest"; stage?: "bonding" | "graduated" | "all"; q?: string; limit?: number; cursor?: string }

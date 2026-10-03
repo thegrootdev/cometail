@@ -599,6 +599,7 @@ export default function SellPage() {
         title={wizard.title}
         body={c.sellBody}
       />
+      <p className="form-notice sell-window-note">{wizard.irreversible}</p>
       <Suspense fallback={<DataState kind="loading" />}>
         <Wizard />
       </Suspense>

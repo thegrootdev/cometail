@@ -3,7 +3,7 @@ import { BN } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY, TransactionInstruction } from "@solana/web3.js";
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
-  buildCurveWithMarketCap, deriveDammV2EventAuthority, deriveDammV2MigrationMetadataAddress, deriveDammV2PoolAddress,
+  buildCurveWithMarketCap, buildCurveWithLiquidityWeights, deriveDammV2EventAuthority, deriveDammV2MigrationMetadataAddress, deriveDammV2PoolAddress,
   deriveDammV2PoolAuthority, deriveDammV2TokenVaultAddress, deriveDbcPoolAddress, deriveDbcPoolAuthority,
   deriveDbcTokenVaultAddress, deriveMintMetadata, derivePositionAddress, derivePositionNftAccount,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
@@ -29,9 +29,24 @@ export function normalize(v: any): any {
   return v;
 }
 
-export function configParams(name: "stream-25" | "stream-50" | "stream-75" | "plain"): any {
+export type PresetName = "stream-25" | "stream-50" | "stream-75" | "plain" | "long" | "flat" | "stock-usdc" | "stock-xstock";
+/** The preset file's `curve.mode` picks the SDK builder: market caps alone, or market caps with
+ *  16 liquidity weights (the Long and Flat curves). Everything else in the file is the builder's input. */
+export function configParams(name: PresetName): any {
   const p = JSON.parse(fs.readFileSync(path.join(CONFIGS, `${name}.json`), "utf8"));
-  return normalize(buildCurveWithMarketCap(p));
+  const mode = p.curve?.mode ?? "marketCap";
+  const { curve, quote, name: _n, ...params } = p;
+  if (mode === "liquidityWeights") return normalize(buildCurveWithLiquidityWeights({ ...params, liquidityWeights: curve.liquidityWeights }));
+  if (mode !== "marketCap") throw new Error(`unknown curve mode ${mode} in ${name}`);
+  return normalize(buildCurveWithMarketCap(params));
+}
+/** The quote mint a preset expects: WSOL unless the file names an environment variable. */
+export function presetQuote(name: PresetName): { mint: PublicKey; decimals: number; tokenBadge: boolean } {
+  const p = JSON.parse(fs.readFileSync(path.join(CONFIGS, `${name}.json`), "utf8"));
+  if (!p.quote) return { mint: new PublicKey("So11111111111111111111111111111111111111112"), decimals: 9, tokenBadge: false };
+  const mint = process.env[p.quote.mintEnv];
+  if (!mint) throw new Error(`${name} needs ${p.quote.mintEnv} (the quote mint on this cluster)`);
+  return { mint: new PublicKey(mint), decimals: p.quote.decimals, tokenBadge: !!p.quote.tokenBadge };
 }
 
 export async function createConfig(svm: LiteSVM, a: { payer: Keypair; feeClaimer: PublicKey; leftoverReceiver: PublicKey; quoteMint: PublicKey; params: any }): Promise<PublicKey> {

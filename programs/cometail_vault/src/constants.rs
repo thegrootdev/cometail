@@ -33,3 +33,7 @@ pub const SEED_ORDER: &[u8] = b"order";
 pub const WSOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 /// Meteora DBC's pool authority PDA (the DAMM v2 pool creator after migration).
 pub const DBC_POOL_AUTHORITY: Pubkey = pubkey!("FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM");
+
+/// Seconds after `launch` without the curve reaching its threshold before the depositor may unwind
+/// the vault (30 days). Measured from the vault's own stream's `deposit_ts`, written at launch.
+pub const UNWIND_WINDOW_SECONDS: i64 = 30 * 24 * 60 * 60;

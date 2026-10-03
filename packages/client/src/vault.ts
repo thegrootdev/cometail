@@ -173,6 +173,13 @@ export class VaultClientStep4 extends VaultClient {
       position: a.position, nftAccount: a.nftAccount, cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: CP_AMM_EVENT_AUTHORITY, systemProgram: SystemProgram.programId,
     }).instruction();
   }
+  /** After the unwind window without graduation: the depositor closes the vault and takes the collected income; streams then leave through withdrawStream. */
+  async unwind(a: { vault: PublicKey; depositor: PublicKey; ownStream: PublicKey; dbcPool: PublicKey; dbcConfig: PublicKey; incomeWsol: PublicKey; depositorWsol: PublicKey }): Promise<TransactionInstruction> {
+    return this.program.methods.unwind().accountsPartial({
+      vault: a.vault, depositor: a.depositor, ownStream: a.ownStream, ownStreamIndex: deriveStreamIndex(a.dbcPool), dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, incomeWsol: a.incomeWsol, depositorWsol: a.depositorWsol,
+      dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY, tokenProgram: TOKEN_PROGRAM_ID,
+    } as any).instruction();
+  }
   async cashout(a: { vault: PublicKey; dbcPool: PublicKey; dbcConfig: PublicKey; quoteVault: PublicKey; depositorWsol: PublicKey }): Promise<TransactionInstruction> {
     return this.program.methods.cashout().accountsPartial({
       vault: a.vault, dbcPool: a.dbcPool, dbcConfig: a.dbcConfig, dbcPoolAuthority: DBC_POOL_AUTHORITY, quoteVault: a.quoteVault, wsolMint: NATIVE_MINT, depositorWsol: a.depositorWsol,

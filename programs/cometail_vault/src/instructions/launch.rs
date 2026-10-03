@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::{self, AssociatedToken};
-use anchor_spl::token::{Mint, Token, TokenAccount};
+use anchor_spl::token::{self, Mint, Token, TokenAccount};
 use anchor_spl::token_interface::TokenAccount as TokenAccountIf;
 
 use crate::constants::*;
@@ -174,7 +174,7 @@ pub struct RegisterPair<'info> {
 
 pub fn register_pair(ctx: Context<RegisterPair>) -> Result<()> {
     let v = &ctx.accounts.vault;
-    require!(v.status != VaultStatus::Open, VaultError::WrongStatus);
+    require!(v.status == VaultStatus::Launched || v.status == VaultStatus::Live, VaultError::WrongStatus);
     let signer = ctx.accounts.signer.key();
     require!(signer == ctx.accounts.protocol.keeper || signer == v.depositor, VaultError::NotKeeper);
     require_keys_eq!(v.dlmm_pair, Pubkey::default(), VaultError::Duplicate);
@@ -316,7 +316,7 @@ pub struct Cashout<'info> {
 
 pub fn cashout(ctx: Context<Cashout>) -> Result<()> {
     let v = &ctx.accounts.vault;
-    require!(v.status != VaultStatus::Open, VaultError::WrongStatus);
+    require!(v.status == VaultStatus::Launched || v.status == VaultStatus::Live, VaultError::WrongStatus);
     let (fee_pending, surplus_pending) = {
         let p = ctx.accounts.dbc_pool.load()?;
         require_keys_eq!(p.pool_state.quote_vault, ctx.accounts.quote_vault.key(), VaultError::AccountMismatch);
@@ -350,7 +350,80 @@ pub fn cashout(ctx: Context<Cashout>) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------------------
+// unwind: after UNWIND_WINDOW_SECONDS without the curve reaching its threshold, the depositor
+// closes the vault for good in one instruction: the stream token's creator rights return to the
+// depositor (DBC transfer_pool_creator), the income the vault collected is paid out, the own
+// stream and its index close, the status becomes Unwound. The deposited streams then leave
+// through `withdraw_stream`. A later graduation changes nothing for the vault (register_own_
+// position, cashout, the harvests, route and settle require Launched or Live) and hands its
+// creator position to the depositor. The curve itself keeps trading.
+// ---------------------------------------------------------------------------------------
+#[derive(Accounts)]
+pub struct Unwind<'info> {
+    #[account(mut, seeds = [SEED_VAULT, vault.st_mint.as_ref()], bump = vault.bump)]
+    pub vault: Box<Account<'info, Vault>>,
+    #[account(mut)]
+    pub depositor: Signer<'info>,
+    /// The vault's own creator-rights stream, written at launch: its deposit_ts is the launch time.
+    /// It closes here, with its index, once the rights are the depositor's again.
+    #[account(mut, close = depositor, has_one = vault @ VaultError::AccountMismatch, constraint = own_stream.is_own && own_stream.kind == StreamKind::DbcCreatorRights @ VaultError::AccountMismatch, constraint = own_stream.pool == vault.dbc_pool @ VaultError::AccountMismatch)]
+    pub own_stream: Box<Account<'info, Stream>>,
+    #[account(mut, close = depositor, seeds = [SEED_STREAM_INDEX, vault.dbc_pool.as_ref()], bump, constraint = own_stream_index.stream == own_stream.key() @ VaultError::AccountMismatch)]
+    pub own_stream_index: Account<'info, StreamIndex>,
+    #[account(mut, constraint = dbc_pool.key() == vault.dbc_pool @ VaultError::AccountMismatch)]
+    pub dbc_pool: AccountLoader<'info, dbc::accounts::VirtualPool>,
+    /// CHECK: the pool's config, checked against the vault
+    #[account(constraint = dbc_config.key() == vault.dbc_config @ VaultError::AccountMismatch)]
+    pub dbc_config: UncheckedAccount<'info>,
+    #[account(mut, constraint = income_wsol.key() == vault.income_wsol @ VaultError::AccountMismatch)]
+    pub income_wsol: Box<Account<'info, TokenAccount>>,
+    #[account(mut, constraint = depositor_wsol.key() == vault.depositor_wsol @ VaultError::AccountMismatch)]
+    pub depositor_wsol: Box<Account<'info, TokenAccount>>,
+    /// CHECK: DBC program, by address
+    #[account(address = dbc::ID)]
+    pub dbc_program: UncheckedAccount<'info>,
+    /// CHECK: DBC event authority PDA, checked by the callee
+    pub dbc_event_authority: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+pub fn unwind(ctx: Context<Unwind>) -> Result<()> {
+    let v = &ctx.accounts.vault;
+    require!(v.status == VaultStatus::Launched, VaultError::WrongStatus);
+    require_keys_eq!(v.depositor, ctx.accounts.depositor.key(), VaultError::NotDepositor);
+    let now = Clock::get()?.unix_timestamp;
+    let launched_at = ctx.accounts.own_stream.deposit_ts;
+    require!(now.checked_sub(launched_at).ok_or(VaultError::Overflow)? >= UNWIND_WINDOW_SECONDS, VaultError::TooEarly);
+    {
+        let p = ctx.accounts.dbc_pool.load()?;
+        require!(p.pool_state.migration_progress == DBC_PROGRESS_PRE_BONDING, VaultError::NotUnwindable);
+    }
+    let seeds = vault_signer(v);
+    let signer: &[&[u8]] = &[&seeds[0], &seeds[1], &seeds[2]];
+    // the stream token's creator rights go back to the depositor in the same instruction, so a
+    // migration that happens later hands its creator position to the depositor, never to the vault
+    dbc::cpi::transfer_pool_creator(CpiContext::new_with_signer(ctx.accounts.dbc_program.key(), dbc::cpi::accounts::TransferPoolCreator {
+        virtual_pool: ctx.accounts.dbc_pool.to_account_info(), config: ctx.accounts.dbc_config.to_account_info(), creator: v.to_account_info(),
+        new_creator: ctx.accounts.depositor.to_account_info(), event_authority: ctx.accounts.dbc_event_authority.to_account_info(), program: ctx.accounts.dbc_program.to_account_info(),
+    }, &[signer]))?;
+    // the income the vault collected goes to the depositor; the accounting stays cumulative (the
+    // event carries the amount, the indexer reconciles from it)
+    let income = ctx.accounts.income_wsol.amount;
+    if income > 0 {
+        token::transfer(CpiContext::new_with_signer(ctx.accounts.token_program.key(), token::Transfer {
+            from: ctx.accounts.income_wsol.to_account_info(), to: ctx.accounts.depositor_wsol.to_account_info(), authority: v.to_account_info(),
+        }, &[signer]), income)?;
+    }
+    let vault = &mut ctx.accounts.vault;
+    vault.status = VaultStatus::Unwound;
+    vault.active_streams = vault.active_streams.checked_sub(1).ok_or(VaultError::Overflow)?;
+    emit!(Unwound { vault: vault.key(), st_mint: vault.st_mint, dbc_pool: vault.dbc_pool, income_returned: income, launched_at, unwound_at: now });
+    Ok(())
+}
+
 #[event] pub struct Launched { pub vault: Pubkey, pub st_mint: Pubkey, pub dbc_pool: Pubkey, pub preset: u8 }
+#[event] pub struct Unwound { pub vault: Pubkey, pub st_mint: Pubkey, pub dbc_pool: Pubkey, pub income_returned: u64, pub launched_at: i64, pub unwound_at: i64 }
 #[event] pub struct PairRegistered { pub vault: Pubkey, pub pair: Pubkey, pub st_is_x: bool, pub bin_step: u16, pub bin_bound: i32 }
 #[event] pub struct Live { pub vault: Pubkey, pub damm_pool: Pubkey, pub position: Pubkey }
 #[event] pub struct CashedOut { pub vault: Pubkey, pub amount: u64 }

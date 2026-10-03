@@ -26,7 +26,7 @@ import {
 } from "@/components/Experience";
 import { Shell, Card, Stat, ConnectWallet } from "@/components/Shell";
 import { tokenPage, amounts, experience as c, failures } from "@/content/cometail";
-import { EXPLORER } from "@/lib/addresses";
+import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
   claimCreatorFeesTx,
   curveQuote,
@@ -340,6 +340,9 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
             </Card>
           </div>
           <Card title={tokenPage.trades} className="token-order-entry">
+            {view && bonding && ADDRESSES.streamConfigs.some((k) => k.equals(new PublicKey(view.state.config))) && (
+              <p className="form-notice">{tokenPage.streamUnwindNote}</p>
+            )}
             {!bonding && !graduated && (
               <p className="text-sm text-starlight/60">
                 Trading pauses while the curve migrates.

@@ -78,6 +78,9 @@ pub mod cometail_vault {
     pub fn cashout(ctx: Context<Cashout>) -> Result<()> {
         instructions::cashout(ctx)
     }
+    pub fn unwind(ctx: Context<Unwind>) -> Result<()> {
+        instructions::unwind(ctx)
+    }
 
     pub fn harvest_dbc(ctx: Context<HarvestDbc>) -> Result<()> {
         instructions::harvest_dbc(ctx)

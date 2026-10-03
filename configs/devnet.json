@@ -16,5 +16,15 @@
     "stream-25": "FhErNG8JK8hXM8PdkwGsfnr8jqxGuQmEWLSYjDtFGuXk",
     "stream-50": "6CQ4fXLaSeR3UvgTUAffbetDuzXU4JUMjfG2KcFJFsuz",
     "stream-75": "H53ojWBqXmxbtcCLVzA2YRveaNvdL1CKS11Kcwxg1Psd"
+  },
+  "presets": {
+    "long": "8cUQqkMkb7pU5LXdEBVtDgQoyAa77n388DGp7EfhBh6o",
+    "flat": "8LtiCkfxkGzRkNLCQHc4ohudp3PxRNHbSCxHFkv5jin4",
+    "stock-usdc": "3SGJgHzALLPm15owz5Tw83SQdaBzd8AoSFyMZHy3NxBe",
+    "stock-xstock": "Bh4ewCPyWfhBxot9nvNaNH3ZXNHM35vo8cykaaj19D6p"
+  },
+  "quoteMints": {
+    "usdc": "9YSXk1YcKXHcTodgu4MuvKdRu7kW64Af61cKERH2Wtcd",
+    "stock": "BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN"
   }
 }
