@@ -1,7 +1,11 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { market as copy } from "@/content/cometail";
+import { Money, PriceReference } from "./Money";
+import { CopyAddress } from "./CopyAddress";
+import { useSolUsd } from "@/lib/prices";
+import { formatUsd, usdValue } from "@/lib/usd";
+import { market as copy, money } from "@/content/cometail";
 import { EXPLORER } from "@/lib/addresses";
 import { short } from "@/lib/format";
 import { MarketEnvelope, MarketToken, TradeList, TokenList, useMarket, rawUnits, marketNumber, marketTime } from "@/lib/market";
@@ -16,7 +20,7 @@ function Snapshot({ data, error = false, onRetry }: { data: MarketEnvelope<unkno
     {stale && <button type="button" onClick={onRetry}>{copy.retry} ↻</button>}
   </div>;
 }
-function Metric({ label, value, note, exact }: { label: string; value: string; note?: string; exact?: string | null }) {
+function Metric({ label, value, note, exact }: { label: string; value: React.ReactNode; note?: string; exact?: string | null }) {
   return <div className="market-metric"><dt>{label}</dt><dd title={exact ?? undefined}>{value}{note && <small>{note}</small>}</dd></div>;
 }
 function Stage({ token }: { token: MarketToken }) {
@@ -28,19 +32,23 @@ function Stage({ token }: { token: MarketToken }) {
       <span style={{ width: `${stage === "graduated" ? 100 : progress ?? 0}%` }} />
     </div></div>;
 }
-function TokenStats({ token, usd }: { token: MarketToken; usd: boolean }) {
-  const volume = rawUnits(token.volume24hLamports, 9);
+function TokenStats({ token }: { token: MarketToken }) {
+  const rate = useSolUsd();
+  const supply = rawUnits(token.totalSupplyRaw, token.decimals);
+  const price = token.priceStatus === "stale" || token.priceStatus === "unavailable" ? null : token.priceSol;
+  const fdvSol = supply !== null && price !== null ? Number(supply) * Number(price) : null;
+  const fdv = usdValue(fdvSol, rate);
   const holders = token.holders?.status === "unavailable" ? null : token.holders?.count;
   return <dl className="market-stats">
-    <Metric label={copy.price} value={marketNumber(token.priceSol, 7)} exact={token.priceSol} note={token.priceStatus === "stale" ? copy.stale : undefined} />
-    <Metric label={copy.fdv} value={usd && token.fdvUsd != null ? `$${marketNumber(token.fdvUsd, 2)}` : "—"} exact={token.fdvUsd} />
-    <Metric label={copy.volume} value={marketNumber(volume)} exact={volume} note={!token.complete || token.volumeStatus === "partial" ? copy.partial : token.volumeStatus === "stale" ? copy.stale : undefined} />
+    <Metric label={copy.price} value={<Money sol={price} price />} exact={token.priceSol} note={token.priceStatus === "stale" ? copy.stale : undefined} />
+    <Metric label={copy.fdv} value={rate.status === "fresh" ? formatUsd(fdv) : rate.status === "stale" ? money.stale : money.missing} />
+    <Metric label={copy.volume} value={<Money lamports={token.volumeStatus === "stale" ? null : token.volume24hLamports} />} note={!token.complete || token.volumeStatus === "partial" ? copy.partial : token.volumeStatus === "stale" ? copy.stale : undefined} />
     <Metric label={copy.holders} value={marketNumber(holders, 0)} note={token.holders?.status === "stale" ? copy.stale : token.holders?.status === "partial" ? copy.partial : undefined} />
+    <Metric label={money.liquidity} value={<Money lamports={token.liquidityBasis ? token.liquidityLamports ?? null : null} />} note={token.liquidityBasis === "curve-quote-reserve" ? money.curveLiquidity : token.liquidityBasis === "damm-quote-x2" ? money.poolLiquidity : money.unknownLiquidity} />
   </dl>;
 }
-function Valuation({ data }: { data: MarketEnvelope<unknown> }) {
-  return <div className="market-valuation"><span className="market-network">{data.cluster === "mainnet-beta" ? copy.mainnet : copy.reference}</span>
-    <p>{copy.valuation} {data.solUsd?.value ? <>SOL/USD ${marketNumber(data.solUsd.value, 2)} · {data.solUsd.source} · {marketTime(data.solUsd.observedAtMs)}. {data.solUsd.status !== "ok" && copy.fxStale}</> : copy.fxMissing}</p></div>;
+function Valuation() {
+  return <div className="market-valuation"><p>{copy.valuation}</p><PriceReference /></div>;
 }
 export function MarketDirectory() {
   const [sort, setSort] = useState<"volume24h" | "newest">("volume24h");
@@ -72,12 +80,14 @@ function DirectoryResults({ path, cursor, onCursor, clear }: { path: string; cur
   return <><Snapshot data={view} error={error} onRetry={reload} />
     {pending && <button className="market-update" type="button" onClick={() => setShown(data)}>{copy.dataUpdated} <strong>{copy.refresh} ↻</strong></button>}
     {view.coverage.status !== "complete" && <p className="market-warning">{copy.historyPending}</p>}
-    {tokens.length ? <div className="market-grid" aria-busy={loading}>{tokens.map(t => <Link className="market-card" href={`/token/${t.mint}`} key={t.mint} aria-label={`${copy.view} ${t.name || short(t.mint)}`}>
+    {tokens.length ? <div className="market-grid" aria-busy={loading}>{tokens.map(t => <article className="market-card" key={t.mint}>
+      <Link className="market-card-link" href={`/token/${t.mint}`} aria-label={`${copy.view} ${t.name || short(t.mint)}`}>
       <div className="market-identity"><TokenAvatar seed={t.mint} image={t.imageUrl ?? undefined} size="large" /><div><h3>{t.name || short(t.mint)}</h3><span>{t.symbol ? `$${t.symbol}` : short(t.mint)} · {t.tokenKind === "stream" ? copy.stream : copy.plain}</span></div><span className="market-arrow" aria-hidden="true">↗</span></div>
-      <TokenStats token={t} usd={!!view.solUsd?.value} /><Stage token={t} />
-    </Link>)}</div> : <DataState title={copy.empty} body={copy.emptyBody}><button type="button" className="button button-secondary" onClick={clear}>{copy.clear}</button></DataState>}
+      </Link><CopyAddress address={t.mint} />
+      <TokenStats token={t} /><Stage token={t} />
+    </article>)}</div> : <DataState title={copy.empty} body={copy.emptyBody}><button type="button" className="button button-secondary" onClick={clear}>{copy.clear}</button></DataState>}
     <div className="market-pagination">{cursor && <button type="button" className="button button-secondary" onClick={() => onCursor(null)}>← {copy.first}</button>}{view.data?.nextCursor && <button type="button" className="button button-secondary" onClick={() => onCursor(view.data.nextCursor)}>{copy.more} →</button>}</div>
-    <Valuation data={view} />
+    <Valuation />
   </>;
 }
 export function TokenMarket({ mint }: { mint: string }) {
@@ -85,9 +95,9 @@ export function TokenMarket({ mint }: { mint: string }) {
   return <section className="token-market" aria-label={copy.overview}>
     <div className="market-detail-heading"><h2>{copy.overview}</h2>{data && <span className="market-network">{data.cluster}</span>}</div>
     {!data ? <DataState compact kind={error ? "error" : "loading"} title={error ? copy.failed : copy.loading} body={error ? copy.failedBody : copy.loadingBody} onRetry={error ? reload : undefined} /> : <>
-      <Snapshot data={data} error={error} onRetry={reload} /><TokenStats token={data.data} usd={!!data.solUsd?.value} />
+      <Snapshot data={data} error={error} onRetry={reload} /><TokenStats token={data.data} />
       <p className="market-footnote">{data.data.holders?.definition || copy.sourceNote} {data.data.holders?.countedAtMs && <>{copy.snapshot} {marketTime(data.data.holders.countedAtMs)}.</>}</p>
-      <Valuation data={data} />
+      <Valuation />
     </>}
   </section>;
 }
@@ -114,7 +124,7 @@ function TradeResults({ path, decimals, cursor, onCursor }: { path: string; deci
     {trades.length ? <div className="market-trade-scroll"><table className="market-trade-table"><thead><tr><th>{copy.side}</th><th>{copy.amount}</th><th>{copy.quote}</th><th>{copy.venue}</th><th>{copy.when}</th><th>{copy.receipt}</th></tr></thead><tbody>{trades.map(t => <tr key={t.id} className={fresh.includes(t.id) ? "market-new-trade" : undefined}>
       <td data-label={copy.side}><span className={`trade-side trade-${t.side}`}>{t.side === "buy" ? copy.buy : copy.sell}</span></td>
       <td data-label={copy.amount} title={rawUnits(t.baseAmountRaw, decimals) ?? undefined}>{marketNumber(rawUnits(t.baseAmountRaw, decimals), 3)}</td>
-      <td data-label={copy.quote} title={rawUnits(t.quoteAmountLamports, 9) ?? undefined}>{marketNumber(rawUnits(t.quoteAmountLamports, 9), 5)}</td>
+      <td data-label={copy.quote} title={rawUnits(t.quoteAmountLamports, 9) ?? undefined}><Money lamports={t.quoteAmountLamports} /></td>
       <td data-label={copy.venue}>{t.venue === "curve" ? copy.curve : copy.pool}</td><td data-label={copy.when}>{marketTime(t.blockTimeSec ? t.blockTimeSec * 1000 : null)}</td>
       <td data-label={copy.receipt}><a href={EXPLORER("tx", t.signature)} target="_blank" rel="noopener noreferrer" aria-label={`${copy.receipt} ${t.signature}`}>{short(t.signature)} ↗</a><small>{t.traderKind === "authority" ? `${copy.trader}: ${t.trader ? short(t.trader) : "—"}` : t.traderKind === "feePayer" ? copy.payer : copy.unknownTrader}</small></td>
     </tr>)}</tbody></table></div> : <DataState compact title={copy.noTrades} body={copy.noTradesBody} />}

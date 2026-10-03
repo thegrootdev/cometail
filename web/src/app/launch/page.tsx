@@ -1,6 +1,7 @@
 "use client";
 import { friendlyError } from "@/lib/errors";
 import { useState } from "react";
+import { CopyAddress } from "@/components/CopyAddress";
 import Link from "next/link";
 import { Keypair } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -169,6 +170,7 @@ export default function LaunchPage() {
             <div className="success-note" role="status">
               <strong>{c.launchReady}</strong>
               <Link href={`/token/${mint}`}>{c.openToken} ↗</Link>
+              <CopyAddress address={mint} />
               <a
                 href={EXPLORER("tx", status.signature!)}
                 target="_blank"

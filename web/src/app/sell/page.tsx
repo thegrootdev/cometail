@@ -4,6 +4,7 @@ import { friendlyError } from "@/lib/errors";
 // One transaction per step so a wallet shows exactly what each signature does; the vault
 // link appears as soon as the vault exists, and the vault page can withdraw or finish later.
 import { Suspense, useState } from "react";
+import { Money } from "@/components/Money";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
@@ -38,7 +39,7 @@ import {
 } from "@/lib/eligibility";
 import { useLoad, useTx , useStorageReady } from "@/lib/hooks";
 import { capToQ64, q64ToCap } from "@/lib/q64";
-import { short, sol } from "@/lib/format";
+import { short } from "@/lib/format";
 
 type RightsStream = {
   kind: "rights";
@@ -427,7 +428,7 @@ function Wizard() {
                           {s.kind === "rights" && (
                             <span className="text-starlight/60">
                               {" "}
-                              · {wizard.stages[s.progress]} · {sol(s.claimable)}{" "}
+                              · {wizard.stages[s.progress]} · <Money lamports={s.claimable.toString()} />{" "}
                               {wizard.claimable}
                             </span>
                           )}

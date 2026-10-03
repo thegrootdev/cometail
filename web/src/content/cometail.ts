@@ -376,12 +376,12 @@ export const market = {
   search: "Search tokens", searchHint: "Name, symbol or mint address", clear: "Clear filters",
   ranking: "Ranked by observed 24h SOL swap volume. Partial windows are labelled.",
   newestNote: "Ordered by launch time, not by the last refresh.",
-  price: "Price · SOL", fdv: "FDV · USD", volume: "24h volume · SOL", holders: "Holder addresses",
+  price: "Price · USD", fdv: "FDV · USD", volume: "24h volume · USD", holders: "Holder addresses",
   unknown: "Unavailable", partial: "Partial history", stale: "Last known data", current: "Latest snapshot",
   snapshot: "Observed", reference: "Devnet · USD reference values", mainnet: "Mainnet",
   valuation: "FDV uses total token supply and the displayed SOL/USD reference rate. It is not circulating market cap or an executable quote.",
   fxMissing: "USD reference unavailable. SOL values remain available.",
-  fxStale: "USD values use a stale reference rate.",
+  fxStale: "USD reference is stale. USD figures are hidden until the rate refreshes; SOL values remain available.",
   empty: "No comets in this view yet.", emptyBody: "Try another name or stage, or launch the first one.",
   failed: "Market data is out of reach.", failedBody: "The last snapshot may still be visible. Try again to reconnect.",
   loading: "Mapping the market…", loadingBody: "Reading token identities, pool prices and observed trades.",
@@ -389,10 +389,14 @@ export const market = {
   progress: "Curve progress", migrating: "Migrating to DAMM v2", completed: "Curve complete", pool: "DAMM v2",
   overview: "Market observatory", trades: "Recent trades", tradesBody: "Executed swaps on the curve and its graduated pool.",
   noTrades: "No trades in this window.", noTradesBody: "New confirmed swaps will appear here when the indexer observes them.",
-  buy: "Buy", sell: "Sell", side: "Side", amount: "Tokens", quote: "SOL", when: "Time · UTC", venue: "Venue", receipt: "Transaction",
+  buy: "Buy", sell: "Sell", side: "Side", amount: "Tokens", quote: "Value · USD", when: "Time · UTC", venue: "Venue", receipt: "Transaction",
   curve: "DBC", trader: "Swap authority", payer: "Fee payer only", unknownTrader: "Authority unavailable",
   tradeNote: "Trades are historical executions. Use the trading form for a current quote.",
   sourceNote: "Holder counts are addresses with a nonzero balance, not people. The pools’ own vaults are excluded; custody accounts such as vaults may be included.",
   historyPending: "History is still being indexed. Counts and volume may be incomplete.",
   dataUpdated: "A new market snapshot is available.", refresh: "Show updates", view: "Explore token",
 } as const;
+
+export const addresses = { mint: "Mint", vault: "Vault", position: "Position", pool: "Pool", copy: "Copy", copied: "Copied", failed: "Copy failed", manual: "Select and copy address" } as const;
+
+export const money = { stale: "USD stale", missing: "USD unavailable", rate: "SOL/USD", liquidity: "Liquidity · USD", curveLiquidity: "Quote reserve on the curve", poolLiquidity: "Estimate · pool quote side × 2", unknownLiquidity: "Liquidity not indexed", fees: "Fees earned", toSeller: "Paid to seller" } as const;

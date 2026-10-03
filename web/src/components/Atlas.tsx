@@ -5,6 +5,11 @@ import { experience as copy } from "@/content/cometail";
 import { SkyStream, api } from "@/lib/api";
 import { useLoad } from "@/lib/hooks";
 import { short, sol } from "@/lib/format";
+import { Money } from "./Money";
+import { useSolUsd } from "@/lib/prices";
+import { formatUsd, usdValue } from "@/lib/usd";
+import { rawUnits } from "@/lib/market";
+import { money } from "@/content/cometail";
 import { Stat } from "./Shell";
 import { DataState } from "./Experience";
 export function hash(s: string) {
@@ -126,6 +131,8 @@ export function StarAtlas({
   onRetry?: () => void;
 }) {
   const id = useId().replace(/:/g, "");
+  const rate = useSolUsd();
+  const feeLabel = (lamports: string) => rate.status === "fresh" ? formatUsd(usdValue(rawUnits(lamports, 9), rate)) : rate.status === "stale" ? money.stale : money.missing;
   const previous = useRef(new Map<string, bigint>());
   const [sparks, setSparks] = useState<string[]>([]);
   const [motion, setMotion] = useState(false);
@@ -316,7 +323,7 @@ export function StarAtlas({
               fontSize={compact ? 13 : 10}
               fill="#f5c451a0"
             >
-              {sol(s.claimableLamports, 3)}
+              {feeLabel(s.claimableLamports)}
             </text>
           </a>
         ))}
@@ -362,14 +369,14 @@ export function AtlasStats({ streams }: { streams: SkyStream[] }) {
       <Stat label={copy.known} value={String(streams.length)} tone="plain" />
       <Stat
         label={copy.accrued}
-        value={sol(amount("claimableLamports"))}
+        value={<Money lamports={amount("claimableLamports")} />}
         tone="dust"
       />
       <Stat
         label={copy.harvested}
         value={
           streams.some((s) => s.realized30dLamports !== null)
-            ? sol(amount("realized30dLamports"))
+            ? <Money lamports={amount("realized30dLamports")} />
             : "—"
         }
         tone="plain"

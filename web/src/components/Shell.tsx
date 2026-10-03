@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
 import { nav, product, experience as copy } from "@/content/cometail";
+import { PriceReference } from "./Money";
 import { CLUSTER } from "@/lib/addresses";
 const WalletButton = dynamic(
   () =>
@@ -86,6 +87,7 @@ export function Shell({
       </header>
       <main id="content" tabIndex={-1} className={`page-content ${wide ? "page-wide" : ""}`}>
         {children}
+        <div className="page-price-reference"><PriceReference /></div>
       </main>
       <footer className="site-footer">
         <div>
@@ -153,7 +155,7 @@ export function Stat({
   tone = "ion",
 }: {
   label: string;
-  value: string;
+  value: React.ReactNode;
   tone?: "ion" | "dust" | "plain";
 }) {
   return (

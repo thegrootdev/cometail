@@ -1,5 +1,7 @@
 "use client";
 import { friendlyError } from "@/lib/errors";
+import { CopyAddress } from "@/components/CopyAddress";
+import { Money } from "@/components/Money";
 import { TokenMarket, TokenTrades } from "@/components/Market";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
@@ -203,7 +205,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         title={meta?.name || short(mintStr)}
         body={meta?.symbol ? `$${meta.symbol}` : undefined}
       >
-        <TokenAvatar seed={mintStr} image={artwork ?? undefined} size="large" />
+        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={artwork ?? undefined} size="large" /><CopyAddress address={mintStr} /></div>
       </PageHeader>
       <div className="detail-address">
         <a href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer">
@@ -266,10 +268,10 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <Stat
                   label="claimable now"
-                  value={sol(claimable)}
+                  value={<Money lamports={claimable.toString()} />}
                   tone="dust"
                 />
-                <Stat label={c.curveEstimate} value={sol(realized)} />
+                <Stat label={c.curveEstimate} value={<Money lamports={realized.toString()} />} />
               </div>
               <p className="caption mt-4">{c.curveEstimateBody}</p>
               <p className="mt-3 text-xs text-starlight/50">

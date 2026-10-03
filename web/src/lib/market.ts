@@ -10,6 +10,7 @@ export interface MarketToken {
   tokenKind: "plain" | "stream"; vault: string | null;
   stage: "bonding" | "completed" | "migrating" | "graduated";
   priceSol: string | null; priceStatus?: MetricStatus; priceObservedAtMs?: number | null;
+  liquidityLamports?: string | null; liquidityBasis?: "curve-quote-reserve" | "damm-quote-x2" | null;
   totalSupplyRaw: string | null; circulatingSupplyRaw: string | null;
   fdvUsd: string | null; marketCapUsd: string | null; valuationBasis: string;
   volume24hLamports: string | null; buys24h: number | null; sells24h: number | null;

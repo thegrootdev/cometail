@@ -7,6 +7,7 @@ import {
 } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { useMemo } from "react";
+import { SolUsdProvider } from "./prices";
 import { RPC_URL } from "./addresses";
 import { WalletModalAccessibility } from "@/components/WalletModalAccessibility";
 import "@solana/wallet-adapter-react-ui/styles.css";
@@ -23,7 +24,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       }}
     >
       <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>{children}<WalletModalAccessibility /></WalletModalProvider>
+        <WalletModalProvider><SolUsdProvider>{children}</SolUsdProvider><WalletModalAccessibility /></WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
   );

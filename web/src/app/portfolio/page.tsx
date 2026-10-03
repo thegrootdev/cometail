@@ -1,4 +1,7 @@
 "use client";
+import { CopyAddress } from "@/components/CopyAddress";
+import { Money } from "@/components/Money";
+import { addresses, money } from "@/content/cometail";
 import Link from "next/link";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
@@ -14,7 +17,7 @@ import { api } from "@/lib/api";
 import { poolsByCreator } from "@/lib/dbc";
 import { cpAmm } from "@/lib/damm";
 import { useLoad } from "@/lib/hooks";
-import { short, sol } from "@/lib/format";
+import { short } from "@/lib/format";
 export default function PortfolioPage() {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
@@ -70,22 +73,21 @@ export default function PortfolioPage() {
               </DataState>
             ) : (
               data.pools.map(({ pool, state }) => (
-                <Link
-                  className="portfolio-item"
-                  key={pool.toBase58()}
-                  href={`/token/${new PublicKey(state.baseMint).toBase58()}`}
-                >
+                <div className="portfolio-item portfolio-owned" key={pool.toBase58()}>
+                <Link className="portfolio-owned-link" href={`/token/${new PublicKey(state.baseMint).toBase58()}`}>
                   <span className="token-cell">
                     <TokenAvatar seed={String(state.baseMint)} />
                     <span>
                       {short(String(state.baseMint))}
                       <small>
-                        {sol(state.creatorQuoteFee.toString())} {copy.accrued}
+                        <span>{copy.accrued}</span><Money lamports={state.creatorQuoteFee.toString()} />
                       </small>
                     </span>
                   </span>
                   ↗
                 </Link>
+                <CopyAddress address={String(state.baseMint)} />
+                </div>
               ))
             )}
           </Card>
@@ -98,19 +100,18 @@ export default function PortfolioPage() {
               </DataState>
             ) : (
               data.vaults.map((v) => (
-                <Link
-                  className="portfolio-item"
-                  key={v.vault}
-                  href={`/vault/${v.vault}`}
-                >
+                <div className="portfolio-item portfolio-owned" key={v.vault}>
+                <Link className="portfolio-owned-link" href={`/vault/${v.vault}`}>
                   <span>
                     {short(v.vault)}
                     <small>
-                      {sol(String(v.data.accounting?.toDepositor ?? 0))}
+                      <span>{money.toSeller}</span><Money lamports={String(v.data.accounting?.toDepositor ?? 0)} />
                     </small>
                   </span>
                   <Badge>{Object.keys(v.data.status ?? {})[0]}</Badge>
                 </Link>
+                {v.data.stMint && <CopyAddress address={String(v.data.stMint)} />}
+                </div>
               ))
             )}
           </Card>
@@ -130,6 +131,7 @@ export default function PortfolioPage() {
                       {short(new PublicKey(p.positionState.pool).toBase58())}
                     </small>
                   </span>
+                  <CopyAddress address={p.position.toBase58()} label={addresses.position} />
                   <Badge tone="gold">{wizardPosition()}</Badge>
                 </div>
               ))

@@ -1,6 +1,9 @@
 "use client";
 // Vault page: streams with custody, income and payouts from the program's accounting, the
 // buyback ladder and burn log from events, the disclosures, and the stream token's market.
+import { CopyAddress } from "@/components/CopyAddress";
+import { Money } from "@/components/Money";
+import { addresses } from "@/content/cometail";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { PublicKey } from "@solana/web3.js";
@@ -84,6 +87,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
           </button>
         )}
       </PageHeader>
+      <div className="vault-addresses"><CopyAddress address={vaultStr} label={addresses.vault} />{v?.stMint && <CopyAddress address={String(v.stMint)} />}</div>
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
       {!loading && !error && !data && (
@@ -115,24 +119,24 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
               <div className="grid grid-cols-2 gap-4">
                 <Stat
                   label="harvested, gross"
-                  value={sol(str(acc.harvestedGross))}
+                  value={<Money lamports={str(acc.harvestedGross)} />}
                   tone="dust"
                 />
-                <Stat label="kept for buybacks" value={sol(str(acc.income))} />
+                <Stat label="kept for buybacks" value={<Money lamports={str(acc.income)} />} />
                 <Stat
                   label="to the seller"
-                  value={sol(str(acc.toDepositor))}
+                  value={<Money lamports={str(acc.toDepositor)} />}
                   tone="plain"
                 />
                 <Stat
                   label="to the protocol"
-                  value={sol(str(acc.toProtocol))}
+                  value={<Money lamports={str(acc.toProtocol)} />}
                   tone="plain"
                 />
               </div>
               <p className="mt-4 text-sm text-starlight/70">
                 {vaultPage.cashout}:{" "}
-                <span className="text-dust">{sol(str(acc.cashedOut))}</span>
+                <span className="text-dust"><Money lamports={str(acc.cashedOut)} /></span>
               </p>
             </Card>
             <Card title={vaultPage.ladder}>
@@ -145,7 +149,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                   value={String(v.routing?.outstandingOrders ?? 0)}
                   tone="plain"
                 />
-                <Stat label="placed, gross" value={sol(str(acc.routedGross))} />
+                <Stat label="placed, gross" value={<Money lamports={str(acc.routedGross)} />} />
                 <Stat
                   label={vaultPage.burned}
                   value={units(str(acc.burnedSt), 6)}
@@ -240,7 +244,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                         {s.live.lockedSharePct}% {vaultPage.lockedShare} ·{" "}
                       </>
                     )}
-                    harvested {sol(str(s.harvested))}
+                    harvested <Money lamports={str(s.harvested)} />
                   </span>
                 </li>
               ))}

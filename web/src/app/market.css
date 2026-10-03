@@ -91,3 +91,42 @@
  .desktop-nav a { padding: 8px 12px; }
  .header-right { margin-left: auto; }
 }
+
+/* Address stickers are separate controls, never nested inside navigation links. */
+.address-sticker { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; margin: 8px 0; vertical-align: middle; }
+.address-label { color: var(--muted); font-size: 11px; font-weight: 800; }
+.address-copy { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; max-width: 100%; padding: 8px 11px; border: 2px solid var(--ink); border-radius: 12px; box-shadow: 3px 3px 0 var(--ink); color: var(--ink); background: var(--ion); font: 800 13px Nunito, sans-serif; cursor: pointer; }
+.address-copy:hover { background: var(--starlight); }
+.address-copy:focus-visible { outline: 3px solid var(--dust); outline-offset: 3px; }
+.address-copy svg { flex: 0 0 16px; }
+.address-short { overflow-wrap: anywhere; }
+.address-feedback { color: var(--dust); font-size: 12px; font-weight: 800; min-height: 18px; }
+.address-manual { flex-basis: 100%; min-width: 0; width: 100%; font-size: 16px; color: var(--starlight); background: var(--panel-deep); border: 1px solid var(--ion); padding: 8px; border-radius: 8px; }
+.market-card-link { display: block; border-radius: 12px; }
+.market-card-link:focus-visible { outline: 3px solid var(--ion); outline-offset: 5px; }
+.money-pair { display: inline-flex; flex-direction: column; max-width: 100%; vertical-align: top; font-variant-numeric: tabular-nums; }
+.money-pair .money-sol { display: block; font: 600 12px/1.5 Nunito, sans-serif; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+.money-unavailable { color: var(--muted); font-size: .65em; line-height: 1.5; }
+.price-reference { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.price-reference[data-price-status="stale"] { color: var(--dust); }
+.page-price-reference { margin-top: 32px; border-top: 1px solid #e8ecf41a; padding-top: 18px; }
+.market-valuation { flex-wrap: wrap; }
+.market-valuation > .price-reference { flex-basis: 100%; }
+.token-market .market-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.token-header-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.vault-addresses { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 16px; }
+.portfolio-owned { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.portfolio-owned-link { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.portfolio-item { flex-wrap: wrap; }
+.portfolio-owned-link .token-cell { min-width: 0; }
+.success-note .address-sticker { display: flex; }
+@media(max-width:600px) {
+ .token-market .market-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+ .stream-table .address-sticker { justify-content: flex-end; }
+ .token-header-identity { align-items: flex-start; }
+}
+/* Portfolio summaries keep the dollar amount primary even inside compact metadata. */
+.portfolio-owned-link .money-pair { display: flex; margin-top: 4px; color: var(--dust); font-size: 18px; font-weight: 800; line-height: 1.3; }
+.portfolio-owned-link small > span:first-child:not(.money-pair) { display: block; }
+.money-pair .money-sol { font-size: clamp(10px, .65em, 12px); }
+.money-unavailable { font-size: 13px; }

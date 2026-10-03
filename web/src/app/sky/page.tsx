@@ -1,4 +1,6 @@
 "use client";
+import { CopyAddress } from "@/components/CopyAddress";
+import { Money } from "@/components/Money";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Shell } from "@/components/Shell";
@@ -11,7 +13,7 @@ import {
 } from "@/components/Experience";
 import { experience as copy, sky, wizard } from "@/content/cometail";
 import { useLoad } from "@/lib/hooks";
-import { short, sol } from "@/lib/format";
+import { short } from "@/lib/format";
 export default function SkyPage() {
   const { data, loading, error, reload } = useLoad(loadSky, [], 30000);
   const [query, setQuery] = useState(""),
@@ -91,17 +93,18 @@ export default function SkyPage() {
                         </small>
                       </span>
                     </Link>
+                    <CopyAddress address={s.baseMint} />
                   </td>
                   <td data-label={copy.stage}>
                     <Badge tone={s.progress === 3 ? "gold" : "ion"}>
                       {wizard.stages[s.progress] ?? s.progress}
                     </Badge>
                   </td>
-                  <td className="money" data-label={copy.accrued}>{sol(s.claimableLamports)}</td>
+                  <td className="money" data-label={copy.accrued}><Money lamports={s.claimableLamports} /></td>
                   <td data-label={copy.harvested}>
                     {s.realized30dLamports === null
                       ? "—"
-                      : sol(s.realized30dLamports)}
+                      : <Money lamports={s.realized30dLamports} />}
                   </td>
                   <td data-label={copy.eligibility}>
                     {s.eligible ? (
