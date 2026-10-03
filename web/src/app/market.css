@@ -130,3 +130,6 @@
 .portfolio-owned-link small > span:first-child:not(.money-pair) { display: block; }
 .money-pair .money-sol { font-size: clamp(10px, .65em, 12px); }
 .money-unavailable { font-size: 13px; }
+
+.atlas-stats .stat-value { white-space: normal; }
+.money-quote { overflow-wrap: anywhere; }

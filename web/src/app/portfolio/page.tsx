@@ -1,5 +1,6 @@
 "use client";
 import { CopyAddress } from "@/components/CopyAddress";
+import { quoteAsset } from "@/lib/quotes";
 import { Money } from "@/components/Money";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
@@ -94,7 +95,7 @@ export default function PortfolioPage() {
                     <SocialLinks links={token?.links} tokenName={token?.name} />
                     <div className="portfolio-income">
                       <span>{copy.accrued}</span>
-                      <Money lamports={state.creatorQuoteFee.toString()} />
+                      <Money quote={quoteAsset(source?.quoteMint)} lamports={state.creatorQuoteFee.toString()} />
                     </div>
                     <Link href={`/token/${mint}`} className="text-link">
                       {identity.viewToken} ↗

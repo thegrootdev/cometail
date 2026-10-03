@@ -3,7 +3,8 @@ import { friendlyError, insufficientSol, insufficientTokens } from "@/lib/errors
 import { AmountInput } from "@/components/AmountInput";
 import { readTokenBalance, useSolBalance, useTokenBalance } from "@/lib/balances";
 import { formatAmount, inputValue, parseAmount, share, spendable } from "@/lib/amounts";
-import { useSolUsd } from "@/lib/prices";
+import { quoteAsset, quoteRate } from "@/lib/quotes";
+import { useMarket, type MarketToken } from "@/lib/market";
 import { formatUsd, usdValue } from "@/lib/usd";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
@@ -65,7 +66,7 @@ export default function TokenPage({
       </Shell>
     );
   }
-  return <TokenDetail mintStr={mintStr} />;
+  return <TokenDetail key={mintStr} mintStr={mintStr} />;
 }
 function TokenDetail({ mintStr }: { mintStr: string }) {
   const { connection } = useConnection();
@@ -104,9 +105,17 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [quote, setQuote] = useState<{ inRaw: bigint; out: bigint; minOut: bigint; side: "buy" | "sell" } | null>(null);
   const quoteSeq = useRef(0);
-  const rate = useSolUsd();
+  const market = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mintStr)}`);
+  const rate = quoteRate(market.data?.data.quoteMint === view?.quoteMint.toBase58() ? market.data?.data.quoteUsd : null, market.error ? null : market.data?.generatedAtMs);
+  const quoteMint = view?.quoteMint ?? null;
+  const nativeQuote = !!quoteMint?.equals(NATIVE_MINT);
+  const quoteDecimals = view?.quoteDecimals ?? 9;
+  const { data: quoteMeta } = useLoad(() => quoteMint && !nativeQuote ? readMetadata(connection, quoteMint) : Promise.resolve(null), [quoteMint?.toBase58()]);
+  const asset = quoteAsset(quoteMint?.toBase58(), view?.quoteDecimals, nativeQuote ? null : quoteMeta?.symbol);
   const solBalance = useSolBalance(publicKey);
   const tokenBalance = useTokenBalance(mint, publicKey);
+  const quoteBalance = useTokenBalance(nativeQuote ? null : quoteMint, publicKey);
+  const buyBalance = nativeQuote ? solBalance.lamports : quoteBalance.raw;
   const graduated = view?.progress === MigrationProgress.CreatedPool;
   const bonding = view?.progress === MigrationProgress.PreBondingCurve;
   const progressPct = view
@@ -130,19 +139,19 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   /** Lamports kept back on a buy for the network fee and the token account. */
   const TRADE_RESERVE = 10_000_000n;
   const amountRaw = () => {
-    const raw = parseAmount(amount, side === "buy" ? 9 : dec);
+    const raw = parseAmount(amount, side === "buy" ? quoteDecimals : dec);
     return raw && raw > 0n ? new BN(raw.toString()) : null;
   };
-  const solWithUsd = (lamports: bigint) => {
-    const usd = usdValue(inputValue(lamports, 9), rate);
-    // small SOL amounts keep six decimals so a minimum after slippage never reads the same as the quote
-    return `${formatAmount(lamports, 9, { ticker: "SOL", maxFraction: lamports < 100_000_000n ? 6 : 4 })}${usd === null ? "" : ` · ${formatUsd(usd)}`}`;
+  const quoteWithUsd = (lamports: bigint) => {
+    const usd = usdValue(inputValue(lamports, quoteDecimals), rate);
+    // Preserve quote-token units; USD is display-only and requires the matching fresh rate.
+    return `${formatAmount(lamports, quoteDecimals, { ticker: asset.symbol, maxFraction: Math.min(quoteDecimals, 6) })}${usd === null ? "" : ` · ${formatUsd(usd)}`}`;
   };
   const quickAmounts = side === "buy"
-    ? [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} SOL`, value: v })), { label: amounts.max, value: solBalance.lamports === null ? null : inputValue(spendable(solBalance.lamports, TRADE_RESERVE) ?? 0n, 9) }]
+    ? [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} ${asset.symbol}`, value: v })), { label: amounts.max, value: buyBalance === null ? null : inputValue(nativeQuote ? spendable(buyBalance, TRADE_RESERVE) ?? 0n : buyBalance, quoteDecimals) }]
     : [25, 50, 75, 100].map((p) => ({ label: `${p}%`, value: tokenBalance.raw === null ? null : inputValue(share(tokenBalance.raw, p), dec) }));
   const dammPool = view
-    ? derivedDammPool(mint, view.migrationFeeOption)
+    ? derivedDammPool(mint, view.migrationFeeOption, view.quoteMint)
     : PublicKey.default;
   // the quote follows the typed amount: a short debounce, the newest request wins, the trade
   // quotes again when it is sent
@@ -150,7 +159,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     const raw = amountRaw();
     const seq = ++quoteSeq.current;
     if (!raw || !view || (!bonding && !graduated)) { setQuote(null); setQuoting(false); return; }
-    setQuoting(true);
+    setQuote(null); setQuoting(true);
     const timer = setTimeout(async () => {
       try {
         let out: BN, minOut: BN;
@@ -158,7 +167,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           const q: any = await curveQuote(connection, view, raw, side === "sell");
           out = q.outputAmount; minOut = q.minimumAmountOut;
         } else {
-          const q = await dammQuote(connection, dammPool, side === "buy" ? NATIVE_MINT : mint, raw, { a: dec, b: 9 });
+          const q = await dammQuote(connection, dammPool, side === "buy" ? view.quoteMint : mint, raw, { a: dec, b: quoteDecimals });
           out = q.out; minOut = q.minOut;
         }
         if (seq !== quoteSeq.current) return;
@@ -172,25 +181,26 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         if (seq === quoteSeq.current) setQuoting(false);
       }
     }, 350);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); quoteSeq.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [amount, side, view?.quoteReserve?.toString(), view?.progress, dec, status.state === "done" ? status.signature : null]);
+  }, [amount, side, view?.quoteReserve?.toString(), view?.progress, view?.pool.toBase58(), quoteMint?.toBase58(), quoteDecimals, dec, status.state === "done" ? status.signature : null]);
   const trade = async () => {
     setActionError(null);
     try {
       const raw = amountRaw();
       if (!raw) { setActionError(tokenPage.enterAmount); return; }
       if (!view || !publicKey) return;
-      // a buy needs the SOL plus network and account fees, a sell needs the tokens: say so before
-      // the wallet prompt, from a fresh read
-      if (side === "buy") {
-        const need = BigInt(raw.toString()) + TRADE_RESERVE;
-        const have = BigInt(await connection.getBalance(publicKey));
-        if (have < need) { setActionError(insufficientSol(need, have)); return; }
-      } else {
-        const need = BigInt(raw.toString());
-        const have = await readTokenBalance(connection, mint, publicKey);
-        if (have < need) { setActionError(insufficientTokens(formatAmount(need, dec, { ticker }), formatAmount(have, dec, { ticker }))); return; }
+      // Check native fee funding separately from the input token, before the wallet prompt.
+      const inputNeed = BigInt(raw.toString());
+      const solNeed = TRADE_RESERVE + (side === "buy" && nativeQuote ? inputNeed : 0n);
+      const solHave = BigInt(await connection.getBalance(publicKey));
+      if (solHave < solNeed) { setActionError(insufficientSol(solNeed, solHave)); return; }
+      if (side === "sell" || !nativeQuote) {
+        const inputMint = side === "buy" ? view.quoteMint : mint;
+        const inputDecimals = side === "buy" ? quoteDecimals : dec;
+        const inputTicker = side === "buy" ? asset.symbol : ticker;
+        const have = await readTokenBalance(connection, inputMint, publicKey);
+        if (have < inputNeed) { setActionError(insufficientTokens(formatAmount(inputNeed, inputDecimals, { ticker: inputTicker }), formatAmount(have, inputDecimals, { ticker: inputTicker }))); return; }
       }
       // the trade sends with the minimum the user reviewed: the displayed quote for this exact
       // amount and side, never a fresh one computed behind the display
@@ -219,9 +229,9 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
               connection,
               dammPool,
               publicKey,
-              side === "buy" ? NATIVE_MINT : mint,
+              side === "buy" ? view.quoteMint : mint,
               raw,
-              { a: dec, b: 9 },
+              { a: dec, b: quoteDecimals },
               1,
               minimumOut,
             ).then((r) => r.tx),
@@ -233,6 +243,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       reload();
       solBalance.reload();
       tokenBalance.reload();
+      quoteBalance.reload();
     } catch (e) {
       setActionError(friendlyError(e, failures.actionFailed));
     }
@@ -249,7 +260,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       </PageHeader>
       <SocialLinks links={artwork?.links} tokenName={meta?.name} />
       <div className="detail-address">
-        {view && (
+        {view && nativeQuote && (
           <Link
             href={`/sell?pool=${pool.toBase58()}`}
             className="button button-secondary"
@@ -283,7 +294,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                     />
                   </div>
                   <p className="mt-2 text-sm text-starlight/70">
-                    {sol(view.quoteReserve)} of {sol(view.threshold)}{" "}
+                    {formatAmount(BigInt(view.quoteReserve.toString()), quoteDecimals, { ticker: asset.symbol })} of {formatAmount(BigInt(view.threshold.toString()), quoteDecimals, { ticker: asset.symbol })}{" "}
                     {tokenPage.progress}
                   </p>
                 </div>
@@ -306,10 +317,10 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <Stat
                   label="claimable now"
-                  value={<Money lamports={claimable.toString()} />}
+                  value={<Money lamports={claimable.toString()} quote={asset} quoteRate={rate} />}
                   tone="dust"
                 />
-                <Stat label={c.curveEstimate} value={<Money lamports={realized.toString()} />} />
+                <Stat label={c.curveEstimate} value={<Money lamports={realized.toString()} quote={asset} quoteRate={rate} />} />
               </div>
               <p className="caption mt-4">{c.curveEstimateBody}</p>
               <p className="mt-3 text-xs text-starlight/50">
@@ -367,21 +378,21 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                 </div>
                 <AmountInput
                   label={side === "buy" ? tokenPage.solIn : tokenPage.tokensIn}
-                  unit={side === "buy" ? "SOL" : ticker}
+                  unit={side === "buy" ? asset.symbol : ticker}
                   value={amount}
                   onChange={setAmount}
-                  balance={!publicKey ? undefined : side === "buy" ? (solBalance.lamports === null ? null : formatAmount(solBalance.lamports, 9, { ticker: "SOL" })) : (tokenBalance.raw === null ? null : formatAmount(tokenBalance.raw, dec, { ticker }))}
+                  balance={!publicKey ? undefined : side === "buy" ? (buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: asset.symbol })) : (tokenBalance.raw === null ? null : formatAmount(tokenBalance.raw, dec, { ticker }))}
                   quick={quickAmounts}
-                  hint={side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined}
+                  hint={!nativeQuote ? c.quoteFees : side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined}
                   disabled={status.state === "sending"}
                 />
                 {(quote || quoting) && (
                   <div className="quote-card" aria-busy={quoting} aria-live="polite">
                     {quote ? (
                       <>
-                        <div className="quote-row"><span>{quote.side === "buy" ? tokenPage.youPay : tokenPage.youSell}</span><strong>{quote.side === "buy" ? solWithUsd(quote.inRaw) : formatAmount(quote.inRaw, dec, { ticker })}</strong></div>
-                        <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.side === "buy" ? formatAmount(quote.out, dec, { ticker }) : solWithUsd(quote.out)}</strong></div>
-                        <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{quote.side === "buy" ? formatAmount(quote.minOut, dec, { ticker }) : solWithUsd(quote.minOut)}</strong></div>
+                        <div className="quote-row"><span>{quote.side === "buy" ? tokenPage.youPay : tokenPage.youSell}</span><strong>{quote.side === "buy" ? quoteWithUsd(quote.inRaw) : formatAmount(quote.inRaw, dec, { ticker })}</strong></div>
+                        <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.side === "buy" ? formatAmount(quote.out, dec, { ticker }) : quoteWithUsd(quote.out)}</strong></div>
+                        <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{quote.side === "buy" ? formatAmount(quote.minOut, dec, { ticker }) : quoteWithUsd(quote.minOut)}</strong></div>
                         <p className="quote-note">{tokenPage.quoteNote}</p>
                       </>
                     ) : (
@@ -392,7 +403,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                 <div className="mt-3 flex gap-3">
                   <button
                     onClick={trade}
-                    disabled={!publicKey || status.state === "sending" || quoting || !quote || quote.side !== side || quote.inRaw !== (parseAmount(amount, side === "buy" ? 9 : dec) ?? -1n)}
+                    disabled={!publicKey || status.state === "sending" || quoting || !quote || quote.side !== side || quote.inRaw !== (parseAmount(amount, side === "buy" ? quoteDecimals : dec) ?? -1n)}
                     className="rounded-full bg-ion px-5 py-2 font-semibold text-night disabled:opacity-40"
                   >
                     {status.state === "sending"
@@ -436,7 +447,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
             )}
           </Card>
         </div>
-        <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} />
+        <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} quote={asset} rate={rate} />
         </>
       )}
     </Shell>

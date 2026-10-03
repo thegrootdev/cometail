@@ -81,7 +81,7 @@ export const tokenPage = {
   buy: "Buy",
   sellToken: "Sell",
   enterAmount: "Enter an amount to get a quote.",
-  solIn: "SOL in",
+  solIn: "Quote amount in",
   tokensIn: "Tokens in",
   quoting: "Getting a quote…",
   youPay: "You pay",
@@ -232,7 +232,7 @@ export const experience = {
   reconnect: "Try again",
   atlas: "Atlas",
   atlasNote:
-    "Tail length reflects claimable fees plus 30-day harvests, or a curve estimate when harvests are unavailable. Gold sparks mark newly observed fees.",
+    "Within each quote token, tail length reflects claimable fees plus 30-day harvests, or a curve estimate when harvests are unavailable. Gold sparks mark newly observed fees.",
   atlasEmpty: "An open sky. Room for your comet.",
   atlasEmptyBody:
     "No streams have been indexed in this view yet. A real fee stream will appear here as the data arrives.",
@@ -243,7 +243,7 @@ export const experience = {
   accrued: "Claimable now",
   harvested: "Harvested · 30 days",
   tailScale:
-    "Tail = claimable + 30-day harvested (curve estimate if unavailable)",
+    "Tails compare income within each quote token",
   chartLimit:
     "Up to 60 streams on desktop, 12 on mobile; the catalogue includes the full result.",
   activity: "Activity is observed, never simulated.",
@@ -329,7 +329,9 @@ export const experience = {
   symbolPlaceholder: "COMET",
   firstBuy: "First buy",
   optional: "Optional",
-  buyInvalid: "Use a non-negative SOL amount with up to 9 decimal places.",
+  buyInvalid: "Enter a non-negative amount within the quote token’s decimal precision.",
+  quoteFees: "The purchase uses your quote-token balance. Keep SOL for network and account fees.",
+  testQuote: "Devnet quote tokens are test stand-ins. Their units are not a dollar or stock valuation.",
   identityLimit:
     "Use a name up to 32 UTF-8 bytes and a symbol up to 10 bytes (including the stream prefix).",
   messageRequired:
@@ -405,11 +407,13 @@ export const experience = {
 export const plainLaunch = {
   presets: {
     title: "Choose your curve",
-    body: "One token. Three paths to graduation.",
+    body: "Choose a curve and the token people use to buy.",
     standard: { name: "Standard", body: "The familiar curve, with price rising as tokens are bought." },
     long: { name: "Long curve", body: "More room for price discovery before the pool graduates." },
     flat: { name: "Flat curve", body: "Most liquidity sits in a narrower price band before the final climb." },
-    quote: "Quoted in SOL",
+    stockUsdc: { name: "Dollar-paired", body: "The standard curve, bought and sold in USDC." },
+    stockXstock: { name: "Stock-paired", body: "The standard curve, bought and sold in stock-token units." },
+    quote: "Quoted in",
     unavailable: "Unavailable on this network",
     shapeNote: "Shapes illustrate the designs; they are not price forecasts. Your curve is fixed at launch.",
     selected: "Selected curve",
@@ -430,10 +434,10 @@ export const market = {
   search: "Search tokens", searchHint: "Name, symbol or mint address", clear: "Clear filters",
   ranking: "Ranked by observed 24h SOL swap volume. Partial windows are labelled.",
   newestNote: "Ordered by launch time, not by the last refresh.",
-  price: "Price · USD", fdv: "FDV · USD", volume: "24h volume · USD", holders: "Holder addresses",
+  price: "Price", fdv: "FDV · USD", volume: "24h volume", holders: "Holder addresses",
   unknown: "Unavailable", partial: "Partial history", stale: "Last known data", current: "Latest snapshot",
   snapshot: "Observed", reference: "Devnet · USD reference values", mainnet: "Mainnet",
-  valuation: "FDV uses total token supply and the displayed SOL/USD reference rate. It is not circulating market cap or an executable quote.",
+  valuation: "FDV uses total token supply and the quote token’s fresh USD reference rate. It is not circulating market cap or an executable quote.",
   fxMissing: "USD reference unavailable. SOL values remain available.",
   fxStale: "USD reference is stale. USD figures are hidden until the rate refreshes; SOL values remain available.",
   empty: "No comets in this view yet.", emptyBody: "Try another name or stage, or launch the first one.",
@@ -444,7 +448,7 @@ export const market = {
   progress: "Curve progress", migrating: "Migrating to DAMM v2", completed: "Curve complete", pool: "DAMM v2",
   overview: "Market observatory", trades: "Recent trades", tradesBody: "Executed swaps on the curve and its graduated pool.",
   noTrades: "No trades in this window.", noTradesBody: "New confirmed swaps will appear here when the indexer observes them.",
-  buy: "Buy", sell: "Sell", side: "Side", amount: "Tokens", quote: "Value · USD", when: "Time · UTC", venue: "Venue", receipt: "Transaction",
+  buy: "Buy", sell: "Sell", side: "Side", amount: "Tokens", quote: "Quote value", when: "Time · UTC", venue: "Venue", receipt: "Transaction",
   curve: "DBC", trader: "Swap authority", payer: "Fee payer only", unknownTrader: "Authority unavailable",
   tradeNote: "Trades are historical executions. Use the trading form for a current quote.",
   sourceNote: "Holder counts are addresses with a nonzero balance, not people. The pools’ own vaults are excluded; custody accounts such as vaults may be included.",
@@ -454,7 +458,7 @@ export const market = {
 
 export const addresses = { mint: "Mint", vault: "Vault", position: "Position", pool: "Pool", copy: "Copy", copied: "Copied", failed: "Copy failed", manual: "Select and copy address" } as const;
 
-export const money = { stale: "USD stale", missing: "USD unavailable", rate: "SOL/USD", liquidity: "Liquidity · USD", curveLiquidity: "Quote reserve on the curve", poolLiquidity: "Estimate · pool quote side × 2", unknownLiquidity: "Liquidity not indexed", fees: "Fees earned", toSeller: "Paid to seller" } as const;
+export const money = { stale: "USD stale", missing: "USD unavailable", rate: "SOL/USD", liquidity: "Liquidity", curveLiquidity: "Quote reserve on the curve", poolLiquidity: "Estimate · pool quote side × 2", unknownLiquidity: "Liquidity not indexed", fees: "Fees earned", toSeller: "Paid to seller" } as const;
 
 export const identity = {
   token: "Token", pendingName: "Token identity pending", pendingSymbol: "Ticker not available yet", pendingTicker: "Pending",

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState , useRef } from "react";
 import { API_URL, CLUSTER } from "./addresses";
+import { WSOL, type QuoteUsd } from "./quotes";
 import type { TokenLinks } from "./token-display";
 
 export type MetricStatus = "ok" | "partial" | "stale" | "unavailable";
@@ -11,6 +12,7 @@ export interface MarketToken {
   creator: string; createdAtMs: number | null; dbcPool: string; dammPool: string | null;
   tokenKind: "plain" | "stream"; vault: string | null;
   stage: "bonding" | "completed" | "migrating" | "graduated";
+  quoteMint: string; quoteDecimals: number | null; quoteUsd: QuoteUsd | null; priceQuote: string | null;
   priceSol: string | null; priceStatus?: MetricStatus; priceObservedAtMs?: number | null;
   liquidityLamports?: string | null; liquidityBasis?: "curve-quote-reserve" | "damm-quote-x2" | null;
   totalSupplyRaw: string | null; circulatingSupplyRaw: string | null;
@@ -25,7 +27,8 @@ export interface MarketToken {
 export interface MarketTrade {
   id: string; signature: string; ordinal: number; slot: number; blockTimeSec: number | null;
   pool: string; venue: "curve" | "damm"; side: "buy" | "sell";
-  baseAmountRaw: string; quoteAmountLamports: string; executionPriceSol: string | null;
+  quoteMint: string; quoteDecimals: number; executionPriceQuote: string | null;
+  baseAmountRaw: string | null; quoteAmountLamports: string | null; executionPriceSol: string | null;
   trader: string | null; traderKind: "authority" | "feePayer" | "unknown";
 }
 export interface MarketEnvelope<T> {
@@ -45,7 +48,11 @@ export function normalizeToken(value: unknown): MarketToken {
   if (!i || typeof i.mint !== "string" || !m || !v || !b) throw new Error("Invalid token");
   return {
     ...i, ...m, priceObservedAtMs: m.priceAtMs ?? null,
-    priceStatus: m.priceSol === null ? "unavailable" : "ok",
+    quoteMint: m.quoteMint ?? i.quoteMint,
+    quoteDecimals: m.quoteDecimals ?? (i.quoteMint === WSOL ? 9 : null),
+    priceQuote: m.priceQuote ?? (i.quoteMint === WSOL ? m.priceSol : null),
+    quoteUsd: m.quoteUsd ?? null,
+    priceStatus: (m.priceQuote ?? (i.quoteMint === WSOL ? m.priceSol : null)) == null ? "unavailable" : "ok",
     volume24hLamports: v.lamports ?? null, buys24h: v.buys ?? null, sells24h: v.sells ?? null,
     volumeStatus: v.status === "complete" ? "ok" : v.status,
     windowStartMs: v.windowStartMs ?? null, windowEndMs: v.windowEndMs ?? null,

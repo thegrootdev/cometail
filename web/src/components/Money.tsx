@@ -3,19 +3,24 @@ import { market as copy, money } from "@/content/cometail";
 import { useSolUsd } from "@/lib/prices";
 import { formatUsd, usdValue } from "@/lib/usd";
 import { marketNumber, marketTime, rawUnits } from "@/lib/market";
+import { quoteAsset, WSOL, type QuoteAsset } from "@/lib/quotes";
+import type { SolUsdRate } from "@/lib/usd";
 import { CLUSTER } from "@/lib/addresses";
 
-export function Money({ lamports, sol, price = false, secondary = true }: {
-  lamports?: string | bigint | null; sol?: string | number | null; price?: boolean; secondary?: boolean;
+export function Money({ lamports, sol, price = false, secondary = true, quote, quoteRate }: {
+  lamports?: string | bigint | null; sol?: string | number | null; price?: boolean; secondary?: boolean; quote?: QuoteAsset; quoteRate?: SolUsdRate;
 }) {
-  const rate = useSolUsd();
-  const amount = lamports !== undefined ? rawUnits(lamports === null ? null : String(lamports), 9) : sol;
+  const solRate = useSolUsd();
+  const asset = quote ?? quoteAsset(WSOL);
+  const rate = quoteRate ?? (asset.mint === WSOL ? solRate : { value: null, source: null, at: null, status: "missing" as const });
+  const amount = lamports !== undefined ? asset.decimals === null ? null : rawUnits(lamports === null ? null : String(lamports), asset.decimals) : sol;
   const usd = usdValue(amount, rate);
+  const quoteText = amount === null || amount === undefined ? "—" : `${marketNumber(amount, price ? 9 : 5)} ${asset.symbol}`;
   return <span className="money-pair" data-price-status={rate.status}>
-    <span className={usd === null ? "money-unavailable" : "money-usd"}>
-      {rate.status === "fresh" ? formatUsd(usd, price) : rate.status === "stale" ? money.stale : money.missing}
+    <span className={usd === null ? "money-quote" : "money-usd"}>
+      {usd === null ? quoteText : formatUsd(usd, price)}
     </span>
-    {secondary && amount !== null && amount !== undefined && <small className="money-sol">{marketNumber(amount, price ? 9 : 5)} SOL</small>}
+    {secondary && <small className="money-sol">{usd !== null ? quoteText : rate.status === "stale" ? money.stale : money.missing}</small>}
   </span>;
 }
 export function PriceReference() {

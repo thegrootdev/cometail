@@ -1,5 +1,6 @@
 "use client";
 import { CopyAddress } from "@/components/CopyAddress";
+import { quoteAsset } from "@/lib/quotes";
 import { Money } from "@/components/Money";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
@@ -96,11 +97,11 @@ export default function SkyPage() {
                       {wizard.stages[s.progress] ?? s.progress}
                     </Badge>
                   </td>
-                  <td className="money" data-label={copy.accrued}><Money lamports={s.claimableLamports} /></td>
+                  <td className="money" data-label={copy.accrued}><Money quote={quoteAsset(s.quoteMint)} lamports={s.claimableLamports} /></td>
                   <td data-label={copy.harvested}>
                     {s.realized30dLamports === null
                       ? "—"
-                      : <Money lamports={s.realized30dLamports} />}
+                      : <Money quote={quoteAsset(s.quoteMint)} lamports={s.realized30dLamports} />}
                   </td>
                   <td data-label={copy.eligibility}>
                     <SourceStatus stream={s} />

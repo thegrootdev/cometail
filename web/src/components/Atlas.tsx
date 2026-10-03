@@ -6,9 +6,8 @@ import { SkyStream, api } from "@/lib/api";
 import { useLoad } from "@/lib/hooks";
 import { short, sol } from "@/lib/format";
 import { Money } from "./Money";
-import { useSolUsd } from "@/lib/prices";
-import { formatUsd, usdValue } from "@/lib/usd";
-import { rawUnits } from "@/lib/market";
+import { quoteAsset } from "@/lib/quotes";
+import { formatAmount } from "@/lib/amounts";
 import { money, identity } from "@/content/cometail";
 import { Stat } from "./Shell";
 import { DataState } from "./Experience";
@@ -131,8 +130,10 @@ export function StarAtlas({
   onRetry?: () => void;
 }) {
   const id = useId().replace(/:/g, "");
-  const rate = useSolUsd();
-  const feeLabel = (lamports: string) => rate.status === "fresh" ? formatUsd(usdValue(rawUnits(lamports, 9), rate)) : rate.status === "stale" ? money.stale : money.missing;
+  const feeLabel = (stream: SkyStream) => {
+    const asset = quoteAsset(stream.quoteMint);
+    return asset.decimals === null ? "—" : formatAmount(BigInt(stream.claimableLamports), asset.decimals, { ticker: asset.symbol, maxFraction: 3 });
+  };
   const previous = useRef(new Map<string, bigint>());
   const [sparks, setSparks] = useState<string[]>([]);
   const [motion, setMotion] = useState(false);
@@ -169,14 +170,11 @@ export function StarAtlas({
     return () => clearTimeout(timer);
   }, [streams]);
   const comets = useMemo(() => {
-    const top = Math.max(
-      1,
-      ...streams.map(
-        (s) =>
-          Number(s.realized30dLamports ?? s.realizedEstimateLamports) +
-          Number(s.claimableLamports),
-      ),
-    );
+    const tops = new Map<string, number>();
+    for (const s of streams) {
+      const income = Number(s.realized30dLamports ?? s.realizedEstimateLamports) + Number(s.claimableLamports);
+      tops.set(s.quoteMint, Math.max(tops.get(s.quoteMint) ?? 1, income));
+    }
     return streams.slice(0, compact ? 12 : 60).map((s) => {
       const income =
         Number(s.realized30dLamports ?? s.realizedEstimateLamports) +
@@ -189,7 +187,7 @@ export function StarAtlas({
         y: 70 + hash("latitude:" + s.pool) * 280,
         len:
           (compact ? 25 : 35) +
-          ((compact ? 85 : 140) * Math.log1p(income)) / Math.log1p(top),
+          ((compact ? 85 : 140) * Math.log1p(income)) / Math.log1p(tops.get(s.quoteMint) ?? 1),
       };
     });
   }, [streams, compact]);
@@ -277,7 +275,7 @@ export function StarAtlas({
             key={s.pool}
             href={`/token/${s.baseMint}`}
             tabIndex={0}
-            aria-label={`${copy.viewToken} ${s.token?.name || identity.pendingName} · ${sol(s.claimableLamports)} ${copy.accrued}`}
+            aria-label={`${copy.viewToken} ${s.token?.name || identity.pendingName} · ${feeLabel(s)} ${copy.accrued}`}
           >
             <g transform={`translate(${x} ${y}) rotate(-24)`}>
               <circle
@@ -323,7 +321,7 @@ export function StarAtlas({
               fontSize={compact ? 13 : 10}
               fill="#f5c451a0"
             >
-              {feeLabel(s.claimableLamports)}
+              {feeLabel(s)}
             </text>
           </a>
         ))}
@@ -362,21 +360,25 @@ export function StarAtlas({
   );
 }
 export function AtlasStats({ streams }: { streams: SkyStream[] }) {
-  const amount = (field: "claimableLamports" | "realized30dLamports") =>
-    streams.reduce((n, s) => n + BigInt(s[field] ?? "0"), 0n);
+  const groups = [...new Set(streams.map(s => s.quoteMint))];
+  const totals = (field: "claimableLamports" | "realized30dLamports") => <span className="quote-totals">{groups.map(mint => {
+    const rows = streams.filter(s => s.quoteMint === mint);
+    if (!rows.some(s => s[field] !== null)) return null;
+    return <Money key={mint} quote={quoteAsset(mint)} lamports={rows.reduce((n,s) => n + BigInt(s[field] ?? "0"), 0n)} />;
+  })}</span>;
   return (
     <div className="atlas-stats">
       <Stat label={copy.known} value={String(streams.length)} tone="plain" />
       <Stat
         label={copy.accrued}
-        value={<Money lamports={amount("claimableLamports")} />}
+        value={totals("claimableLamports")}
         tone="dust"
       />
       <Stat
         label={copy.harvested}
         value={
           streams.some((s) => s.realized30dLamports !== null)
-            ? <Money lamports={amount("realized30dLamports")} />
+            ? totals("realized30dLamports")
             : "—"
         }
         tone="plain"

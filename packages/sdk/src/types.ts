@@ -99,7 +99,7 @@ export interface Prices extends Evidence { solUsd: number; source: string; at: n
 export interface Health extends Evidence { ok: boolean; service: string; time: number }
 export interface FeedData {
   launch: { mint: Address; name: string; symbol: string; imageUrl: string | null; creator: Address; config: Address; dbcPool: Address; tokenKind: "plain" | "stream"; quoteMint?: Address; stage?: Stage; createdAtMs?: number | null };
-  trade: { mint: Address | null; pool: Address; venue: "curve" | "damm" | null; side: "buy" | "sell"; baseAmountRaw: RawAmount | null; quoteAmountLamports: RawAmount | null; executionPriceSol: string | null; trader: Address; signature: string; traderKind?: "authority" | "feePayer" };
+  trade: { executionPriceQuote: string | null; quoteMint: Address; quoteDecimals: number; mint: Address | null; pool: Address; venue: "curve" | "damm" | null; side: "buy" | "sell"; baseAmountRaw: RawAmount | null; quoteAmountLamports: RawAmount | null; executionPriceSol: string | null; trader: Address; signature: string; traderKind?: "authority" | "feePayer" };
   graduation: { mint: Address; dbcPool: Address; dammPool: Address | null; quoteMint?: Address; signature?: string };
   harvest: { vault: Address; stream: Address | null; incomeLamports: RawAmount | null; signature: string; grossLamports?: RawAmount | null; toDepositorLamports?: RawAmount | null; toProtocolLamports?: RawAmount | null; oneTime?: boolean };
   bid: { vault: Address; order: Address | null; bins: number; grossLamports: RawAmount | null; signature: string };

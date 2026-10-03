@@ -1994,3 +1994,5 @@ body .wallet-adapter-dropdown-list-item {
   .launch-preset .caption, .launch-preset-unit { grid-column: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .launch-preset { transition: none; } }
+
+.quote-totals { display: flex; flex-direction: column; gap: .6rem; }

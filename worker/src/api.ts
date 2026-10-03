@@ -236,7 +236,18 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
     if (stage === "bonding") rows = rows.filter((t) => t.stage !== "graduated");
     else if (stage === "graduated") rows = rows.filter((t) => t.stage === "graduated");
     if (q) rows = rows.filter((t) => [t.mint, t.name, t.symbol, t.creator].some((x) => x.toLowerCase().includes(q)));
-    rows.sort((a, b) => sort === "newest" ? (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0) || b.updatedAt - a.updatedAt : (BigInt(b.volume24hLamports) > BigInt(a.volume24hLamports) ? 1 : BigInt(b.volume24hLamports) < BigInt(a.volume24hLamports) ? -1 : a.mint.localeCompare(b.mint)));
+    // volume ranks in USD so quotes compare: a token whose quote has no rate ranks after every
+    // token with one, by its raw quote volume; a stale or missing SOL reference leaves every WSOL
+    // token unrated, so the directory then follows newest rather than rank by lamports alone
+    const usdVolume = (t: TokenRow): number | null => { const r = quoteUsdRate(t.quoteMint, price?.solUsd ?? null); return r.value === null ? null : (Number(t.volume24hLamports) / 10 ** (t.quoteDecimals ?? 9)) * r.value; };
+    const byVolume = (a: TokenRow, b: TokenRow) => {
+      const ua = usdVolume(a), ub = usdVolume(b);
+      if (ua !== null && ub !== null) return ub - ua || b.updatedAt - a.updatedAt;
+      if (ua !== null) return -1;
+      if (ub !== null) return 1;
+      return BigInt(b.volume24hLamports) > BigInt(a.volume24hLamports) ? 1 : BigInt(b.volume24hLamports) < BigInt(a.volume24hLamports) ? -1 : 0;
+    };
+    rows.sort((a, b) => sort === "newest" ? (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0) || b.updatedAt - a.updatedAt : byVolume(a, b));
     const cursor = url.searchParams.get("cursor");
     let start = 0;
     if (cursor) { const i = rows.findIndex((t) => t.mint === cursor); start = i >= 0 ? i + 1 : 0; }

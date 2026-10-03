@@ -55,7 +55,7 @@ Known REST estimates receive a field path and basis:
 - Token `market.liquidityLamports` with `damm-quote-x2`: twice the pool's quote side.
 - Metrics `plainLaunches.volumeEstimateLamports`: the current flat-fee assumption, net curve fee multiplied by 125.
 
-Use `coverage`, `incomplete`, `notes`, timestamps and the nullable raw values when deciding what to display. Missing is not zero. Devnet USD figures are reference values. Token markets expose `priceQuote`, `quoteMint`, `quoteDecimals` and `quoteUsd`; token-route trades expose `executionPriceQuote`, `quoteMint` and `quoteDecimals`. `priceSol` and `executionPriceSol` are null for non-WSOL quotes. Legacy fields named `lamports` are quote base units: interpret them using that quote mint and its decimals. A missing quote-to-USD rate stays null, never a guessed dollar figure. Feed trade rows in this worker release do not yet include quote siblings; resolve the token identity before displaying their quote amounts.
+Use `coverage`, `incomplete`, `notes`, timestamps and the nullable raw values when deciding what to display. Missing is not zero. Devnet USD figures are reference values. Token markets expose `priceQuote`, `quoteMint`, `quoteDecimals` and `quoteUsd`; token-route trades expose `executionPriceQuote`, `quoteMint` and `quoteDecimals`. `priceSol` and `executionPriceSol` are null for non-WSOL quotes. Legacy fields named `lamports` are quote base units: interpret them using that quote mint and its decimals. A missing quote-to-USD rate stays null, never a guessed dollar figure. Feed trade rows also carry `executionPriceQuote`, `quoteMint` and `quoteDecimals`; use them to label their quote amounts.
 
 ```ts
 const sky = await api.sky({ limit: 200 });

@@ -1581,7 +1581,7 @@ body:before {
 .amount-field input {
   width: 100%;
   margin: 0;
-  padding: 14px 76px 14px 16px !important;
+  padding: 14px 112px 14px 16px !important;
   background: var(--panel-deep) !important;
   border: var(--outline) solid var(--ink) !important;
   border-radius: 16px !important;
@@ -1607,7 +1607,7 @@ body:before {
   letter-spacing: 0.02em;
   color: #c9d2f2;
   pointer-events: none;
-  max-width: 64px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1758,3 +1758,5 @@ body:before {
 .preset-snippet { margin: 14px 0; padding: 12px 14px; border: 2px solid var(--ink); border-radius: 14px; background: var(--panel-deep); font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre; }
 .presets-link { margin: 14px 0 0; }
 @media (max-width: 760px) { .presets-grid { grid-template-columns: 1fr; } .preset-facts dd { font-size: 17px; } }
+
+.panel .form-notice:not(.form-notice-quiet) { color: var(--ink); }

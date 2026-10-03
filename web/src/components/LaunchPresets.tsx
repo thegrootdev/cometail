@@ -13,7 +13,7 @@ export function LaunchPresets({ value, onChange, disabled }: { value: LaunchPres
         <span className="launch-preset-heading">{copy[preset.id].name}<span aria-hidden="true">{value === preset.id ? "●" : "○"}</span></span>
         <svg viewBox="0 0 120 60" aria-hidden="true"><path d="M4 4 V54 H116" className="preset-axis" /><path d={preset.curve} className="preset-path" /></svg>
         <span className="caption">{copy[preset.id].body}</span>
-        <span className="launch-preset-unit">{preset.config ? copy.quote : copy.unavailable}</span>
+        <span className="launch-preset-unit">{preset.config ? `${copy.quote} ${preset.quote.symbol}` : copy.unavailable}</span>
       </label>)}
     </div>
     <p className="caption">{copy.shapeNote}</p>

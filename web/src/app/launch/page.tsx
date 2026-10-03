@@ -1,5 +1,5 @@
 "use client";
-import { friendlyError, insufficientSol, LAUNCH_OVERHEAD_LAMPORTS } from "@/lib/errors";
+import { friendlyError, insufficientSol, insufficientTokens, LAUNCH_OVERHEAD_LAMPORTS } from "@/lib/errors";
 import { LaunchPresets } from "@/components/LaunchPresets";
 import { LAUNCH_PRESETS, type LaunchPresetId } from "@/lib/launch-presets";
 import { useEffect, useState } from "react";
@@ -21,11 +21,11 @@ import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
 import { SocialFields } from "@/components/SocialLinks";
 import { AmountInput } from "@/components/AmountInput";
-import { useSolBalance } from "@/lib/balances";
+import { readTokenBalance, useTokenBalance, useSolBalance } from "@/lib/balances";
 import { formatAmount, inputValue, parseAmount, spendable } from "@/lib/amounts";
 import { cleanLinks, linksValid, type TokenLinks } from "@/lib/token-display";
 import { useTx , useStorageReady } from "@/lib/hooks";
-import { EXPLORER } from "@/lib/addresses";
+import { CLUSTER, EXPLORER } from "@/lib/addresses";
 
 export default function LaunchPage() {
   const { connection } = useConnection();
@@ -51,12 +51,16 @@ export default function LaunchPage() {
   const storage = useStorageReady();
   const blocked = storage.checked && !storage.ready;
   const solBalance = useSolBalance(publicKey);
-  // the typed first buy as lamports: 0n when empty, null when malformed
-  const firstBuyRaw = firstBuy.trim() ? parseAmount(firstBuy, 9) : 0n;
-  const need = (firstBuyRaw ?? 0n) + LAUNCH_OVERHEAD_LAMPORTS;
+  const quoteBalance = useTokenBalance(preset.native ? null : preset.quoteMint, publicKey);
+  const quoteDecimals = preset.quote.decimals ?? 9;
+  const quoteTicker = preset.quote.symbol;
+  const buyBalance = preset.native ? solBalance.lamports : quoteBalance.raw;
+  // the typed first buy in quote base units: 0n when empty, null when malformed
+  const firstBuyRaw = firstBuy.trim() ? parseAmount(firstBuy, quoteDecimals) : 0n;
+  const need = (preset.native ? firstBuyRaw ?? 0n : 0n) + LAUNCH_OVERHEAD_LAMPORTS;
   // the shortfall is said at the field, before anything is signed
-  const shortfall = publicKey && firstBuyRaw !== null && solBalance.lamports !== null && solBalance.lamports < need ? insufficientSol(need, solBalance.lamports) : null;
-  const quickBuys = [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} SOL`, value: v })), { label: amounts.max, value: solBalance.lamports === null ? null : inputValue(spendable(solBalance.lamports, LAUNCH_OVERHEAD_LAMPORTS) ?? 0n, 9) }];
+  const shortfall = publicKey && firstBuyRaw !== null && solBalance.lamports !== null && solBalance.lamports < need ? insufficientSol(need, solBalance.lamports) : publicKey && !preset.native && firstBuyRaw !== null && buyBalance !== null && buyBalance < firstBuyRaw ? insufficientTokens(formatAmount(firstBuyRaw, quoteDecimals, { ticker: quoteTicker }), formatAmount(buyBalance, quoteDecimals, { ticker: quoteTicker })) : null;
+  const quickBuys = [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} ${quoteTicker}`, value: v })), { label: amounts.max, value: buyBalance === null ? null : inputValue(preset.native ? spendable(buyBalance, LAUNCH_OVERHEAD_LAMPORTS) ?? 0n : buyBalance, quoteDecimals) }];
   const valid =
     !!preset.config &&
     linksValid(links) &&
@@ -77,9 +81,13 @@ export default function LaunchPage() {
       // the launch pays the first buy, the 0.01 SOL creation fee, the mint and metadata rent and the
       // network fees (about 0.035 SOL): the wallet must hold that before anything is signed
       {
-        const need = BigInt(lamports?.toString() ?? "0") + LAUNCH_OVERHEAD_LAMPORTS;
+        const need = (preset.native ? BigInt(lamports?.toString() ?? "0") : 0n) + LAUNCH_OVERHEAD_LAMPORTS;
         const have = BigInt(await connection.getBalance(publicKey));
         if (have < need) { setError(insufficientSol(need, have)); return; }
+      }
+      if (!preset.native && firstBuyRaw && preset.quoteMint) {
+        const have = await readTokenBalance(connection, preset.quoteMint, publicKey);
+        if (have < firstBuyRaw) { setError(insufficientTokens(formatAmount(firstBuyRaw, quoteDecimals, { ticker: quoteTicker }), formatAmount(have, quoteDecimals, { ticker: quoteTicker }))); return; }
       }
       const { uri } = await uploadIdentity({
         name,
@@ -100,12 +108,15 @@ export default function LaunchPage() {
             name: name.trim(),
             symbol: symbol.trim().toUpperCase(),
             uri,
-            firstBuyLamports: lamports,
+            firstBuyRaw: lamports,
+            quoteMint: preset.quoteMint!,
+            quoteDecimals,
           }),
         [kp],
       );
       if (sig) setMint(kp.publicKey.toBase58());
       solBalance.reload();
+      quoteBalance.reload();
     } catch (e) {
       setError(friendlyError(e, c.launchFailure));
     } finally {
@@ -125,6 +136,7 @@ export default function LaunchPage() {
         <Card title={c.identity}>
           <StorageNotice storage={storage} />
           <LaunchPresets value={presetId} onChange={id => { setPresetId(id); setFirstBuy(""); }} disabled={busy || !!mint || blocked} />
+          {!preset.native && CLUSTER === "devnet" && <p className="form-notice">{c.testQuote}</p>}
           <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
             <div className="form-row">
               <label className="field">
@@ -162,12 +174,12 @@ export default function LaunchPage() {
             <SocialFields value={links} onChange={setLinks} />
             <AmountInput
               label={`${c.firstBuy} · ${c.optional}`}
-              unit="SOL"
+              unit={quoteTicker}
               value={firstBuy}
               onChange={setFirstBuy}
-              balance={!publicKey ? undefined : solBalance.lamports === null ? null : formatAmount(solBalance.lamports, 9, { ticker: "SOL" })}
+              balance={!publicKey ? undefined : buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: quoteTicker })}
               quick={quickBuys}
-              hint={publicKey ? amounts.maxKeepsFees : c.firstBuyHint}
+              hint={!preset.native ? c.quoteFees : publicKey ? amounts.maxKeepsFees : c.firstBuyHint}
               error={firstBuyRaw === null ? c.buyInvalid : shortfall}
               disabled={busy}
             />
