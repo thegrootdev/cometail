@@ -121,6 +121,7 @@ async function migrate(ctx: KeeperContext, poolPk: PublicKey, pool: any): Promis
   }
   const quoteMint: PublicKey = config.quoteMint;
   const tokenBaseProgram = (await chain.accountOwner(pool.baseMint)) ?? TOKEN_PROGRAM_ID; // Token-2022 bases migrate with their own program
+  const tokenQuoteProgram = (await chain.accountOwner(quoteMint)) ?? TOKEN_PROGRAM_ID; // and so does a Token-2022 quote (a badged stock)
   const dammPool = deriveDammV2PoolAddress(dammConfig, pool.baseMint, quoteMint);
   const first = Keypair.generate(); const second = Keypair.generate();
   ixs.push(await chain.dbc.methods.migrationDammV2().accountsPartial({
@@ -129,7 +130,7 @@ async function migrate(ctx: KeeperContext, poolPk: PublicKey, pool: any): Promis
     secondPositionNftMint: second.publicKey, secondPositionNftAccount: derivePositionNftAccount(second.publicKey), secondPosition: derivePositionAddress(second.publicKey),
     dammPoolAuthority: deriveDammV2PoolAuthority(), ammProgram: DAMM_V2_PROGRAM_ID, baseMint: pool.baseMint, quoteMint,
     tokenAVault: deriveDammV2TokenVaultAddress(dammPool, pool.baseMint), tokenBVault: deriveDammV2TokenVaultAddress(dammPool, quoteMint),
-    baseVault: pool.baseVault, quoteVault: pool.quoteVault, payer: keeper.publicKey, tokenBaseProgram, tokenQuoteProgram: TOKEN_PROGRAM_ID,
+    baseVault: pool.baseVault, quoteVault: pool.quoteVault, payer: keeper.publicKey, tokenBaseProgram, tokenQuoteProgram,
     token2022Program: TOKEN_2022_PROGRAM_ID, dammEventAuthority: deriveDammV2EventAuthority(), systemProgram: SystemProgram.programId,
   }).remainingAccounts([{ pubkey: dammConfig, isSigner: false, isWritable: false }]).instruction());
   await sendTx({ connection: chain.connection, payer: keeper, ixs, signers: [first, second], cu: 600_000, cuPrice: cfg.cuPriceMicroLamports, dryRun: cfg.dryRun, label: `migrate ${poolPk.toBase58()}` });
