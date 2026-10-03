@@ -68,6 +68,9 @@ export function objectStorage(): ObjectStorage {
             signal: AbortSignal.timeout(20000),
             headers: {
               "Content-Type": contentType,
+              // the host's fetch streams a body without a length and R2 answers 411 MissingContentLength;
+              // the length is known, so it is sent
+              "Content-Length": String(body.byteLength),
               "Cache-Control": "public,max-age=31536000,immutable",
             },
             body: Buffer.from(body),
