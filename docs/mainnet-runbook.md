@@ -10,7 +10,7 @@ next transaction is the team's launch in step 9 (the intended sequence, not a gu
 ## 1. Keys (first, before anything that names them)
 - Owner's wallet: admin, fee claimer, leftover receiver, treasury owner. Its public key is
   `ADMIN` below; its keypair file stays with the owner (mode 600, outside the repository) and
-  is used only in step 5.
+  is used in steps 4 and 5 only (the deploy's payer and upgrade authority, the setup's signer).
 - Keeper hot key: generated on the box now, `solana-keygen new -o <path outside the repo>`,
   mode 600, readable by the service user. Its public key is `KEEPER` below and the same key
   the worker runs with in step 6; the protocol stores it at init. Never the admin key.
@@ -59,8 +59,9 @@ script verifies the badge of the mint it is given on the day.
 
 ## 4. Deploy the program (owner)
 `docs/deploy.md`: `solana program deploy` with the reviewed ELF (the hash in the release
-record), max-len the ELF size, upgrade authority the owner's wallet, the keyed mainnet RPC
-given explicitly with `-u`. Verify with
+record; verify it with `sha256sum` first), max-len the ELF size, upgrade authority and
+`--fee-payer` both the owner's wallet keypair (the authority flag alone does not select the
+payer), the keyed mainnet RPC given explicitly with `-u`. Verify with
 `solana program show 5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg -u <keyed mainnet rpc>`:
 authority the owner's wallet.
 

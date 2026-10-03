@@ -32,9 +32,13 @@ a CLI whose default differs.
 solana program deploy target/deploy/cometail_vault.so \
   --program-id <program keypair> \
   --upgrade-authority <authority keypair> \
+  --fee-payer <authority keypair> \
   --max-len $(stat -c %s target/deploy/cometail_vault.so) \
   -u <cluster>
 ```
+`--upgrade-authority` does not choose who pays: without `--fee-payer` (or `-k`) the CLI pays
+from its configured default keypair (cargo-build-sbf 3.1.10 help). The owner's wallet pays the
+rent, so name it explicitly.
 
 For a fresh loader-v3 deployment the buffer lamports are reused to fund the program-data
 account (the loader drains the buffer to the payer before funding program data,
@@ -56,12 +60,18 @@ is returned when the buffer closes, while the existing program-data account keep
 | Where it runs | devnet program data since the upgrade at slot 506,926,374 (the live site, the keeper and every loop since) |
 | Tests | the whole LiteSVM suite against these bytes at fb2228c: 14 files, 44 tests, 0 failures (2026-10-03) |
 
-The same source rebuilt on 2026-10-03 with the same toolchain gave the same size and nine
-differing bytes (`8f190b85…`): four instruction immediates in `.text` and five relocation
-entries, each off by two, a layout-order difference and not a code change; the gate suite
-passes on that build as well (9 files, 35 tests). The mainnet deploy uses the reviewed bytes
-above, not a fresh build: verify the hash before `solana program deploy` and after with
-`solana program dump`.
+Provenance of the reviewed bytes. The ELF was built at 07:45 UTC on 2026-10-03; at 07:56 the
+comment block above `unwind` in `instructions/launch.rs` was rewritten from five lines to
+seven, and the result was committed as 58b57c7 at 08:05. A rebuild of HEAD with the same
+toolchain gives the same size and exactly nine differing bytes (`8f190b85…`), every one a
+source line number two higher: four `u32` store immediates in `.text` (lines 392 to 398
+becoming 394 to 400, the `unwind` error sites) and five source-location records in
+`.data.rel.ro` (the `#[event]` lines 423 to 427 becoming 425 to 429); `.rel.dyn` and every
+other byte are identical. The reviewed bytes are therefore the committed code with the older
+comment, and the gate suite passes on both builds. The mainnet deploy uses the reviewed bytes
+above, not a fresh build: check `sha256sum` before `solana program deploy`, and after it
+compare the first 710,168 bytes of `solana program dump` (the rest of the program-data
+account is zero padding).
 
 ## Upgrade
 
