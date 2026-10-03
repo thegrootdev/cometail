@@ -1712,3 +1712,31 @@ body:before {
   flex: 1 1 auto;
   min-width: 55%;
 }
+
+/* The phone tab bar and the space around it. The bar sits above the system inset (Android
+   edge-to-edge and iOS home indicator); the inset itself is a solid night strip beneath the bar,
+   not part of it. The footer clears the bar by 24px and nothing else stacks beneath it. */
+@media (max-width: 760px) {
+  .mobile-nav {
+    bottom: env(safe-area-inset-bottom, 0px);
+    padding: 5px 6px 5px;
+  }
+  /* the bar's backdrop filter makes it the containing block, so the strip hangs from its
+     bottom edge rather than from the viewport */
+  .mobile-nav::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: env(safe-area-inset-bottom, 0px);
+    background: var(--night);
+  }
+  .page-content {
+    padding-bottom: 8px;
+  }
+  .site-footer {
+    margin-bottom: 0;
+    padding-bottom: calc(24px + 51px + env(safe-area-inset-bottom, 0px));
+  }
+}
