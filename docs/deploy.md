@@ -15,7 +15,8 @@ costs about 2 KB (build with `--features no-log-ix-name` to drop it).
 |---|---|---|
 | `opt-level = 3` (before) | 941,784 | 4.78514156 SOL |
 | `opt-level = "s"` | 766,944 | |
-| `opt-level = "z"` (current) | 695,192 | 3.5324542 SOL |
+| `opt-level = "z"` (before the unwind instruction) | 695,192 | 3.5324542 SOL |
+| `opt-level = "z"` (current, with `unwind`; sha256 bac11c56…) | 710,168 | 3.60853228 SOL |
 
 The program account itself is 36 bytes (0.00083312 SOL). Rent figures come from
 `solana rent <bytes> -um` on the day of the measurement; re-run them before the deploy.
@@ -38,8 +39,9 @@ solana program deploy target/deploy/cometail_vault.so \
 For a fresh loader-v3 deployment the buffer lamports are reused to fund the program-data
 account (the loader drains the buffer to the payer before funding program data,
 `programs/bpf_loader/src/lib.rs` at v3.1.10, line 575), so the deploy does not hold two
-rent deposits at once. At the measured mainnet rent this ELF needs 3.53328732 SOL for the
-program-data and program accounts combined, plus deployment fees and an operating margin.
+rent deposits at once. At the measured mainnet rent (2026-10-03) this ELF needs 3.6093654 SOL
+for the program-data and program accounts combined, plus deployment fees and an operating
+margin: 3.65 SOL for the deployment phase.
 Re-query rent and fees before the deploy; a stalled deploy leaves an extra buffer that ties
 up funds until it is closed. An upgrade of an existing program is different: its buffer rent
 is returned when the buffer closes, while the existing program-data account keeps its own.

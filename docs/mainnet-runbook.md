@@ -18,8 +18,13 @@ next transaction is the team's launch in step 9 (the intended sequence, not a gu
   browsers (`NEXT_PUBLIC_RPC_URL`).
 
 ## 2. Funding (owner)
-The owner's wallet: program rent 3.54 SOL (docs/deploy.md), nine configs about 0.3 SOL,
-the treasury account and init under 0.05 SOL, transaction fees, plus a margin: 4.5 SOL.
+The owner's wallet, by phase. Deployment (step 4): program-data rent 3.609 SOL for the
+reviewed ELF plus the program account and fees (docs/deploy.md; re-quote with `solana rent`
+on the day): 3.65 SOL. Setup (step 5): nine configs at 0.006 SOL each, the treasury account
+and the protocol account under 0.004 SOL, fees, 0.02 SOL margin: 0.08 SOL, which the script
+computes itself for the work still pending (a no-op rerun needs nothing). First launches
+(step 9): creation fees and first buys, 0.5 SOL and up. Fund 4.5 SOL before step 4 and the
+whole sequence fits with 0.7 SOL to spare.
 The keeper: operating SOL only (bin-array rent 0.071 SOL per array plus fees), 1 SOL to start.
 
 ## 3. Dry run (no transaction)
@@ -32,7 +37,8 @@ cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> 
 `tests/mainnet/setup.ts` refuses any cluster but mainnet, then runs a preflight: the
 program, both quote mints (USDC must be the canonical mint, the stock must carry the
 decimals of its file), the stock's DBC token badge (owned by DBC, naming that mint) and the
-wallet's balance (4.5 SOL; an unfunded payer cannot even simulate). A failed preflight stops
+wallet's balance against the rent and fees of what is still pending (0.08 SOL for a fresh
+run; an unfunded payer cannot even simulate). A failed preflight stops
 the run before anything is simulated. Then it simulates the treasury account and the nine
 `create_config` transactions (three stream presets, plain, long, flat, exp, stock-usdc,
 stock-xstock, with the full-size files in `configs/`) with the owner's wallet as every
@@ -63,7 +69,9 @@ requires the deployed program and fails, rather than skipping, when `init_protoc
 run. Every address goes to `configs/mainnet.json` as it is confirmed, so an interrupted run
 is resumed by running the same command again: a rerun refuses to start if the recorded
 admin, keeper or quote mints differ from the command's, and it skips a recorded account only
-after decoding it and matching every parameter. Then the readback:
+after decoding it and matching every parameter. After a failed send the run sends nothing
+more (the later steps read SKIPPED), keeps what confirmed, and exits non-zero; fix the cause
+and rerun. Then the readback:
 ```
 cd tests && RPC=<keyed mainnet rpc> CLUSTER=mainnet ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/verify-configs.ts
 ```

@@ -2,12 +2,14 @@
 // (three stream presets, the plain preset, and the five public presets) and init_protocol, in
 // that order, resumable. Order of a run: the cluster (genesis), the inputs against the recorded
 // deployment (configs/mainnet.json never gets rewritten with different authorities or quotes),
-// the preflight (program, both quote mints, the stock badge, the wallet's balance): any failed
-// check stops the run before anything is simulated, sent or saved. A recorded account is skipped
-// only after it decodes and matches every parameter. DRY_RUN=1 simulates every transaction with
-// the admin's public key, sends nothing and writes nothing; the init simulation needs the real
-// stream configs, so before they exist it is reported SKIPPED, never PASS. The real run requires
-// the deployed program and records each address as its transaction confirms. Any FAIL exits
+// the preflight (program, both quote mints, the stock badge, the wallet's balance against the
+// rent and fees of the work still pending, nothing when everything exists): any failed check
+// stops the run before anything is simulated, sent or saved. A recorded account is skipped only
+// after it decodes and matches every parameter. DRY_RUN=1 simulates every transaction with the
+// admin's public key, sends nothing and writes nothing; the init simulation needs the real stream
+// configs, so before they exist it is reported SKIPPED, never PASS. The real run requires the
+// deployed program, records each address as its transaction confirms, and stops before any later
+// send once one has failed (the record keeps what confirmed; rerun to resume). Any FAIL exits
 // non-zero.
 //
 //   cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> \
@@ -28,7 +30,8 @@ import { CONFIG_NAMES, DBC_PROGRAM, GENESIS, PROTOCOL_SET, Check, badgeOf, compa
 const ROOT = path.resolve(__dirname, "..", "..");
 const STATE = path.join(ROOT, "configs", "mainnet.json");
 const CANONICAL_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const MIN_BALANCE_LAMPORTS = 4_500_000_000; // rent for nine configs plus fees, see docs/mainnet-runbook.md
+// Account sizes of what this script creates (measured on devnet 2026-10-03), rent is quoted from the RPC.
+const CONFIG_BYTES = 1048, PROTOCOL_BYTES = 202, ATA_BYTES = 165, TX_FEE_LAMPORTS = 5_000, MARGIN_LAMPORTS = 20_000_000;
 const DRY = process.env.DRY_RUN === "1";
 const need = (k: string) => { const v = process.env[k]; if (!v) throw new Error(`${k} is required`); return v; };
 
@@ -36,6 +39,8 @@ type Outcome = { step: string; status: "PASS" | "FAIL" | "SKIPPED" | "DONE" | "E
 const outcomes: Outcome[] = [];
 const note = (o: Outcome) => { outcomes.push(o); console.log(`${o.status.padEnd(7)} ${o.step}: ${o.detail}`); };
 const failed = () => outcomes.filter((o) => o.status === "FAIL");
+/** The real run never sends again after a failed send; the record keeps what confirmed. */
+const halted = () => !DRY && failed().length > 0;
 const fileDecimals = (name: string) => JSON.parse(fs.readFileSync(path.join(ROOT, "configs", `${name}.json`), "utf8")).token.tokenQuoteDecimal as number;
 
 const dbcIdl = JSON.parse(fs.readFileSync(path.join(ROOT, "idls", "dynamic_bonding_curve.json"), "utf8")) as Idl;
@@ -114,14 +119,20 @@ async function main() {
   const badge = badgeOf(stock);
   if (stockIs2022) { const b = await readBadge(connection, stock); note({ step: "stock token badge", status: b.ok ? "PASS" : "FAIL", detail: b.ok ? b.detail : `${b.detail}: a Meteora operator must create the badge first` }); }
   else note({ step: "stock token badge", status: "PASS", detail: "not needed for an SPL quote" });
-  note({ step: "admin balance", status: balance >= MIN_BALANCE_LAMPORTS ? "PASS" : "FAIL", detail: `${balance / 1e9} SOL${balance >= MIN_BALANCE_LAMPORTS ? "" : ` (needs ${MIN_BALANCE_LAMPORTS / 1e9} SOL; a simulation with an unfunded payer fails too)`}` });
+  // the budget: rent and fees of the work still pending (nothing when everything is recorded)
+  const treasury = getAssociatedTokenAddressSync(NATIVE_MINT, admin);
+  const client = new VaultClientStep6(connection);
+  const rent = async (bytes: number) => await connection.getMinimumBalanceForRentExemption(bytes);
+  const pendingConfigs = CONFIG_NAMES.filter((n) => !(PROTOCOL_SET.includes(n) ? state.configs : state.presets)[n]).length;
+  const pendingTreasury = !(await connection.getAccountInfo(treasury)), pendingProtocol = !(await connection.getAccountInfo(client.protocol));
+  const needed = pendingConfigs * (await rent(CONFIG_BYTES) + TX_FEE_LAMPORTS) + (pendingTreasury ? await rent(ATA_BYTES) + TX_FEE_LAMPORTS : 0) + (pendingProtocol ? await rent(PROTOCOL_BYTES) + TX_FEE_LAMPORTS : 0);
+  const required = needed > 0 ? needed + MARGIN_LAMPORTS : 0;
+  note({ step: "admin balance", status: balance >= required ? "PASS" : "FAIL", detail: `${balance / 1e9} SOL; pending ${pendingConfigs} config(s)${pendingTreasury ? ", treasury" : ""}${pendingProtocol ? ", protocol" : ""} need ${required / 1e9} SOL (rent, fees, ${MARGIN_LAMPORTS / 1e9} margin)${balance >= required ? "" : "; a simulation with an unfunded payer fails too"}` });
   if (failed().length) throw new Error(`preflight failed, nothing simulated, sent or saved:\n${failed().map((o) => `${o.step}: ${o.detail}`).join("\n")}`);
 
   // recorded accounts: validated before they are skipped
   const quoteOf = (name: PresetName): PublicKey => name === "stock-usdc" ? usdc : name === "stock-xstock" ? stock : NATIVE_MINT;
   process.env.COMETAIL_QUOTE_USDC = usdc.toBase58(); process.env.COMETAIL_QUOTE_STOCK = stock.toBase58();
-  const treasury = getAssociatedTokenAddressSync(NATIVE_MINT, admin);
-  const client = new VaultClientStep6(connection);
   const mismatches: string[] = [];
   for (const name of CONFIG_NAMES) {
     const bucket = PROTOCOL_SET.includes(name) ? state.configs : state.presets;
@@ -144,6 +155,7 @@ async function main() {
   for (const name of CONFIG_NAMES) {
     const bucket = PROTOCOL_SET.includes(name) ? state.configs : state.presets;
     if (bucket[name]) { note({ step: `config ${name}`, status: "EXISTS", detail: `${bucket[name]} (matches every parameter)` }); continue; }
+    if (halted()) { note({ step: `config ${name}`, status: "SKIPPED", detail: "a send failed above; nothing else is sent (rerun to resume)" }); continue; }
     const config = Keypair.generate();
     const quote = quoteOf(name);
     let builder = dbcProgram.methods.createConfig(configParams(name)).accountsPartial({
@@ -152,13 +164,13 @@ async function main() {
     if (name === "stock-xstock" && stockIs2022) builder = builder.remainingAccounts([{ pubkey: badge, isSigner: false, isWritable: false }]);
     const done = await run(connection, `config ${name} (${quote.equals(NATIVE_MINT) ? "WSOL" : quote.toBase58().slice(0, 8)})`, [await builder.instruction()], admin, adminKeypair ? [adminKeypair, config] : []);
     if (done && !DRY) { bucket[name] = config.publicKey.toBase58(); save(); }
-    if (!done && !DRY) break; // a failed send stops the real run here; the record holds what confirmed
   }
 
   // 3. init_protocol: only with the real stream configs and the treasury on chain
   const streams = ["stream-25", "stream-50", "stream-75"].map((n) => state.configs[n]);
   const prerequisites = deployed && streams.every(Boolean) && !!(await connection.getAccountInfo(treasury));
   if (protocolInfo) note({ step: "init_protocol", status: "EXISTS", detail: `${state.protocol} (admin, keeper, treasury and pins match)` });
+  else if (halted()) note({ step: "init_protocol", status: "SKIPPED", detail: "a send failed above; nothing else is sent (rerun to resume)" });
   else if (!prerequisites) note({ step: "init_protocol", status: DRY ? "SKIPPED" : "FAIL", detail: `needs the deployed program, the three stream configs and the treasury on chain${DRY ? " (expected in a dry run before step 5)" : ": setup is incomplete, fix the failures above and rerun"}` });
   else {
     const ix = await client.initProtocol({ admin, keeper, payer: admin, treasury, streamConfigs: streams.map((k: string) => new PublicKey(k)) as [PublicKey, PublicKey, PublicKey] });
