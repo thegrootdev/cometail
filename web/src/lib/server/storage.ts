@@ -73,10 +73,18 @@ export function objectStorage(): ObjectStorage {
             body: Buffer.from(body),
           },
         );
-      } catch {
-        throw Error("STORAGE_WRITE_FAILED");
+      } catch (e) {
+        console.error("storage write: request failed", String((e as Error).message ?? e));
+        throw Error("STORAGE_WRITE_FAILED:request");
       }
-      if (!response.ok) throw Error("STORAGE_WRITE_FAILED");
+      if (!response.ok) {
+        // the operator reads the status and the service's error code from the logs and the answer; no
+        // key material is ever in either
+        const body = await response.text().catch(() => "");
+        const code = /<Code>([^<]+)<\/Code>/.exec(body)?.[1] ?? "";
+        console.error("storage write: rejected", { status: response.status, code, bucket: R2_BUCKET, key });
+        throw Error(`STORAGE_WRITE_FAILED:${response.status}:${code}`);
+      }
       return `${publicOrigin.toString().replace(/\/$/, "")}/${key}`;
     },
   };

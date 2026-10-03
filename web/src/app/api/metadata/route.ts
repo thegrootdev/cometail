@@ -30,7 +30,8 @@ export async function GET() {
   const r2 = provider === "r2" && !!process.env.R2_ACCOUNT_ID && !!process.env.R2_ACCESS_KEY_ID && !!process.env.R2_SECRET_ACCESS_KEY && !!process.env.R2_BUCKET && /^https:\/\//.test(process.env.COMETAIL_MEDIA_ORIGIN ?? "");
   const image = !!(await imaging());
   // uploads are ready whenever storage is: the browser crop is accepted even without the native library
-  return NextResponse.json({ ready: local || r2, storage: r2 ? "r2" : local ? "local" : "unconfigured", imaging: image }, { headers: { "cache-control": "no-store" } });
+  // build: the deployed commit (the host sets VERCEL_GIT_COMMIT_SHA), so a deploy can be told apart from the last one
+  return NextResponse.json({ ready: local || r2, storage: r2 ? "r2" : local ? "local" : "unconfigured", imaging: image, build: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null }, { headers: { "cache-control": "no-store" } });
 }
 const MAX_BODY = 6 * 1024 * 1024;
 const recent = new Map<string, { count: number; until: number }>();
@@ -190,11 +191,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ uri, image: imageUrl });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (message.startsWith("STORAGE_"))
-      return fail(
-        "Image storage is not ready on this deployment. Please try again later.",
-        503,
+    if (message.startsWith("STORAGE_")) {
+      // the user reads the designed sentence; the operator field names the failing step
+      const [kind, status, code] = message.split(":");
+      return NextResponse.json(
+        { error: "Image storage is not ready on this deployment. Please try again later.", operator: { reason: kind === "STORAGE_NOT_CONFIGURED" ? "not_configured" : "write_failed", status: status ?? null, code: code ?? null } },
+        { status: 503 },
       );
+    }
     return fail(
       "The upload could not be processed. Check your image and try again.",
     );
