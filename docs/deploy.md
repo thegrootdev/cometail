@@ -46,6 +46,23 @@ Re-query rent and fees before the deploy; a stalled deploy leaves an extra buffe
 up funds until it is closed. An upgrade of an existing program is different: its buffer rent
 is returned when the buffer closes, while the existing program-data account keeps its own.
 
+## Release artifact for mainnet
+
+| | |
+|---|---|
+| ELF | `cometail_vault.so`, 710,168 bytes, SHA-256 `bac11c56a5ff5676bbdcf58e9f240b74b6f5529c9044042718fb05f7d5e7a372` |
+| Source | the `unwind` commit 58b57c7; `programs/`, `Cargo.lock`, `Cargo.toml` and `Anchor.toml` unchanged through fb2228c |
+| Toolchain | anchor-cli 1.2.0, solana-cargo-build-sbf 3.1.10, platform-tools v1.52, rustc 1.89.0, `anchor build --arch v0` |
+| Where it runs | devnet program data since the upgrade at slot 506,926,374 (the live site, the keeper and every loop since) |
+| Tests | the whole LiteSVM suite against these bytes at fb2228c: 14 files, 44 tests, 0 failures (2026-10-03) |
+
+The same source rebuilt on 2026-10-03 with the same toolchain gave the same size and nine
+differing bytes (`8f190b85…`): four instruction immediates in `.text` and five relocation
+entries, each off by two, a layout-order difference and not a code change; the gate suite
+passes on that build as well (9 files, 35 tests). The mainnet deploy uses the reviewed bytes
+above, not a fresh build: verify the hash before `solana program deploy` and after with
+`solana program dump`.
+
 ## Upgrade
 
 An upgrade whose binary fits the existing program-data account needs only a buffer. If the
