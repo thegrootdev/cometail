@@ -16,6 +16,8 @@ export interface TokenRow {
   creator: string; custody: SkyRow["custody"]; config: string; tokenKind: "plain" | "stream"; dbcPool: string; dammPool: string | null; quoteMint: string; vault: string | null;
   stage: "bonding" | "completed" | "graduated"; priceSol: string | null; priceSource: string | null; priceAtMs: number; totalSupplyRaw: string;
   quoteRaisedLamports: string; targetLamports: string; progressBps: number | null; holders: number | null; holdersAtMs: number | null;
+  /** Liquidity in quote lamports: the curve's quote reserve while bonding, the graduated pool's quote side x 2 after. */
+  liquidityLamports: string | null; liquidityBasis: "curve-quote-reserve" | "damm-quote-x2" | null;
   volume24hLamports: string; buys24h: number; sells24h: number; volumeComplete: boolean; createdAtMs: number | null; updatedAt: number;
 }
 /** Where the trade index stands on one pool. `head` is the newest signature whose history is fully

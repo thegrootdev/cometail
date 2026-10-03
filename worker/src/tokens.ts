@@ -140,10 +140,13 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
       const stage: TokenRow["stage"] = progress === 3 ? "graduated" : progress === 0 ? "bonding" : "completed";
       const dammInfo = r.dammPool ? dammInfos.get(r.dammPool) : null;
       let priceSol: string | null = null, priceSource: string | null = null;
+      let liquidityLamports: string | null = null, liquidityBasis: TokenRow["liquidityBasis"] = null;
       if (stage === "graduated" && dammInfo) {
         const damm: any = chain.damm.coder.accounts.decode("pool", dammInfo.data);
         priceSol = sqrtPriceToSolPerToken(BigInt(damm.sqrtPrice.toString()), mint.decimals); priceSource = "damm";
+        liquidityLamports = (BigInt(damm.tokenBAmount.toString()) * 2n).toString(); liquidityBasis = "damm-quote-x2";
       } else {
+        liquidityLamports = BigInt(pool.quoteReserve.toString()).toString(); liquidityBasis = "curve-quote-reserve";
         priceSol = sqrtPriceToSolPerToken(BigInt(pool.sqrtPrice.toString()), mint.decimals); priceSource = "curve";
       }
       const quoteRaised = BigInt(pool.quoteReserve.toString());
@@ -162,7 +165,7 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
         priceSol, priceSource, priceAtMs: now, totalSupplyRaw: mint.supply.toString(),
         quoteRaisedLamports: quoteRaised.toString(), targetLamports: target.toString(),
         progressBps: target > 0n ? Number((quoteRaised * 10_000n) / target > 10_000n ? 10_000n : (quoteRaised * 10_000n) / target) : null,
-        holders: h.count, holdersAtMs: h.at,
+        holders: h.count, holdersAtMs: h.at, liquidityLamports, liquidityBasis,
         volume24hLamports: volume.toString(), buys24h: buys, sells24h: sells, volumeComplete: complete,
         createdAtMs: await createdAt(conn, r.baseMint, Number(cfg.activationType ?? 0), BigInt(pool.activationPoint.toString())), updatedAt: now,
       });

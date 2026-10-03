@@ -9,7 +9,18 @@ export const dynamic = "force-dynamic";
 /** The image library, loaded when needed: a native-module failure on the host becomes a designed
  *  503 instead of a crashed route. */
 async function imaging() {
+  if (process.env.COMETAIL_DISABLE_NATIVE_IMAGING === "1") return null; // tests of the fallback
   try { return (await import("sharp")).default; } catch (e) { console.error("sharp unavailable", e); return null; }
+}
+
+/** The dimensions and animation flag of a WebP from its header (RIFF container; VP8, VP8L or VP8X). */
+export function webpInfo(b: Buffer): { width: number; height: number; animated: boolean } | null {
+  if (b.length < 30 || b.toString("ascii", 0, 4) !== "RIFF" || b.toString("ascii", 8, 12) !== "WEBP") return null;
+  const chunk = b.toString("ascii", 12, 16);
+  if (chunk === "VP8 ") return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff, animated: false };
+  if (chunk === "VP8L") { const b0 = b[21], b1 = b[22], b2 = b[23], b3 = b[24]; return { width: 1 + (b0 | ((b1 & 0x3f) << 8)), height: 1 + ((b1 >> 6) | (b2 << 2) | ((b3 & 0x0f) << 10)), animated: false }; }
+  if (chunk === "VP8X") return { width: 1 + b.readUIntLE(24, 3), height: 1 + b.readUIntLE(27, 3), animated: (b[20] & 0x02) !== 0 };
+  return null;
 }
 
 /** What the launch pages check before the form: is storage configured and is the image library loadable? */
@@ -18,7 +29,8 @@ export async function GET() {
   const local = provider === "local" && process.env.NODE_ENV !== "production";
   const r2 = provider === "r2" && !!process.env.R2_ACCOUNT_ID && !!process.env.R2_ACCESS_KEY_ID && !!process.env.R2_SECRET_ACCESS_KEY && !!process.env.R2_BUCKET && /^https:\/\//.test(process.env.COMETAIL_MEDIA_ORIGIN ?? "");
   const image = !!(await imaging());
-  return NextResponse.json({ ready: (local || r2) && image, storage: r2 ? "r2" : local ? "local" : "unconfigured", imaging: image }, { headers: { "cache-control": "no-store" } });
+  // uploads are ready whenever storage is: the browser crop is accepted even without the native library
+  return NextResponse.json({ ready: local || r2, storage: r2 ? "r2" : local ? "local" : "unconfigured", imaging: image }, { headers: { "cache-control": "no-store" } });
 }
 const MAX_BODY = 6 * 1024 * 1024;
 const recent = new Map<string, { count: number; until: number }>();
@@ -116,7 +128,16 @@ export async function POST(request: Request) {
     }
     const storage = objectStorage();
     const sharp = await imaging();
-    if (!sharp) return fail("Image processing isn’t available on this deployment right now. Nothing was sent to the chain. Try again later.", 503);
+    // without the native library, the browser's own crop (a 512 x 512 still WebP, which is what
+    // the identity component produces) is accepted after its header is checked; anything else
+    // needs the library and is refused with a designed message
+    let normalized: Buffer;
+    if (!sharp) {
+      const info = webpInfo(bytes);
+      if (image.type !== "image/webp" || !info || info.animated || info.width !== 512 || info.height !== 512 || bytes.length > 1_500_000)
+        return fail("Image processing is limited on this deployment right now: use the crop tool so the image is a 512 × 512 WebP, then try again.", 422);
+      normalized = bytes;
+    } else {
     const decoder = sharp(bytes, {
       limitInputPixels: 16777216,
       animated: false,
@@ -135,11 +156,12 @@ export async function POST(request: Request) {
       return fail(
         "Use a single PNG, JPEG or WebP image between 128 and 8192 pixels.",
       );
-    const normalized = await decoder
+    normalized = await decoder
       .rotate()
       .resize(512, 512, { fit: "cover" })
       .webp({ quality: 90 })
       .toBuffer();
+    }
     const imageKey =
       createHash("sha256").update(normalized).digest("hex") + ".webp";
     const imageUrl = await storage.put(imageKey, normalized, "image/webp");

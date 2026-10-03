@@ -192,7 +192,7 @@ function tokenView(t: TokenRow, solUsd: number | null) {
   }
   return {
     identity: { mint: t.mint, decimals: t.decimals, name: t.name, symbol: t.symbol, imageUrl: t.imageUrl, metadataUri: t.metadataUri, metadataStatus: t.metadataStatus, creator: t.creator, custody: t.custody, createdAtMs: t.createdAtMs, dbcPool: t.dbcPool, dammPool: t.dammPool, quoteMint: t.quoteMint, tokenKind: t.tokenKind, config: t.config, vault: t.vault, stage: t.stage },
-    market: { priceSol: t.priceSol, priceSource: t.priceSource, priceAtMs: t.priceAtMs, totalSupplyRaw: t.totalSupplyRaw, circulatingSupplyRaw: null, fdvUsd, marketCapUsd: null, valuationBasis: "fdv" },
+    market: { priceSol: t.priceSol, priceSource: t.priceSource, priceAtMs: t.priceAtMs, totalSupplyRaw: t.totalSupplyRaw, circulatingSupplyRaw: null, fdvUsd, marketCapUsd: null, valuationBasis: "fdv", liquidityLamports: t.liquidityLamports ?? null, liquidityBasis: t.liquidityBasis ?? null },
     volume24h: { lamports: t.volume24hLamports, buys: t.buys24h, sells: t.sells24h, windowEndMs: t.updatedAt, windowStartMs: t.updatedAt - 24 * 3600_000, complete: t.volumeComplete, status: t.volumeComplete ? "complete" : "partial" },
     holders: { count: t.holders, countedAtMs: t.holdersAtMs, status: t.holders === null ? "missing" : "ok", definition: "unique owners of token accounts with a nonzero balance of the mint, excluding the pools' own vaults; addresses, not people" },
     bonding: { progressBps: t.progressBps, quoteRaisedLamports: t.quoteRaisedLamports, targetLamports: t.targetLamports, migrationStage: t.stage === "graduated" ? "graduated" : t.stage === "completed" ? "completed" : "bonding" },
