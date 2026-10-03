@@ -6,8 +6,10 @@ import { createRequire } from 'node:module';
 import { CometailClient, ApiError, FeedGapError, decodeFrame } from '../dist/index.js';
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
+const workerRequire = createRequire(new URL('../../../worker/package.json', import.meta.url));
 
-// Load the real worker modules; replace only logging, Store and the external price lookup.
+// Load real worker serializers, price math and persistence. Chain readers are unused here;
+// supply their public program constants without opening RPC or loading transaction builders.
 function loadWorker(options = {}) {
   const cache = new Map();
   const priceFetch = options.fetch ?? (async () => new Response(JSON.stringify({So11111111111111111111111111111111111111112:{usdPrice:150}})));
@@ -16,10 +18,14 @@ function loadWorker(options = {}) {
     const source = fs.readFileSync(new URL(`../../../worker/src/${name}.ts`, import.meta.url), 'utf8');
     const code = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
     const exports = {};cache.set(name,exports);
-    vm.runInNewContext(code, {exports,require(name){return name==='./tx'?{log(){}}:name==='./feed'?load('feed'):require(name)},fetch:priceFetch,URL,AbortSignal,Date:options.Date ?? Date,Buffer,console,process,setTimeout,clearTimeout,setInterval,clearInterval});
+    vm.runInNewContext(code, {exports,require(name){
+      if(name==='./tx') return {log(){}};
+      if(name==='./chain') {const {PublicKey}=workerRequire('@solana/web3.js');return {DBC_PROGRAM_ID:new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN'),DAMM_V2_PROGRAM_ID:new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG')};}
+      return name.startsWith('./') ? load(name.slice(2)) : workerRequire(name);
+    },fetch:priceFetch,URL,AbortSignal,Date:options.Date ?? Date,Buffer,console,process,setTimeout,clearTimeout,setInterval,clearInterval});
     return exports;
   }
-  return {api:load('api'),feed:load('feed')};
+  return {api:load('api'),feed:load('feed'),openStore:url=>load('store').openStore(url)};
 }
 
 // Exercise the actual worker's HTTP serialization with deterministic store and price inputs.
@@ -124,4 +130,31 @@ test('worker ranks exact cross-quote USD volumes and never values stale or missi
     assert.equal(stale.data.tokens[0].identity.mint,'fresh-usd');assert.equal(stale.solUsd.status,'stale');
     assert.equal(staleToken.market.quoteUsd.status,'missing');assert.equal(staleToken.market.fdvUsd,null);
   } finally {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+
+test('persisted foreign and native trades retain their units through the HTTP route', async () => {
+  const {api:worker,openStore}=loadWorker(),store=openStore('sqlite::memory:');
+  await store.init();
+  let server;
+  const cases=[
+    {mint:'B'.repeat(32),quoteMint:'9YSXk1YcKXHcTodgu4MuvKdRu7kW64Af61cKERH2Wtcd',quoteDecimals:6,base:'2469905353851',quote:'5000000',price:'0.000002024369'},
+    {mint:'C'.repeat(32),quoteMint:'BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN',quoteDecimals:8,base:'144834089158181',quote:'50000000',price:'0.000000003452'},
+    {mint:'D'.repeat(32),quoteMint:'So11111111111111111111111111111111111111112',quoteDecimals:9,base:'9007199254740993',quote:'9007199254740993',price:'0.001'},
+  ];
+  try {
+    await store.upsertTokens(cases.map(t=>({...t,decimals:6,dbcPool:t.mint,dammPool:null,volume24hLamports:t.quote,updatedAt:100,priceQuote:'999'})));
+    // Insertion deliberately follows the real persistence boundary. No fake Store object:
+    // the table stores raw execution amounts while quote identity is recovered from its token.
+    await store.insertTrades(cases.map((t,i)=>({signature:'stored-'+i,idx:i,slot:10+i,blockTime:100,pool:t.mint,vault:'',trader:t.mint,traderKind:'authority',buy:i!==1,amountIn:i===1?t.base:t.quote,amountOut:i===1?t.quote:t.base,venue:'curve',baseAmountRaw:t.base,quoteAmountLamports:t.quote,executionPriceSol:null,quoteMint:t.quoteMint,quoteDecimals:t.quoteDecimals,executionPriceQuote:t.price})));
+    server=await worker.startApi(store,{host:'127.0.0.1',port:0,origins:[],ratePerMinute:1000,cluster:'devnet'});
+    const client=new CometailClient({baseUrl:`http://127.0.0.1:${server.address().port}`});
+    for(const t of cases){
+      const r=(await client.trades(t.mint)).data.trades[0];
+      assert.equal(r.quoteMint,t.quoteMint);assert.equal(r.quoteDecimals,t.quoteDecimals);
+      assert.equal(r.quoteAmountLamports,t.quote);assert.equal(r.baseAmountRaw,t.base);
+      assert.equal(r.executionPriceQuote,t.price,'historical execution, never current token price');
+      assert.equal(r.executionPriceSol,t.quoteDecimals===9?t.price:null);
+    }
+  } finally {if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}await store.close();}
 });
