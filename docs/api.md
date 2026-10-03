@@ -4,7 +4,7 @@ Base URL: `https://api.cometail.fun`. Every route is `GET`, answers JSON, allows
 origin only through CORS, and is rate limited per client address. Nothing here is an input to a
 transaction: the site and the SDK read the chain for anything they sign.
 
-## Envelope (token routes, feed)
+## Envelope (token routes)
 ```
 { schemaVersion: 1, cluster: "devnet" | "mainnet-beta", generatedAtMs, observedSlot,
   coverage: { status: "complete" | "partial" | "stale", pendingPools, lastSuccessfulAtMs },
@@ -12,11 +12,13 @@ transaction: the site and the SDK read the chain for anything they sign.
   data: ... }
 ```
 `coverage` says whether the trade index is caught up (`partial` while pools catch up, `stale`
-when the last successful scan is old). `solUsd` is the SOL reference every SOL-quoted USD
+when no successful scan has been recorded yet; `lastSuccessfulAtMs` carries the age, the
+worker does not judge it). `solUsd` is the SOL reference every SOL-quoted USD
 figure uses; it is `null` when no source has ever answered, `stale` past ten minutes, and its
 `valuationBasis` is `market` on mainnet and `reference` elsewhere. Amounts are strings of
-exact base units (lamports, token raw units); derived numbers are not exact: prices carry 12
-decimal places and USD figures 2, both truncated.
+exact base units (lamports, token raw units). Derived numbers are display values: execution
+prices are truncated to 12 decimal places; `fdvUsd` is computed from the rounded price, the
+whole-token supply and a rate rounded to cents, and printed with 2 places.
 
 ## Routes
 | Route | Answer |
@@ -37,11 +39,12 @@ worker estimates says so in its field name or a `basis`/`status` sibling.
 
 ## The feed
 `wss://api.cometail.fun/api/feed` (one JSON text frame per event) and `GET /api/feed?since=<cursor>&limit=`
-(replay, max 500, `{ ...envelope, type: "replay", events, nextCursor }` with the last returned event's cursor when more remain; any origin may read it).
+(replay, max 500; any origin may read it).
 
 Frame: `{ schemaVersion: 1, cluster, type, cursor, observedSlot, generatedAtMs, provenance, data }`.
 Replay is its own shape, not the token envelope: `{ schemaVersion, cluster, type: "replay",
-generatedAtMs, events, nextCursor }` with no coverage, observedSlot or solUsd at the top.
+generatedAtMs, events, nextCursor }`, `nextCursor` being the last returned event's cursor
+when more remain, with no coverage, observedSlot or solUsd at the top.
 `provenance` is `{ source: "chain" | "indexer" | "estimate", signature?, slot?, scannedAtMs? }`;
 an estimate carries `basis` in `data`.
 

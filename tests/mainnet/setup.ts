@@ -1,9 +1,14 @@
 // Mainnet setup, run by the protocol owner: the treasury WSOL account, the nine DBC configs
 // (three stream presets, the plain preset, and the five public presets) and init_protocol, in
-// that order, resumable (each step is skipped once its account exists in configs/mainnet.json and
-// on chain). DRY_RUN=1 simulates every transaction without signatures and sends nothing; the
-// init simulation needs the real stream configs, so before they exist it is reported SKIPPED,
-// never PASS. The cluster must be mainnet (genesis checked). Every failure exits non-zero.
+// that order, resumable. Order of a run: the cluster (genesis), the inputs against the recorded
+// deployment (configs/mainnet.json never gets rewritten with different authorities or quotes),
+// the preflight (program, both quote mints, the stock badge, the wallet's balance): any failed
+// check stops the run before anything is simulated, sent or saved. A recorded account is skipped
+// only after it decodes and matches every parameter. DRY_RUN=1 simulates every transaction with
+// the admin's public key, sends nothing and writes nothing; the init simulation needs the real
+// stream configs, so before they exist it is reported SKIPPED, never PASS. The real run requires
+// the deployed program and records each address as its transaction confirms. Any FAIL exits
+// non-zero.
 //
 //   cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> \
 //     COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v COMETAIL_QUOTE_STOCK=<stock mint> \
@@ -11,55 +16,64 @@
 //   The real run adds ADMIN_KEYPAIR=<path to the owner's keypair file, mode 600, outside the repo>
 //   and drops DRY_RUN. State: configs/mainnet.json (public addresses only).
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, sendAndConfirmTransaction } from "@solana/web3.js";
-import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { BorshAccountsCoder, Idl } from "@coral-xyz/anchor";
 import fs from "fs";
 import path from "path";
 import { VaultClientStep6, VAULT_PROGRAM_ID } from "@cometail/client";
 import { dbcProgram } from "../harness/programs";
 import { configParams, PresetName } from "../harness/dbc";
+import { CONFIG_NAMES, DBC_PROGRAM, GENESIS, PROTOCOL_SET, Check, badgeOf, compareConfig, compareProtocol, readBadge, readMint } from "./readback";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const STATE = path.join(ROOT, "configs", "mainnet.json");
-const MAINNET_GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
-const DBC_PROGRAM = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN");
+const CANONICAL_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const MIN_BALANCE_LAMPORTS = 4_500_000_000; // rent for nine configs plus fees, see docs/mainnet-runbook.md
 const DRY = process.env.DRY_RUN === "1";
 const need = (k: string) => { const v = process.env[k]; if (!v) throw new Error(`${k} is required`); return v; };
-
-const PROTOCOL_SET: PresetName[] = ["stream-25", "stream-50", "stream-75", "plain"];
-const PUBLIC_SET: PresetName[] = ["long", "flat", "exp", "stock-usdc", "stock-xstock"];
 
 type Outcome = { step: string; status: "PASS" | "FAIL" | "SKIPPED" | "DONE" | "EXISTS"; detail: string };
 const outcomes: Outcome[] = [];
 const note = (o: Outcome) => { outcomes.push(o); console.log(`${o.status.padEnd(7)} ${o.step}: ${o.detail}`); };
+const failed = () => outcomes.filter((o) => o.status === "FAIL");
+const fileDecimals = (name: string) => JSON.parse(fs.readFileSync(path.join(ROOT, "configs", `${name}.json`), "utf8")).token.tokenQuoteDecimal as number;
 
-function load(): any { return fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, "utf8")) : { cluster: "mainnet-beta", configs: {}, presets: {}, quoteMints: {} }; }
-function save(s: any) { fs.writeFileSync(STATE, JSON.stringify(s, null, 2) + "\n"); }
-const exists = async (c: Connection, k: string | undefined) => !!k && !!(await c.getAccountInfo(new PublicKey(k)));
+const dbcIdl = JSON.parse(fs.readFileSync(path.join(ROOT, "idls", "dynamic_bonding_curve.json"), "utf8")) as Idl;
+const vaultIdl = JSON.parse(fs.readFileSync(path.join(ROOT, "packages", "client", "idl", "cometail_vault.json"), "utf8")) as Idl;
+const dbcCoder = new BorshAccountsCoder(dbcIdl), vaultCoder = new BorshAccountsCoder(vaultIdl);
+const POOL_CONFIG = (dbcIdl.accounts ?? []).find((a) => /^poolconfig$/i.test(a.name))?.name ?? "PoolConfig";
+const PROTOCOL = (vaultIdl.accounts ?? []).find((a) => /^protocol$/i.test(a.name))?.name ?? "Protocol";
 
 async function run(connection: Connection, label: string, ixs: TransactionInstruction[], payer: PublicKey, signers: Keypair[]): Promise<boolean> {
   const tx = new Transaction().add(...ixs);
   tx.feePayer = payer;
-  const latest = await connection.getLatestBlockhash("confirmed");
-  tx.recentBlockhash = latest.blockhash;
+  tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
   if (DRY) {
     const res = await connection.simulateTransaction(tx, undefined, false);
     if (res.value.err) { note({ step: label, status: "FAIL", detail: `${JSON.stringify(res.value.err)} ${(res.value.logs ?? []).filter((l) => /Error|failed/.test(l)).slice(-2).join(" | ")}` }); return false; }
     note({ step: label, status: "PASS", detail: `simulated, ${res.value.unitsConsumed ?? "?"} CU` });
     return true;
   }
-  const sig = await sendAndConfirmTransaction(connection, tx, signers, { commitment: "confirmed" });
-  note({ step: label, status: "DONE", detail: sig });
-  return true;
+  try {
+    const sig = await sendAndConfirmTransaction(connection, tx, signers, { commitment: "confirmed" });
+    note({ step: label, status: "DONE", detail: sig });
+    return true;
+  } catch (e: any) { note({ step: label, status: "FAIL", detail: String(e?.message ?? e).slice(0, 200) }); return false; }
 }
 
-/** The DBC token badge for a Token-2022 quote that is not permissionless; remaining account 0 on create_config. */
-function badgeOf(quoteMint: PublicKey): PublicKey { return PublicKey.findProgramAddressSync([Buffer.from("token_badge"), quoteMint.toBuffer()], DBC_PROGRAM)[0]; }
+/** A recorded config is skipped only when the account exists, belongs to DBC and matches every parameter. */
+async function recordedConfigMatches(connection: Connection, name: PresetName, key: string, quote: PublicKey, quoteIs2022: boolean, admin: PublicKey): Promise<string[]> {
+  const info = await connection.getAccountInfo(new PublicKey(key));
+  if (!info) return [`recorded config ${name} ${key} does not exist on chain`];
+  if (!info.owner.equals(DBC_PROGRAM)) return [`recorded config ${name} is owned by ${info.owner.toBase58()}, not DBC`];
+  const checks = compareConfig(dbcCoder.decode(POOL_CONFIG, info.data), configParams(name), { quoteMint: quote.toBase58(), quoteIs2022, admin: admin.toBase58() });
+  return checks.filter((c) => !c.ok).map((c) => `recorded config ${name}: ${c.what} ${c.detail}`);
+}
 
 async function main() {
   const connection = new Connection(need("RPC"), "confirmed");
   const genesis = await connection.getGenesisHash();
-  if (genesis !== MAINNET_GENESIS) throw new Error(`RPC is not mainnet (genesis ${genesis})`);
+  if (genesis !== GENESIS["mainnet-beta"]) throw new Error(`RPC is not mainnet (genesis ${genesis})`);
   const admin = new PublicKey(need("ADMIN"));
   const keeper = new PublicKey(need("KEEPER"));
   if (keeper.equals(admin)) throw new Error("KEEPER must be the keeper hot key, not the admin");
@@ -71,36 +85,65 @@ async function main() {
     if (!kp.publicKey.equals(admin)) throw new Error("ADMIN_KEYPAIR does not match ADMIN");
     adminKeypair = kp;
   }
-  const state = load();
-  state.cluster = "mainnet-beta"; state.programId = VAULT_PROGRAM_ID.toBase58(); state.admin = admin.toBase58(); state.keeper = keeper.toBase58();
-  state.quoteMints = { wsol: NATIVE_MINT.toBase58(), usdc: usdc.toBase58(), stock: stock.toBase58() };
-  save(state);
-  console.log(`mode ${DRY ? "DRY RUN (simulation only, nothing sent)" : "REAL"}; admin ${admin.toBase58()}; keeper ${keeper.toBase58()}; balance ${(await connection.getBalance(admin)) / 1e9} SOL`);
-  const program = await connection.getAccountInfo(VAULT_PROGRAM_ID);
-  note({ step: "program deployed", status: program?.executable ? "PASS" : "SKIPPED", detail: program?.executable ? VAULT_PROGRAM_ID.toBase58() : "not on mainnet yet: init_protocol waits for docs/deploy.md" });
 
-  // the quote mints: USDC must be a plain SPL mint; the stock must be Token-2022 with a DBC badge
-  const usdcInfo = await connection.getAccountInfo(usdc), stockInfo = await connection.getAccountInfo(stock);
-  note({ step: "usdc quote mint", status: usdcInfo && usdcInfo.data.length >= 45 ? "PASS" : "FAIL", detail: usdcInfo ? `decimals ${usdcInfo.data[44]}, program ${usdcInfo.owner.toBase58().slice(0, 8)}` : "absent" });
-  const stockIs2022 = !!stockInfo && stockInfo.owner.equals(TOKEN_2022_PROGRAM_ID);
+  // the recorded deployment, never rewritten with different authorities or quotes
+  const recorded = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, "utf8")) : null;
+  const header = { cluster: "mainnet-beta", programId: VAULT_PROGRAM_ID.toBase58(), admin: admin.toBase58(), keeper: keeper.toBase58(), quoteMints: { wsol: NATIVE_MINT.toBase58(), usdc: usdc.toBase58(), stock: stock.toBase58() } };
+  if (recorded) {
+    const diffs: string[] = [];
+    for (const f of ["cluster", "programId", "admin", "keeper"] as const) if (recorded[f] !== undefined && recorded[f] !== header[f]) diffs.push(`${f}: recorded ${recorded[f]}, run ${header[f]}`);
+    for (const f of ["wsol", "usdc", "stock"] as const) if (recorded.quoteMints?.[f] !== undefined && recorded.quoteMints[f] !== header.quoteMints[f]) diffs.push(`quoteMints.${f}: recorded ${recorded.quoteMints[f]}, run ${header.quoteMints[f]}`);
+    if (diffs.length) throw new Error(`configs/mainnet.json records a different deployment; refusing to rewrite it:\n${diffs.join("\n")}`);
+  }
+  const state: any = { ...header, configs: {}, presets: {}, ...(recorded ?? {}), ...header };
+  const save = () => { if (!DRY) fs.writeFileSync(STATE, JSON.stringify(state, null, 2) + "\n"); };
+  const balance = await connection.getBalance(admin);
+  console.log(`mode ${DRY ? "DRY RUN (simulation only, nothing sent, nothing written)" : "REAL"}; admin ${admin.toBase58()}; keeper ${keeper.toBase58()}; balance ${balance / 1e9} SOL`);
+
+  // preflight: everything below must pass before any simulation, send or save
+  const program = await connection.getAccountInfo(VAULT_PROGRAM_ID);
+  const deployed = !!program?.executable;
+  note({ step: "program deployed", status: deployed ? "PASS" : DRY ? "SKIPPED" : "FAIL", detail: deployed ? VAULT_PROGRAM_ID.toBase58() : DRY ? "not on mainnet yet: init_protocol is skipped in this dry run" : "not on mainnet: deploy first (docs/deploy.md)" });
+  const usdcMint = await readMint(connection, usdc);
+  const usdcOk = usdcMint.ok && !usdcMint.is2022 && usdcMint.decimals === fileDecimals("stock-usdc") && usdc.toBase58() === CANONICAL_USDC;
+  note({ step: "usdc quote mint", status: usdcOk ? "PASS" : "FAIL", detail: usdcOk ? usdcMint.detail : `${usdcMint.detail}; must be ${CANONICAL_USDC} (SPL, ${fileDecimals("stock-usdc")} decimals)` });
+  const stockMint = await readMint(connection, stock);
+  const stockOk = stockMint.ok && stockMint.decimals === fileDecimals("stock-xstock");
+  note({ step: "stock quote mint", status: stockOk ? "PASS" : "FAIL", detail: stockOk ? stockMint.detail : `${stockMint.detail}; the file expects ${fileDecimals("stock-xstock")} decimals` });
+  const stockIs2022 = stockMint.ok && stockMint.is2022;
   const badge = badgeOf(stock);
-  const badgeInfo = await connection.getAccountInfo(badge);
-  note({ step: "stock quote mint", status: stockInfo ? "PASS" : "FAIL", detail: stockInfo ? `decimals ${stockInfo.data[44]}, ${stockIs2022 ? "Token-2022" : "SPL"}` : "absent" });
-  note({ step: "stock token badge", status: badgeInfo || !stockIs2022 ? "PASS" : "FAIL", detail: badgeInfo ? badge.toBase58() : stockIs2022 ? "no DBC token badge: a Meteora operator must create one first" : "not needed for an SPL quote" });
-  let ok = usdcInfo !== null && stockInfo !== null && (badgeInfo !== null || !stockIs2022);
+  if (stockIs2022) { const b = await readBadge(connection, stock); note({ step: "stock token badge", status: b.ok ? "PASS" : "FAIL", detail: b.ok ? b.detail : `${b.detail}: a Meteora operator must create the badge first` }); }
+  else note({ step: "stock token badge", status: "PASS", detail: "not needed for an SPL quote" });
+  note({ step: "admin balance", status: balance >= MIN_BALANCE_LAMPORTS ? "PASS" : "FAIL", detail: `${balance / 1e9} SOL${balance >= MIN_BALANCE_LAMPORTS ? "" : ` (needs ${MIN_BALANCE_LAMPORTS / 1e9} SOL; a simulation with an unfunded payer fails too)`}` });
+  if (failed().length) throw new Error(`preflight failed, nothing simulated, sent or saved:\n${failed().map((o) => `${o.step}: ${o.detail}`).join("\n")}`);
+
+  // recorded accounts: validated before they are skipped
+  const quoteOf = (name: PresetName): PublicKey => name === "stock-usdc" ? usdc : name === "stock-xstock" ? stock : NATIVE_MINT;
+  process.env.COMETAIL_QUOTE_USDC = usdc.toBase58(); process.env.COMETAIL_QUOTE_STOCK = stock.toBase58();
+  const treasury = getAssociatedTokenAddressSync(NATIVE_MINT, admin);
+  const client = new VaultClientStep6(connection);
+  const mismatches: string[] = [];
+  for (const name of CONFIG_NAMES) {
+    const bucket = PROTOCOL_SET.includes(name) ? state.configs : state.presets;
+    if (bucket[name]) mismatches.push(...(await recordedConfigMatches(connection, name, bucket[name], quoteOf(name), name === "stock-xstock" && stockIs2022, admin)));
+  }
+  const protocolInfo = await connection.getAccountInfo(client.protocol);
+  if (protocolInfo) {
+    const checks: Check[] = compareProtocol(protocolInfo.owner, vaultCoder.decode(PROTOCOL, protocolInfo.data), { admin: admin.toBase58(), keeper: keeper.toBase58(), treasury: treasury.toBase58(), configs: state.configs }, VAULT_PROGRAM_ID, false);
+    mismatches.push(...checks.filter((c) => !c.ok).map((c) => `protocol: ${c.what} ${c.detail}`));
+  }
+  if (mismatches.length) throw new Error(`recorded state does not match the chain or the inputs; nothing simulated, sent or saved:\n${mismatches.join("\n")}`);
+  state.treasury = treasury.toBase58(); state.protocol = client.protocol.toBase58();
+  save();
 
   // 1. treasury
-  const treasury = getAssociatedTokenAddressSync(NATIVE_MINT, admin);
-  state.treasury = treasury.toBase58(); save(state);
-  if (await exists(connection, state.treasury)) note({ step: "treasury ata", status: "EXISTS", detail: state.treasury });
-  else ok = (await run(connection, "treasury ata", [createAssociatedTokenAccountIdempotentInstruction(admin, treasury, admin, NATIVE_MINT)], admin, adminKeypair ? [adminKeypair] : [])) && ok;
+  if (await connection.getAccountInfo(treasury)) note({ step: "treasury ata", status: "EXISTS", detail: state.treasury });
+  else await run(connection, "treasury ata", [createAssociatedTokenAccountIdempotentInstruction(admin, treasury, admin, NATIVE_MINT)], admin, adminKeypair ? [adminKeypair] : []);
 
   // 2. the nine configs
-  const quoteOf = (name: PresetName): PublicKey => name === "stock-usdc" ? usdc : name === "stock-xstock" ? stock : NATIVE_MINT;
-  for (const name of [...PROTOCOL_SET, ...PUBLIC_SET]) {
+  for (const name of CONFIG_NAMES) {
     const bucket = PROTOCOL_SET.includes(name) ? state.configs : state.presets;
-    if (await exists(connection, bucket[name])) { note({ step: `config ${name}`, status: "EXISTS", detail: bucket[name] }); continue; }
-    process.env.COMETAIL_QUOTE_USDC = usdc.toBase58(); process.env.COMETAIL_QUOTE_STOCK = stock.toBase58();
+    if (bucket[name]) { note({ step: `config ${name}`, status: "EXISTS", detail: `${bucket[name]} (matches every parameter)` }); continue; }
     const config = Keypair.generate();
     const quote = quoteOf(name);
     let builder = dbcProgram.methods.createConfig(configParams(name)).accountsPartial({
@@ -108,36 +151,33 @@ async function main() {
     });
     if (name === "stock-xstock" && stockIs2022) builder = builder.remainingAccounts([{ pubkey: badge, isSigner: false, isWritable: false }]);
     const done = await run(connection, `config ${name} (${quote.equals(NATIVE_MINT) ? "WSOL" : quote.toBase58().slice(0, 8)})`, [await builder.instruction()], admin, adminKeypair ? [adminKeypair, config] : []);
-    ok = done && ok;
-    if (done && !DRY) { bucket[name] = config.publicKey.toBase58(); save(state); }
+    if (done && !DRY) { bucket[name] = config.publicKey.toBase58(); save(); }
+    if (!done && !DRY) break; // a failed send stops the real run here; the record holds what confirmed
   }
 
   // 3. init_protocol: only with the real stream configs and the treasury on chain
-  const client = new VaultClientStep6(connection);
-  state.protocol = client.protocol.toBase58(); save(state);
   const streams = ["stream-25", "stream-50", "stream-75"].map((n) => state.configs[n]);
-  if (await exists(connection, state.protocol)) note({ step: "init_protocol", status: "EXISTS", detail: state.protocol });
-  else if (!program?.executable) note({ step: "init_protocol", status: "SKIPPED", detail: "program not deployed" });
-  else if (!streams.every(Boolean) || !(await exists(connection, state.treasury))) note({ step: "init_protocol", status: "SKIPPED", detail: "needs the three stream configs and the treasury on chain first (rerun after the real config step)" });
+  const prerequisites = deployed && streams.every(Boolean) && !!(await connection.getAccountInfo(treasury));
+  if (protocolInfo) note({ step: "init_protocol", status: "EXISTS", detail: `${state.protocol} (admin, keeper, treasury and pins match)` });
+  else if (!prerequisites) note({ step: "init_protocol", status: DRY ? "SKIPPED" : "FAIL", detail: `needs the deployed program, the three stream configs and the treasury on chain${DRY ? " (expected in a dry run before step 5)" : ": setup is incomplete, fix the failures above and rerun"}` });
   else {
     const ix = await client.initProtocol({ admin, keeper, payer: admin, treasury, streamConfigs: streams.map((k: string) => new PublicKey(k)) as [PublicKey, PublicKey, PublicKey] });
-    ok = (await run(connection, "init_protocol", [ix], admin, adminKeypair ? [adminKeypair] : [])) && ok;
+    await run(connection, "init_protocol", [ix], admin, adminKeypair ? [adminKeypair] : []);
   }
 
-  // 4. readback of what exists: quote mint and threshold of every recorded config
-  const idl = JSON.parse(fs.readFileSync(path.join(ROOT, "idls", "dynamic_bonding_curve.json"), "utf8")) as Idl;
-  const coder = new BorshAccountsCoder(idl);
-  const accountName = (idl.accounts ?? []).find((a) => /^poolconfig$/i.test(a.name))?.name ?? "PoolConfig";
-  for (const [name, key] of [...Object.entries(state.configs), ...Object.entries(state.presets)] as [string, string][]) {
-    const info = await connection.getAccountInfo(new PublicKey(key));
-    if (!info) continue;
-    const c: any = coder.decode(accountName, info.data);
-    const q = new PublicKey(c.quote_mint ?? c.quoteMint).toBase58();
-    note({ step: `readback ${name}`, status: q === quoteOf(name as PresetName).toBase58() ? "PASS" : "FAIL", detail: `quote ${q.slice(0, 8)} threshold ${(c.migration_quote_threshold ?? c.migrationQuoteThreshold).toString()}` });
-    if (q !== quoteOf(name as PresetName).toBase58()) ok = false;
+  // 4. readback of every recorded config and the protocol, field by field
+  for (const name of CONFIG_NAMES) {
+    const bucket = PROTOCOL_SET.includes(name) ? state.configs : state.presets;
+    if (!bucket[name]) continue;
+    const bad = await recordedConfigMatches(connection, name, bucket[name], quoteOf(name), name === "stock-xstock" && stockIs2022, admin);
+    note({ step: `readback ${name}`, status: bad.length ? "FAIL" : "PASS", detail: bad.length ? bad.join("; ").slice(0, 300) : "every parameter matches the file" });
   }
-  console.log(JSON.stringify({ mode: DRY ? "dry-run" : "real", outcomes }, null, 2));
-  if (!ok) throw new Error("at least one step failed; see the outcomes above");
+  if (!DRY && !protocolInfo) {
+    const after = await connection.getAccountInfo(client.protocol);
+    if (after) { const checks = compareProtocol(after.owner, vaultCoder.decode(PROTOCOL, after.data), { admin: admin.toBase58(), keeper: keeper.toBase58(), treasury: treasury.toBase58(), configs: state.configs }, VAULT_PROGRAM_ID, false); note({ step: "readback protocol", status: checks.every((c) => c.ok) ? "PASS" : "FAIL", detail: checks.filter((c) => !c.ok).map((c) => `${c.what} ${c.detail}`).join("; ") || "admin, keeper, treasury and pins match" }); }
+  }
+  console.log(JSON.stringify({ mode: DRY ? "dry-run" : "real", plan: DRY ? state : undefined, outcomes }, null, 2));
+  if (failed().length) throw new Error(`${failed().length} step(s) failed; see the outcomes above`);
 }
 
 describe("mainnet setup", () => { it(DRY ? "simulates every step and sends nothing" : "creates what is missing", main); });

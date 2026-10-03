@@ -2,8 +2,9 @@
 
 The ordered switch from devnet to mainnet. Every step names who runs it and what it needs.
 Steps 1 to 3 send no transaction. Step 4 deploys the program and step 5 creates accounts:
-those are mainnet transactions, signed by the owner's wallet, and nothing else sends one
-until the team launches in step 9. Every address this page produces is public and lands in
+those are mainnet transactions, signed by the owner's wallet. The keeper started in step 6
+sends only for pools that have completed a curve on our configs, so on fresh configs the
+next transaction is the team's launch in step 9 (the intended sequence, not a guarantee). Every address this page produces is public and lands in
 `configs/mainnet.json`; no key and no keyed URL ever enters the repository.
 
 ## 1. Keys (first, before anything that names them)
@@ -28,13 +29,17 @@ cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> 
   COMETAIL_QUOTE_STOCK=<stock mint, see 3b> \
   DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/setup.ts
 ```
-`tests/mainnet/setup.ts` refuses any cluster but mainnet, checks both quote mints and the
-stock's DBC token badge, then simulates the treasury account and the nine `create_config`
-transactions (three stream presets, plain, long, flat, exp, stock-usdc, stock-xstock, with
-the full-size files in `configs/`) with the owner's wallet as every authority and the stock
-badge as remaining account 0. The `init_protocol` simulation needs the real stream configs
-and treasury, so before step 5 it is reported SKIPPED. Any failed simulation fails the run.
-Keep the output with the deployment record.
+`tests/mainnet/setup.ts` refuses any cluster but mainnet, then runs a preflight: the
+program, both quote mints (USDC must be the canonical mint, the stock must carry the
+decimals of its file), the stock's DBC token badge (owned by DBC, naming that mint) and the
+wallet's balance (4.5 SOL; an unfunded payer cannot even simulate). A failed preflight stops
+the run before anything is simulated. Then it simulates the treasury account and the nine
+`create_config` transactions (three stream presets, plain, long, flat, exp, stock-usdc,
+stock-xstock, with the full-size files in `configs/`) with the owner's wallet as every
+authority and the stock badge as remaining account 0. The `init_protocol` simulation needs
+the real stream configs and treasury, so before step 5 it is reported SKIPPED. Any failed
+simulation fails the run. The dry run writes nothing: `configs/mainnet.json` is written by
+the real run only. Keep the output with the deployment record.
 
 ### 3b. The stock quote (read-only scan 2026-10-03, rerun at setup for the chosen mint)
 All Backed xStocks carry a DBC token badge. By holders and depth: NVIDIA xStock (NVDAx,
@@ -53,15 +58,22 @@ authority the owner's wallet.
 ## 5. Configs and protocol (owner, real transactions)
 The step 3 command without `DRY_RUN`, plus `ADMIN_KEYPAIR=<path to the owner's keypair file>`.
 It creates, in order, what does not exist yet: the treasury WSOL account, the nine configs,
-`init_protocol` with the three stream configs, the treasury and `KEEPER`. Every address goes
-to `configs/mainnet.json` as it is confirmed, so an interrupted run is resumed by running the
-same command again. Then the readback:
+`init_protocol` with the three stream configs, the treasury and `KEEPER`. The real run
+requires the deployed program and fails, rather than skipping, when `init_protocol` cannot
+run. Every address goes to `configs/mainnet.json` as it is confirmed, so an interrupted run
+is resumed by running the same command again: a rerun refuses to start if the recorded
+admin, keeper or quote mints differ from the command's, and it skips a recorded account only
+after decoding it and matching every parameter. Then the readback:
 ```
 cd tests && RPC=<keyed mainnet rpc> CLUSTER=mainnet ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/verify-configs.ts
 ```
-compares every config on chain with its file (quote mint and decimals, thresholds, curve,
-fees, liquidity split, migration settings), the stock badge, and the protocol's admin, keeper,
-treasury and stream-config pins. Commit `configs/mainnet.json`.
+requires exactly the nine configs and the protocol in the file, the mainnet genesis and the
+program id, and compares every parameter of every config with its file (quote mint, decimals
+and token flag, fee claimer and leftover receiver, base and dynamic fees, thresholds, start
+price, every curve segment, supply and its fixed flag, update authority, locked vesting,
+liquidity split and vesting, migration option and fees, the migrated pool's fee settings,
+creation fee), the stock badge, and the protocol's owner, admin, keeper, treasury and
+stream-config pins. Commit `configs/mainnet.json`.
 
 ## 6. Worker (box, root)
 Stop both services. Keep the devnet database file where it is. Write
@@ -69,7 +81,8 @@ Stop both services. Keep the devnet database file where it is. Write
 ```
 COMETAIL_RPC_URL=<keyed mainnet rpc>
 COMETAIL_CLUSTER=mainnet-beta
-DATABASE_URL=sqlite:/opt/cometail/repo/.local/mainnet.sqlite     (a fresh file; never the devnet one)
+# a fresh database file for mainnet; never the devnet one
+DATABASE_URL=sqlite:/opt/cometail/repo/.local/mainnet.sqlite
 COMETAIL_KEEPER_KEYPAIR=<keeper keypair path from step 1>
 COMETAIL_MIGRATE_CONFIGS=<plain,long,flat,exp,stock-usdc,stock-xstock from configs/mainnet.json>
 COMETAIL_SKY_CONFIGS=<those six plus stream-25,stream-50,stream-75>
@@ -117,9 +130,14 @@ Storage stays as configured (`COMETAIL_STORAGE_PROVIDER=r2`, `COMETAIL_MEDIA_ORI
 new build; the Devnet badge is gone; `/presets` shows six cards with the mainnet addresses.
 
 ## 8. Acceptance before users (team)
-Token page of any mainnet mint on a preset config reads from the API (not "not indexed
-yet"); `/api/metrics` shows zero rows; the feed socket answers hello with
-`cluster: "mainnet-beta"`.
+Empty state, right after step 7 and before any launch: `/api/tokens` answers the envelope
+with `cluster: "mainnet-beta"` and an empty list; `/api/metrics` answers totals of zero;
+the feed socket answers hello with `cluster: "mainnet-beta"`; `/presets` shows six cards
+with the mainnet addresses; the Devnet badge is gone. A token page of a mint that is not
+ours reads "not indexed yet", which is correct.
+After the first launch of step 9: that token's page reads from the API (not "not indexed
+yet"), its first buy appears on the feed and in its trade history, and `/api/metrics`
+counts one plain launch.
 
 ## 9. First launches (team, labelled demo in `COMETAIL_DEMO_ACTORS`)
 One plain launch with a logo and links from the site, one buy, one claim; one vault deposit,
