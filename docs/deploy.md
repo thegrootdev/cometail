@@ -37,7 +37,7 @@ solana program deploy target/deploy/cometail_vault.so \
   -u <cluster>
 ```
 `--upgrade-authority` does not choose who pays: without `--fee-payer` (or `-k`) the CLI pays
-from its configured default keypair (cargo-build-sbf 3.1.10 help). The owner's wallet pays the
+from its configured default keypair (`solana program deploy --help`, solana-cli 3.1.10). The owner's wallet pays the
 rent, so name it explicitly.
 
 For a fresh loader-v3 deployment the buffer lamports are reused to fund the program-data
@@ -64,8 +64,8 @@ Provenance of the reviewed bytes. The ELF was built at 07:45 UTC on 2026-10-03; 
 comment block above `unwind` in `instructions/launch.rs` was rewritten from five lines to
 seven, and the result was committed as 58b57c7 at 08:05. A rebuild of HEAD with the same
 toolchain gives the same size and exactly nine differing bytes (`8f190b85…`), every one a
-source line number two higher: four `u32` store immediates in `.text` (lines 392 to 398
-becoming 394 to 400, the `unwind` error sites) and five source-location records in
+source line number two higher: four `u32` store immediates in `.text` (lines 391 to 398
+becoming 393 to 400, the `unwind` error sites) and five source-location records in
 `.data.rel.ro` (the `#[event]` lines 423 to 427 becoming 425 to 429); `.rel.dyn` and every
 other byte are identical. The reviewed bytes are therefore the committed code with the older
 comment, and the gate suite passes on both builds. The mainnet deploy uses the reviewed bytes
