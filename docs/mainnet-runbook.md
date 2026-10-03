@@ -23,8 +23,8 @@ reviewed ELF plus the program account and fees (docs/deploy.md; re-quote with `s
 on the day): 3.65 SOL. Setup (step 5): nine configs at 0.006 SOL each, the treasury account
 and the protocol account under 0.004 SOL, fees, 0.02 SOL margin: 0.08 SOL, which the script
 computes itself for the work still pending (a no-op rerun needs nothing). First launches
-(step 9): creation fees and first buys, 0.5 SOL and up. Fund 4.5 SOL before step 4 and the
-whole sequence fits with 0.7 SOL to spare.
+(step 9): creation fees and first buys, 0.5 SOL and up. Fund 4.5 SOL before step 4: 0.77 SOL
+remains after deployment and setup, 0.27 SOL after the minimum launch allowance.
 The keeper: operating SOL only (bin-array rent 0.071 SOL per array plus fees), 1 SOL to start.
 
 ## 3. Dry run (no transaction)
