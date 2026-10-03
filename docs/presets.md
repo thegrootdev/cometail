@@ -9,8 +9,8 @@ the creator's share flows to the pool creator, with no agreement needed.
 
 ```ts
 import { DynamicBondingCurveClient } from "@meteora-ag/dynamic-bonding-curve-sdk";
-const client = new DynamicBondingCurveClient(connection, "confirmed");
-const tx = await client.pool.createPool({ config: PRESET_CONFIG, baseMint, name, symbol, uri, payer, poolCreator });
+const client = DynamicBondingCurveClient.create(connection, "confirmed");
+const tx = await client.creator.createPool({ config: PRESET_CONFIG, baseMint, name, symbol, uri, payer, poolCreator });
 ```
 
 Common to every preset: fees collected in the quote token, a 1 % flat curve fee, creator 75 %
@@ -27,18 +27,19 @@ presets (25, 50, 75) are for the vault program only; the plain presets are the p
 | Flat | WSOL | 16 segments, 12 x 8 then 4 x 1 (liquidity in the lower band) | 60 SOL | 120 SOL | 47.601 SOL | `configs/flat.json` |
 | Exponential | WSOL | 16 segments, weights 1.3^-i (gentle first, steep late) | 20 SOL | 240 SOL | 30.675 SOL | `configs/exp.json` |
 | Stock, USDC | USDC (6 dp) | market caps, one segment | 2,000 USDC | 12,000 USDC | 3,478.78 USDC | `configs/stock-usdc.json` |
-| Stock, tokenized stock | a badged Token-2022 stock mint (8 dp) | 16 segments, weights 1.2^i (slow discovery, thicker book near graduation) | 2 units | 16 units | 5.667 units | `configs/stock-xstock.json` |
+| Stock, tokenized stock | a badged Token-2022 stock mint (8 dp) | 16 segments, weights 1.2^i (more depth near graduation; sharper early price movement) | 2 units | 16 units | 5.667 units | `configs/stock-xstock.json` |
 
 What each means for a creator: Standard graduates at a 120 SOL market cap after a 34.8 SOL
 raise; Long stretches price discovery three and a half times further before graduating; Flat
 keeps the price near its start for most of the raise, a fair launch, and graduates at the
 same 120 SOL cap; Exponential climbs gently then steeply and graduates on a smaller raise
-with the price up about twelve-fold, the shape that rewards early buyers most; the USDC
+with the configured end price about twelve times the start; the USDC
 preset is the standard shape in dollars. The stock preset is tuned for thinly traded or
-newly tokenized names: such a stock has little float and a wide spread, so the launch asks
-buyers for a small amount of it (5.7 units to graduate), never jumps the price between buys,
-and leaves most of the liquidity near graduation where the pool forms, which damps late
-volatility in a quote whose own market is thin.
+newly tokenized names: the smaller raise asks buyers for fewer quote units (5.667 to
+graduate, down from 6.958), while rising liquidity weights put more depth near graduation.
+Early buys move the price more than later buys of the same quote amount. Prices meet at
+segment boundaries, but a large trade can still move the price sharply. The curve does not
+remove the quote token’s own volatility, spread or limited liquidity.
 After graduation every preset leaves 80 % of the liquidity permanently locked in the
 creator's position, earning the creator the pool's fees for as long as it trades.
 
