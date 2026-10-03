@@ -24,8 +24,8 @@
   --line: #0b1226;
   --panel: #151d47;
   --panel-deep: #0f1538;
-  --space-top: #0d1538;
-  --space-bottom: #2a1d6b;
+  --space-top: #07080c;
+  --space-bottom: #0b0d14;
   --nebula-pink: #ff8fb1;
   --nebula-violet: #8f7bff;
   --ink: #0b1226;
@@ -49,8 +49,9 @@ body {
   line-height: 1.6;
   font-weight: 500;
 }
-/* The sky: navy to indigo, a tiled star field, two nebula clouds. Fixed as an element, not
-   a fixed background, so it holds up inside the Phantom and Safari in-app browsers. */
+/* The sky: near-black with a faint star field and the nebula tints at a quarter of their old
+   strength, so copy sits on a quiet ground and the stickers carry the colour. Fixed as an
+   element, not a fixed background, so it holds up inside the Phantom and Safari in-app browsers. */
 body:before {
   content: "";
   position: fixed;
@@ -58,9 +59,10 @@ body:before {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(ellipse at 15% 20%, #ff8fb14d, transparent 45%),
-    radial-gradient(ellipse at 85% 75%, #5bc8ff40, transparent 45%),
-    radial-gradient(ellipse at 70% 15%, #8f7bff40, transparent 40%),
+    radial-gradient(ellipse at 15% 20%, #ff8fb114, transparent 45%),
+    radial-gradient(ellipse at 85% 75%, #5bc8ff10, transparent 45%),
+    radial-gradient(ellipse at 70% 15%, #8f7bff10, transparent 40%),
+    linear-gradient(#07080ccc, #07080ccc),
     url("/art/stars-tile.webp") repeat,
     linear-gradient(180deg, var(--space-top), var(--space-bottom));
 }
@@ -413,9 +415,9 @@ input[type="range"] {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 28px;
-  background: #0d1538e6;
+  background: #07080ce6;
   backdrop-filter: blur(10px);
-  border-bottom: var(--outline) solid var(--ink);
+  border-bottom: 1px solid #ffffff1f;
 }
 .brand-link {
   display: flex;
@@ -498,8 +500,8 @@ input[type="range"] {
   color: var(--dust);
 }
 .mobile-nav {
-  background: #0d1538f2;
-  border-top: var(--outline) solid var(--ink);
+  background: #07080cf2;
+  border-top: 1px solid #ffffff1f;
   backdrop-filter: blur(10px);
 }
 .mobile-nav a {
@@ -1065,10 +1067,11 @@ body .wallet-adapter-dropdown-list-item {
    an ink backing. */
 body:before {
   background:
-    linear-gradient(180deg, #0d1538e6 0, #0d153880 32%, transparent 58%),
-    radial-gradient(ellipse at 15% 20%, #ff8fb14d, transparent 45%),
-    radial-gradient(ellipse at 85% 75%, #5bc8ff40, transparent 45%),
-    radial-gradient(ellipse at 70% 15%, #8f7bff40, transparent 40%),
+    linear-gradient(180deg, #07080ce6 0, #07080c80 32%, transparent 58%),
+    radial-gradient(ellipse at 15% 20%, #ff8fb114, transparent 45%),
+    radial-gradient(ellipse at 85% 75%, #5bc8ff10, transparent 45%),
+    radial-gradient(ellipse at 70% 15%, #8f7bff10, transparent 40%),
+    linear-gradient(#07080ccc, #07080ccc),
     url("/art/stars-tile.webp") repeat,
     linear-gradient(180deg, var(--space-top), var(--space-bottom));
 }
@@ -1336,11 +1339,13 @@ body .wallet-adapter-modal-button-close {
    mask over the copy sit on top. Tile size is half the source for crisp phones. */
 body:before {
   background:
-    linear-gradient(180deg, #0d1538e6 0, #0d153880 32%, transparent 58%),
-    radial-gradient(ellipse at 15% 20%, #ff8fb12e, transparent 45%),
-    radial-gradient(ellipse at 85% 75%, #5bc8ff2e, transparent 45%),
-    url("/art/stars-tile.webp") repeat;
-  background-size: auto, auto, auto, 627px 627px;
+    linear-gradient(180deg, #07080ce6 0, #07080c80 32%, transparent 58%),
+    radial-gradient(ellipse at 15% 20%, #ff8fb10c, transparent 45%),
+    radial-gradient(ellipse at 85% 75%, #5bc8ff0c, transparent 45%),
+    linear-gradient(#07080ccc, #07080ccc),
+    url("/art/stars-tile.webp") repeat,
+    var(--space-top);
+  background-size: auto, auto, auto, auto, 627px 627px, auto;
 }
 .atlas-svg {
   background:
