@@ -16,7 +16,8 @@ costs about 2 KB (build with `--features no-log-ix-name` to drop it).
 | `opt-level = 3` (before) | 941,784 | 4.78514156 SOL |
 | `opt-level = "s"` | 766,944 | |
 | `opt-level = "z"` (before the unwind instruction) | 695,192 | 3.5324542 SOL |
-| `opt-level = "z"` (current, with `unwind`; sha256 bac11c56…) | 710,168 | 3.60853228 SOL |
+| `opt-level = "z"` (with `unwind`; sha256 bac11c56…, retired) | 710,168 | 3.60853228 SOL |
+| `opt-level = "z"` (current, with the activation-clock fix; sha256 562475c1…) | 710,400 | 3.60971084 SOL |
 
 The program account itself is 36 bytes (0.00083312 SOL). Rent figures come from
 `solana rent <bytes> -um` on the day of the measurement; re-run them before the deploy.
@@ -43,9 +44,9 @@ rent, so name it explicitly.
 For a fresh loader-v3 deployment the buffer lamports are reused to fund the program-data
 account (the loader drains the buffer to the payer before funding program data,
 `programs/bpf_loader/src/lib.rs` at v3.1.10, line 575), so the deploy does not hold two
-rent deposits at once. At the measured mainnet rent (2026-10-03) this ELF needs 3.6093654 SOL
-for the program-data and program accounts combined, plus deployment fees and an operating
-margin: 3.65 SOL for the deployment phase.
+rent deposits at once. At the measured mainnet rent (2026-10-03) the current ELF needs
+3.61054396 SOL for the program-data and program accounts combined, plus deployment fees and
+an operating margin: 3.65 SOL for the deployment phase.
 Re-query rent and fees before the deploy; a stalled deploy leaves an extra buffer that ties
 up funds until it is closed. An upgrade of an existing program is different: its buffer rent
 is returned when the buffer closes, while the existing program-data account keeps its own.
@@ -54,24 +55,17 @@ is returned when the buffer closes, while the existing program-data account keep
 
 | | |
 |---|---|
-| ELF | `cometail_vault.so`, 710,168 bytes, SHA-256 `bac11c56a5ff5676bbdcf58e9f240b74b6f5529c9044042718fb05f7d5e7a372` |
-| Source | the `unwind` commit 58b57c7; `programs/`, `Cargo.lock`, `Cargo.toml` and `Anchor.toml` unchanged through fb2228c |
+| ELF | `cometail_vault.so`, 710,400 bytes, SHA-256 `562475c161a05d665b35ddc4a55a731ea0797d80cffa3390f5d8f7733766c4d2` |
+| Source | commit 741e8e7 (the review fix to `register_pair`'s activation clock); built from that tree |
 | Toolchain | anchor-cli 1.2.0, solana-cargo-build-sbf 3.1.10, platform-tools v1.52, rustc 1.89.0, `anchor build --arch v0` |
-| Where it runs | devnet program data since the upgrade at slot 506,926,374 (the live site, the keeper and every loop since) |
-| Tests | the whole LiteSVM suite against these bytes at fb2228c: 14 files, 44 tests, 0 failures (2026-10-03) |
+| Where it runs | devnet program data since the upgrade at slot 507,050,729 (the first 710,400 bytes of the program dump hash to the value above; the rest is zero padding) |
+| Tests | the whole LiteSVM suite against these bytes: 14 files, 46 tests, 0 failures (2026-10-03) |
+| Program-data rent | 3.60971084 SOL for 710,400 + 45 bytes at the rate quoted 2026-10-03 (`solana rent 710445 -um`); re-quote on the day |
 
-Provenance of the reviewed bytes. The ELF was built at 07:45 UTC on 2026-10-03; at 07:56 the
-comment block above `unwind` in `instructions/launch.rs` was rewritten from five lines to
-seven, and the result was committed as 58b57c7 at 08:05. A rebuild of HEAD with the same
-toolchain gives the same size and exactly nine differing bytes (`8f190b85…`), every one a
-source line number two higher: four `u32` store immediates in `.text` (lines 391 to 398
-becoming 393 to 400, the `unwind` error sites) and five source-location records in
-`.data.rel.ro` (the `#[event]` lines 423 to 427 becoming 425 to 429); `.rel.dyn` and every
-other byte are identical. The reviewed bytes are therefore the committed code with the older
-comment, and the gate suite passes on both builds. The mainnet deploy uses the reviewed bytes
-above, not a fresh build: check `sha256sum` before `solana program deploy`, and after it
-compare the first 710,168 bytes of `solana program dump` (the rest of the program-data
-account is zero padding).
+The earlier artifact (`bac11c56…`, 710,168 bytes, the unwind build) is retired: it admitted a
+slot-activated DLMM pair before its activation slot (review finding, gate 04 covers it now).
+The mainnet deploy uses the bytes above, not a fresh build: check `sha256sum` before
+`solana program deploy`, and after it compare the first 710,400 bytes of `solana program dump`.
 
 ## Upgrade
 
