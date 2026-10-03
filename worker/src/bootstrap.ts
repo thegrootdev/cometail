@@ -84,11 +84,18 @@ export async function bootstrapPair(ctx: BootstrapContext, vaultPk: PublicKey, v
   }
   // A permissionless creator can occupy the customizable address with incompatible settings.
   // Probe registration before spending rent; the program remains the eligibility authority.
-  const canRegister = async (key: PublicKey) => {
+  const probe = async (key: PublicKey) => {
     const ix = await chain.client.registerPair({ vault: vaultPk, signer: keeper.publicKey, lbPair: key });
-    return (await simulateEvents({ connection: chain.connection, payer: keeper.publicKey, ixs: [ix], parser: chain.events, cu: 200_000 })).ok;
+    return simulateEvents({ connection: chain.connection, payer: keeper.publicKey, ixs: [ix], parser: chain.events, cu: 200_000 });
   };
-  if (!(await canRegister(pair))) {
+  const canRegister = async (key: PublicKey) => (await probe(key)).ok;
+  const first = await probe(pair);
+  // Only the program's Ineligible verdict means the pair itself is wrong. Any other rejection
+  // (the vault's status, a concurrent keeper, a transient read) is retried on the next pass;
+  // it must never make this keeper pay for a preset pair the vault does not need.
+  const INELIGIBLE = /"Custom":6004\b/;
+  if (!first.ok && !INELIGIBLE.test(first.error ?? "")) { log("pair: registration not possible yet", { vault: vaultPk, pair, error: first.error }); return false; }
+  if (!first.ok) {
     const presets = await (chain.dlmm.account as any).presetParameter2.all();
     let fallback: PublicKey | null = null;
     const [lo, hi] = sorted(stMint, NATIVE_MINT);
