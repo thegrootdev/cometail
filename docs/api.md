@@ -24,8 +24,8 @@ rounded server side.
 | `/api/vaults/<vault>?limit=` | the vault, `stToken`, `streams: [{ stream, data, token }]`, `events`, `trades`. |
 | `/api/events?vault=&limit=` | program events, newest first: `signature`, `idx`, `slot`, `blockTime`, `vault`, `name`, `data`. Names: vaultCreated, streamDeposited, streamPositionRegistered, streamWithdrawn, launched, pairRegistered, live, cashedOut, harvested, oneTimeHarvested, routed, settled, unwound. |
 | `/api/tokens?sort=volume24h|newest&stage=all|bonding|graduated&q=&cursor=&limit=` (max 100) | `{ tokens: [{ identity, market, volume24h, holders, bonding, updatedAtMs }], total, nextCursor, sort, stage }` |
-| `/api/tokens/<mint>` | `identity` (mint, decimals, name, symbol, imageUrl, metadataUri, metadataStatus, creator, custody, createdAtMs, dbcPool, dammPool, quoteMint, tokenKind, config, vault, stage, links), `market` (priceSol, priceSource `curve` or `damm`, totalSupplyRaw, fdvUsd, marketCapUsd null by definition, valuationBasis), `volume24h` (lamports, buys, sells, window, complete), `holders` (count, definition, status), `bonding` (progress), `liquidity` (lamports, basis). 404 while a fresh launch is not indexed yet. |
-| `/api/tokens/<mint>/trades?cursor=&limit=` | `{ trades: [...], nextCursor }`: `signature`, `ordinal`, `slot`, `blockTimeSec`, `pool`, `venue` (`curve` or `damm`), `side`, `baseAmountRaw`, `quoteAmountLamports`, `executionPriceSol`, `trader`, `traderKind`. Cursor `slot:ordinal:signature`. |
+| `/api/tokens/<mint>` | `identity` (mint, decimals, name, symbol, imageUrl, metadataUri, metadataStatus, creator, custody, createdAtMs, dbcPool, dammPool, quoteMint, tokenKind, config, vault, stage, links), `market` (`priceQuote` in quote units per whole token, `quoteMint`, `quoteDecimals`, `quoteUsd` { value, source, status }, `priceSol` only when the quote is WSOL, priceSource `curve` or `damm`, totalSupplyRaw, fdvUsd from the quote rate, marketCapUsd null by definition, valuationBasis, liquidityLamports in quote base units, liquidityBasis), `volume24h` (lamports in quote base units, buys, sells, window, complete), `holders` (count, definition, status), `bonding` (progress). 404 while a fresh launch is not indexed yet. |
+| `/api/tokens/<mint>/trades?cursor=&limit=` | `{ trades: [...], nextCursor }`: `signature`, `ordinal`, `slot`, `blockTimeSec`, `pool`, `venue` (`curve` or `damm`), `side`, `baseAmountRaw`, `quoteAmountLamports` (quote base units), `executionPriceQuote`, `quoteMint`, `quoteDecimals`, `executionPriceSol` (WSOL quotes only), `trader`, `traderKind`. Cursor `slot:ordinal:signature`. |
 | `/api/prices` | `{ solUsd, source, at }` (Jupiter, CoinGecko fallback, 60 s cache); 503 when no source answers. |
 | `/api/metrics` | protocol totals, computed at most every 30 s: independent, demo and unattributed classes, recurring and one-time harvests, buyers of vault stream tokens. |
 
@@ -34,7 +34,7 @@ worker estimates says so in its field name or a `basis`/`status` sibling.
 
 ## The feed
 `wss://api.cometail.fun/api/feed` (one JSON text frame per event) and `GET /api/feed?since=<cursor>&limit=`
-(replay, max 500, `{ events, nextCursor }` with the last returned event's cursor when more remain).
+(replay, max 500, `{ ...envelope, type: "replay", events, nextCursor }` with the last returned event's cursor when more remain; any origin may read it).
 
 Frame: `{ schemaVersion: 1, cluster, type, cursor, observedSlot, generatedAtMs, provenance, data }`.
 `provenance` is `{ source: "chain" | "indexer" | "estimate", signature?, slot?, scannedAtMs? }`;
@@ -48,7 +48,10 @@ Types and `data`:
 - `bid` { vault, order, bins (number), grossLamports, signature }
 - `fill` { vault, order, burnedStRaw, unfilledLamports, signature }
 - `cashout` { vault, depositorLamports, signature }
-- `unwind` { vault, stMint, dbcPool, incomeReturned, signature }
+- `unwind` { vault, stMint, dbcPool, incomeReturned, launchedAt, unwoundAt, signature }
+- `vault` { vault, event, ...the event's fields, signature }: every other program event (vaultCreated, streamDeposited, streamPositionRegistered, streamWithdrawn, launched, pairRegistered, live), so a consumer that ignores unknown types loses nothing it asked for.
+
+Token rows (`launch`, `graduation`) carry no transaction: their cursor's third part is the mint and the slot is the scan's observed slot; `provenance.source` is `indexer`. Harvest rows carry `grossLamports`, `toDepositorLamports`, `toProtocolLamports` and `oneTime` next to `incomeLamports`.
 
 Control frames: `hello` { cursor, retentionSlots } first on every socket (its head never
 advances a consumer's delivered cursor); `ping` { generatedAtMs } every 25 s; `coverage`
@@ -62,6 +65,10 @@ Cursors are `slot:ordinal:signature`, strictly increasing within a connection an
 every type; `since` is exclusive.
 
 ## Non-SOL quotes
-Presets quoted in USDC or a tokenized stock add `quoteMint` and `quoteDecimals` next to every
-quote-denominated amount, and `priceQuote` next to `priceSol`; USD figures stay USD, from the
-quote's own reference rate, named in `solUsd`'s sibling `quoteUsd`.
+Every quote-denominated figure names its quote: `market.quoteMint` and `market.quoteDecimals`
+on a token, `quoteMint` and `quoteDecimals` on a trade. `priceQuote` and `executionPriceQuote`
+are quote units per whole token for any quote; `priceSol` and `executionPriceSol` are present
+only when the quote is WSOL. `quoteUsd` is the USD rate of one quote unit: the SOL reference
+for WSOL, 1 for a configured dollar stablecoin (`COMETAIL_USDC_MINTS`), otherwise
+`{ value: null, status: "missing" }`, and then `fdvUsd` is null rather than guessed. The
+`solUsd` envelope field stays for SOL-quoted figures.

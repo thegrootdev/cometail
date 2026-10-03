@@ -1,5 +1,4 @@
 import { PublicKey } from "@solana/web3.js";
-import { executionPrice } from "./tokens";
 import { utils } from "@coral-xyz/anchor";
 // Event indexer: follows the vault program's transaction history, decodes Anchor events and
 // stores them together with a snapshot of every vault and its streams, for the site's pages.
@@ -9,6 +8,8 @@ import { Chain , isDefault , Decoded , DAMM_V2_PROGRAM_ID , DBC_PROGRAM_ID } fro
 import { isCrossed } from "./ladder";
 import { binArrayIndex, readBinView, unfilledAmount } from "./chain";
 import { getMint, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { feedFromEvents, feedFromTrades, publish, FEED_RETENTION_SLOTS } from "./feed";
+import { executionPrice, WSOL_MINT } from "./tokens";
 import { EventRow, PoolCursor, Store, TradeRow, plain } from "./store";
 import { log, parseEvents } from "./tx";
 
@@ -26,9 +27,11 @@ const EVENT_IX_DISCRIMINATOR = Buffer.from("e445a52e51cb9a1d", "hex");
 
 const SWAP_DISCRIMINATOR = Buffer.from("f8c69e91e17587c8", "hex"), SWAP2_DISCRIMINATOR = Buffer.from("414b3f4ceb5b5b88", "hex"), SWAP2_HOOK_DISCRIMINATOR = Buffer.from("b75d992818e6c297", "hex");
 /** A pool the trade index follows: the DBC curve of a launch, or a DAMM v2 pool after graduation. */
-export interface TradePool { pool: PublicKey; venue: "curve" | "damm"; vault: string | null; baseDecimals: number }
+export interface TradePool { pool: PublicKey; venue: "curve" | "damm"; vault: string | null; baseDecimals: number; mint?: string; quoteMint?: string; quoteDecimals?: number }
 
 export class Indexer {
+  /** Pool to base mint, filled by tradePools, for the feed's trade rows. */
+  private mintOfPool = new Map<string, string>();
   constructor(readonly chain: Chain, readonly store: Store) {}
 
   /** One pass; returns how many events were newly indexed. */
@@ -36,6 +39,8 @@ export class Indexer {
     const added = await this.indexEvents();
     const vaults = await this.chain.vaults(); // throws on an RPC failure: nothing is pruned on a partial read
     await this.indexTrades(await this.tradePools(vaults));
+    const observed = await this.store.observedSlot();
+    if (observed) await this.store.pruneFeed(observed - FEED_RETENTION_SLOTS);
     await this.snapshot(vaults);
     return added;
   }
@@ -49,8 +54,9 @@ export class Indexer {
     const streamPoolVault = new Map<string, string>();
     for (const v of vaults) for (const p of [v.account.dbcPool, v.account.dammPool] as (PublicKey | undefined)[]) if (p && !isDefault(p)) streamPoolVault.set(p.toBase58(), v.pubkey.toBase58());
     for (const t of await this.store.listTokens()) {
-      out.set(t.dbcPool, { pool: new PublicKey(t.dbcPool), venue: "curve", vault: streamPoolVault.get(t.dbcPool) ?? null, baseDecimals: t.decimals });
-      if (t.dammPool && t.stage === "graduated") out.set(t.dammPool, { pool: new PublicKey(t.dammPool), venue: "damm", vault: streamPoolVault.get(t.dammPool) ?? null, baseDecimals: t.decimals });
+      out.set(t.dbcPool, { pool: new PublicKey(t.dbcPool), venue: "curve", vault: streamPoolVault.get(t.dbcPool) ?? null, baseDecimals: t.decimals, mint: t.mint, quoteMint: t.quoteMint, quoteDecimals: t.quoteDecimals ?? 9 });
+      this.mintOfPool.set(t.dbcPool, t.mint);
+      if (t.dammPool && t.stage === "graduated") { out.set(t.dammPool, { pool: new PublicKey(t.dammPool), venue: "damm", vault: streamPoolVault.get(t.dammPool) ?? null, baseDecimals: t.decimals, mint: t.mint, quoteMint: t.quoteMint, quoteDecimals: t.quoteDecimals ?? 9 }); this.mintOfPool.set(t.dammPool, t.mint); }
     }
     for (const v of vaults) {
       const pool: PublicKey | undefined = v.account.dammPool;
@@ -105,8 +111,9 @@ export class Indexer {
           }
           if (!tx) { log("pool transaction not available yet; this pool resumes next pass", { pool: poolKey, signature: s.signature }); stopped = true; break; }
           if (tx.meta?.err) continue;
-          const rows = decodeTrades(this.chain, tx, pool, { signature: s.signature, slot: s.slot, blockTime: s.blockTime, vault: vaultKey, venue: tp.venue, baseDecimals: tp.baseDecimals });
+          const rows = decodeTrades(this.chain, tx, pool, { signature: s.signature, slot: s.slot, blockTime: s.blockTime, vault: vaultKey, venue: tp.venue, baseDecimals: tp.baseDecimals, quoteMint: tp.quoteMint, quoteDecimals: tp.quoteDecimals });
           await this.store.insertTrades(rows);
+          await publish(this.store, feedFromTrades(rows, (p) => this.mintOfPool.get(p) ?? null));
           added += rows.length;
           if (rows.length) log("indexed trades", { pool: poolKey, signature: s.signature, trades: rows.length });
         }
@@ -148,6 +155,7 @@ export class Indexer {
       const events = parseEvents(this.chain.events, tx.meta?.logMessages ?? []);
       const rows: EventRow[] = events.map((e, i) => { const data = plain(e.data); return { signature: s.signature, idx: i, slot: s.slot, blockTime: s.blockTime, name: e.name, vault: typeof data.vault === "string" ? data.vault : null, data }; });
       await this.store.insertEvents(rows, s.signature);
+      await publish(this.store, feedFromEvents(rows));
       added += rows.length;
       if (events.length) log("indexed", { signature: s.signature, events: events.map((e) => e.name) });
     }
@@ -269,7 +277,7 @@ export function binPriceSolPerSt(binId: number, binStep: number, stIsX: boolean,
  *  stable across pools. DBC: swap / swap2 / swap2_with_transfer_hook with the pool at account 2 and
  *  the signer at 9, events EvtSwap (actual input) and EvtSwap2 (included-fee input). cp-amm: swap /
  *  swap2 with the pool at 1 and the signer at 8, EvtSwap2. Direction 1 is quote in, token out. */
-export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Connection["getTransaction"]>>>, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string; venue: "curve" | "damm"; baseDecimals: number }): TradeRow[] {
+export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Connection["getTransaction"]>>>, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string; venue: "curve" | "damm"; baseDecimals: number; quoteMint?: string; quoteDecimals?: number }): TradeRow[] {
   const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined });
   const feePayer = keys.get(0)?.toBase58() ?? "";
   const inner = new Map<number, { programIdIndex: number; accounts: number[]; data: Buffer }[]>();
@@ -313,7 +321,7 @@ export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Co
     const input = BigInt(String(result.includedFeeInputAmount ?? result.actualInputAmount ?? d.amountIn ?? 0));
     const output = BigInt(String(result.outputAmount ?? 0));
     const quote = buy ? input : output, base = buy ? output : input;
-    execution.row = { signature: meta.signature, idx: execution.row?.idx ?? ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: execution.signer ?? feePayer, traderKind: execution.signer ? "authority" : "feePayer", buy, amountIn: input.toString(), amountOut: output.toString(), venue: meta.venue, baseAmountRaw: base.toString(), quoteAmountLamports: quote.toString(), executionPriceSol: executionPrice(quote, base, meta.baseDecimals) };
+    execution.row = { signature: meta.signature, idx: execution.row?.idx ?? ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: execution.signer ?? feePayer, traderKind: execution.signer ? "authority" : "feePayer", buy, amountIn: input.toString(), amountOut: output.toString(), venue: meta.venue, baseAmountRaw: base.toString(), quoteAmountLamports: quote.toString(), executionPriceSol: (meta.quoteMint ?? WSOL_MINT) === WSOL_MINT ? executionPrice(quote, base, meta.baseDecimals) : null, executionPriceQuote: executionPrice(quote, base, meta.baseDecimals, meta.quoteDecimals ?? 9), quoteMint: meta.quoteMint ?? WSOL_MINT, quoteDecimals: meta.quoteDecimals ?? 9 };
     execution.from2 = is2;
     if (!execution.signer) close(); // unpaired events never merge with each other
   }

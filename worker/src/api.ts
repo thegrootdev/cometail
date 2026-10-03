@@ -16,6 +16,7 @@
 import http from "http";
 import net from "net";
 import { Store, TokenRow, TradeRow } from "./store";
+import { attachFeed, parseCursor, replay } from "./feed";
 import { log } from "./tx";
 
 export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string }
@@ -191,19 +192,29 @@ async function envelope(store: Store, opts: ApiOptions, data: unknown) {
     data,
   };
 }
+const WSOL = "So11111111111111111111111111111111111111112";
+const USDC_MINTS = new Set((process.env.COMETAIL_USDC_MINTS ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").split(",").map((x) => x.trim()).filter(Boolean));
+/** USD per one quote unit: the SOL reference for WSOL, 1 for a configured dollar stablecoin, unknown otherwise. */
+function quoteUsdRate(quoteMint: string, solUsd: number | null): { value: number | null; source: string | null; status: "fresh" | "missing" } {
+  if (quoteMint === WSOL) return { value: solUsd, source: solUsd === null ? null : "sol-reference", status: solUsd === null ? "missing" : "fresh" };
+  if (USDC_MINTS.has(quoteMint)) return { value: 1, source: "stablecoin", status: "fresh" };
+  return { value: null, source: null, status: "missing" };
+}
 function tokenView(t: TokenRow, solUsd: number | null) {
   const supply = BigInt(t.totalSupplyRaw);
+  const quoteUsd = quoteUsdRate(t.quoteMint, solUsd);
+  const priceQuote = t.priceQuote ?? t.priceSol;
   let fdvUsd: string | null = null;
-  if (t.priceSol && solUsd) {
+  if (priceQuote && quoteUsd.value) {
     // price (12 decimals) x whole tokens x SOL/USD, kept as a decimal string with 2 places
-    const price = BigInt(Math.round(Number(t.priceSol) * 1e12));
+    const price = BigInt(Math.round(Number(priceQuote) * 1e12));
     const whole = supply / 10n ** BigInt(t.decimals);
-    const usd = (price * whole * BigInt(Math.round(solUsd * 100))) / 10n ** 12n;
+    const usd = (price * whole * BigInt(Math.round(quoteUsd.value * 100))) / 10n ** 12n;
     fdvUsd = (Number(usd) / 100).toFixed(2);
   }
   return {
     identity: { mint: t.mint, decimals: t.decimals, name: t.name, symbol: t.symbol, imageUrl: t.imageUrl, metadataUri: t.metadataUri, metadataStatus: t.metadataStatus, creator: t.creator, custody: t.custody, createdAtMs: t.createdAtMs, dbcPool: t.dbcPool, dammPool: t.dammPool, quoteMint: t.quoteMint, tokenKind: t.tokenKind, config: t.config, vault: t.vault, stage: t.stage, links: t.links ?? null },
-    market: { priceSol: t.priceSol, priceSource: t.priceSource, priceAtMs: t.priceAtMs, totalSupplyRaw: t.totalSupplyRaw, circulatingSupplyRaw: null, fdvUsd, marketCapUsd: null, valuationBasis: "fdv", liquidityLamports: t.liquidityLamports ?? null, liquidityBasis: t.liquidityBasis ?? null },
+    market: { priceSol: t.priceSol, priceQuote, quoteMint: t.quoteMint, quoteDecimals: t.quoteDecimals ?? 9, quoteUsd, priceSource: t.priceSource, priceAtMs: t.priceAtMs, totalSupplyRaw: t.totalSupplyRaw, circulatingSupplyRaw: null, fdvUsd, marketCapUsd: null, valuationBasis: "fdv", liquidityLamports: t.liquidityLamports ?? null, liquidityBasis: t.liquidityBasis ?? null },
     volume24h: { lamports: t.volume24hLamports, buys: t.buys24h, sells: t.sells24h, windowEndMs: t.updatedAt, windowStartMs: t.updatedAt - 24 * 3600_000, complete: t.volumeComplete, status: t.volumeComplete ? "complete" : "partial" },
     holders: { count: t.holders, countedAtMs: t.holdersAtMs, status: t.holders === null ? "missing" : "ok", definition: "unique owners of token accounts with a nonzero balance of the mint, excluding the pools' own vaults; addresses, not people" },
     bonding: { progressBps: t.progressBps, quoteRaisedLamports: t.quoteRaisedLamports, targetLamports: t.targetLamports, migrationStage: t.stage === "graduated" ? "graduated" : t.stage === "completed" ? "completed" : "bonding" },
@@ -211,7 +222,7 @@ function tokenView(t: TokenRow, solUsd: number | null) {
   };
 }
 function tradeView(t: TradeRow) {
-  return { id: `${t.signature}:${t.idx}:${t.pool}`, signature: t.signature, ordinal: t.idx, slot: t.slot, blockTimeSec: t.blockTime, pool: t.pool, venue: t.venue ?? null, side: t.buy ? "buy" : "sell", baseAmountRaw: t.baseAmountRaw ?? null, quoteAmountLamports: t.quoteAmountLamports ?? null, executionPriceSol: t.executionPriceSol ?? null, trader: t.trader, traderKind: t.traderKind };
+  return { id: `${t.signature}:${t.idx}:${t.pool}`, signature: t.signature, ordinal: t.idx, slot: t.slot, blockTimeSec: t.blockTime, pool: t.pool, venue: t.venue ?? null, side: t.buy ? "buy" : "sell", baseAmountRaw: t.baseAmountRaw ?? null, quoteAmountLamports: t.quoteAmountLamports ?? null, executionPriceSol: t.executionPriceSol ?? null, executionPriceQuote: t.executionPriceQuote ?? t.executionPriceSol ?? null, quoteMint: t.quoteMint ?? WSOL, quoteDecimals: t.quoteDecimals ?? 9, trader: t.trader, traderKind: t.traderKind };
 }
 async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
@@ -269,7 +280,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       res.end(JSON.stringify(body));
     };
     try {
-      if (req.method === "OPTIONS") { res.writeHead(204, cors); return res.end(); }
+      if (req.method === "OPTIONS") { res.writeHead(204, url.pathname === "/api/feed" ? { "access-control-allow-origin": "*", "access-control-allow-methods": "GET", "access-control-max-age": "600" } : cors); return res.end(); }
       if (req.method !== "GET") return send(405, { error: "method not allowed" }, { allow: "GET" });
       const remote = req.socket.remoteAddress ?? "";
       const fromProxy = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
@@ -290,6 +301,14 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         return send(200, { ...vault, stToken: tokens.byMint.get(String(vault.data?.stMint ?? "")) ?? null, streams, events: await store.listEvents(m[1], limit), trades: await store.listTrades(m[1], limit) });
       }
       if (url.pathname === "/api/events") return send(200, { events: await store.listEvents(url.searchParams.get("vault"), limit) });
+      if (url.pathname === "/api/feed") {
+        // the feed is public: any origin may replay it (the SDK runs anywhere)
+        const since = url.searchParams.get("since");
+        const cursor = since ? parseCursor(since) : null;
+        if (since && !cursor) return send(400, { error: "bad cursor" }, { "access-control-allow-origin": "*" });
+        const r = await replay(store, opts.cluster ?? "devnet", cursor, Math.min(500, limit));
+        return send(r.status, r.body, { "access-control-allow-origin": "*", "cache-control": "no-store" });
+      }
       if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return tokenRoutes(store, opts, url, send);
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {
@@ -303,6 +322,12 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       send(500, { error: "internal" });
     }
   });
+  attachFeed(server, store, { cluster: opts.cluster ?? "devnet", maxPerClient: 5, coverage: async () => {
+    const cursors = await store.listPoolCursors();
+    const pending = cursors.filter((c) => c.cursor.status !== "ok").length;
+    const scanned = await store.getMeta("tokens_scanned_at");
+    return { status: pending ? "pending" : "complete", pendingPools: pending, lastSuccessfulAtMs: scanned ? Number(scanned) : null };
+  } });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(opts.port, opts.host, () => { server.off("error", reject); resolve(); });

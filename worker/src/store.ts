@@ -9,12 +9,14 @@ export interface EventRow { signature: string; idx: number; slot: number; blockT
  *  stream token with the quote; amounts are the pool's input and output in raw units. */
 export interface TradeRow { signature: string; idx: number; slot: number; blockTime: number | null; pool: string; vault: string; trader: string; traderKind: "authority" | "feePayer"; buy: boolean; amountIn: string; amountOut: string;
   /** "curve" (DBC) or "damm" (DAMM v2); the token and quote legs; the price in SOL per whole token (12 decimals) or null. */
-  venue?: "curve" | "damm"; baseAmountRaw?: string; quoteAmountLamports?: string; executionPriceSol?: string | null }
+  venue?: "curve" | "damm"; baseAmountRaw?: string; quoteAmountLamports?: string; executionPriceSol?: string | null; /** quote units per whole token, 12 decimals; equals executionPriceSol for a WSOL quote */ executionPriceQuote?: string | null; quoteMint?: string; quoteDecimals?: number }
 /** One launch in scope, for /api/tokens. Unknown values are null. */
 export interface TokenRow {
   mint: string; decimals: number; name: string; symbol: string; imageUrl: string | null; metadataUri: string | null; metadataStatus: "ok" | "missing" | "unreachable";
   creator: string; custody: SkyRow["custody"]; config: string; tokenKind: "plain" | "stream"; dbcPool: string; dammPool: string | null; quoteMint: string; vault: string | null;
-  stage: "bonding" | "completed" | "graduated"; priceSol: string | null; priceSource: string | null; priceAtMs: number; totalSupplyRaw: string;
+  stage: "bonding" | "completed" | "graduated";
+  /** Price in quote units per whole token (12 decimals); `priceSol` repeats it only when the quote is WSOL. */
+  priceQuote: string | null; priceSol: string | null; quoteDecimals: number; priceSource: string | null; priceAtMs: number; totalSupplyRaw: string;
   quoteRaisedLamports: string; targetLamports: string; progressBps: number | null; holders: number | null; holdersAtMs: number | null;
   /** Liquidity in quote lamports: the curve's quote reserve while bonding, the graduated pool's quote side x 2 after. */
   liquidityLamports: string | null; liquidityBasis: "curve-quote-reserve" | "damm-quote-x2" | null;
@@ -22,6 +24,9 @@ export interface TokenRow {
   links: { x: string | null; telegram: string | null; discord: string | null; website: string | null } | null;
   volume24hLamports: string; buys24h: number; sells24h: number; volumeComplete: boolean; createdAtMs: number | null; updatedAt: number;
 }
+/** One row of the public feed (docs/api.md): a program event, a trade, a launch or a graduation,
+ *  ordered by (slot, ordinal, signature); the cursor is "slot:ordinal:signature". */
+export interface FeedRow { slot: number; ordinal: number; signature: string; type: string; vault: string | null; mint: string | null; data: any; provenance: any; at: number }
 /** Where the trade index stands on one pool. `head` is the newest signature whose history is fully
  *  indexed. A catch-up walks backward from the newest signature (`newHead`) toward `head` (`target`)
  *  in bounded pages, continuing from `tail`; only when the walk reaches the target does head move,
@@ -83,12 +88,18 @@ export interface Store {
   listStreams(vault: string): Promise<{ stream: string; data: any }[]>;
   listEvents(vault: string | null, limit: number): Promise<EventRow[]>;
   listSky(limit: number): Promise<SkyRow[]>;
+  /** The feed: append (idempotent on the cursor), read forward from an exclusive cursor, the bounds, and retention. */
+  appendFeed(rows: FeedRow[]): Promise<void>;
+  listFeedSince(since: { slot: number; ordinal: number; signature: string } | null, limit: number): Promise<FeedRow[]>;
+  oldestFeed(): Promise<FeedRow | null>;
+  headFeed(): Promise<FeedRow | null>;
+  pruneFeed(beforeSlot: number): Promise<void>;
   close(): Promise<void>;
 }
 
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
@@ -127,7 +138,7 @@ class PgStore implements Store {
     const have = r.rows[0] ? Number(r.rows[0].value) : 0;
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades, tokens");
+      await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades, tokens, feed");
     }
     await this.pool.query(`
       create table if not exists events (signature text not null, idx int not null, slot bigint not null, block_time bigint, name text not null, vault text, data jsonb not null, primary key (signature, idx));
@@ -139,7 +150,8 @@ class PgStore implements Store {
       create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text, status text not null default 'pending');
       create table if not exists trades (signature text not null, idx int not null, slot bigint not null, block_time bigint, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy boolean not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
-      create table if not exists tokens (mint text primary key, data jsonb not null, volume24h numeric not null, updated_at bigint not null);`);
+      create table if not exists tokens (mint text primary key, data jsonb not null, volume24h numeric not null, updated_at bigint not null);
+      create table if not exists feed (slot bigint not null, ordinal int not null, signature text not null, type text not null, vault text, mint text, data jsonb not null, provenance jsonb not null, at bigint not null, primary key (slot, ordinal, signature));`);
     if (have !== SCHEMA_VERSION) await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
   }
   async pruneStreams(vault: string, keep: string[]) { await this.pool.query("delete from streams where vault = $1 and not (stream = any($2))", [vault, keep]); }
@@ -194,6 +206,16 @@ class PgStore implements Store {
     return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
   }
   async listSky(limit: number) { const r = await this.pool.query("select data from sky order by (data->>'claimableLamports')::numeric desc limit $1", [limit]); return r.rows.map((x: any) => x.data); }
+  async appendFeed(rows: FeedRow[]) { for (const r of rows) await this.pool.query("insert into feed (slot, ordinal, signature, type, vault, mint, data, provenance, at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict do nothing", [r.slot, r.ordinal, r.signature, r.type, r.vault, r.mint, r.data, r.provenance, r.at]); }
+  async listFeedSince(since: { slot: number; ordinal: number; signature: string } | null, limit: number) {
+    const r = since
+      ? await this.pool.query("select * from feed where slot > $1 or (slot = $1 and ordinal > $2) or (slot = $1 and ordinal = $2 and signature > $3) order by slot asc, ordinal asc, signature asc limit $4", [since.slot, since.ordinal, since.signature, limit])
+      : await this.pool.query("select * from feed order by slot asc, ordinal asc, signature asc limit $1", [limit]);
+    return r.rows.map(pgFeed);
+  }
+  async oldestFeed() { const r = await this.pool.query("select * from feed order by slot asc, ordinal asc, signature asc limit 1"); return r.rows[0] ? pgFeed(r.rows[0]) : null; }
+  async headFeed() { const r = await this.pool.query("select * from feed order by slot desc, ordinal desc, signature desc limit 1"); return r.rows[0] ? pgFeed(r.rows[0]) : null; }
+  async pruneFeed(beforeSlot: number) { await this.pool.query("delete from feed where slot < $1", [beforeSlot]); }
   async close() { await this.pool.end(); }
 }
 
@@ -209,7 +231,7 @@ class SqliteStore implements Store {
     const have = r ? Number(r.value) : 0;
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
-      this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists trades; drop table if exists tokens");
+      this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists feed; drop table if exists trades; drop table if exists tokens");
     }
     this.db.exec(`
       create table if not exists events (signature text not null, idx integer not null, slot integer not null, block_time integer, name text not null, vault text, data text not null, primary key (signature, idx));
@@ -221,7 +243,8 @@ class SqliteStore implements Store {
       create table if not exists cursors (key text primary key, head text, tail text, target text, new_head text, status text not null default 'pending');
       create table if not exists trades (signature text not null, idx integer not null, slot integer not null, block_time integer, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy integer not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
-      create table if not exists tokens (mint text primary key, data text not null, volume24h text not null, updated_at integer not null);`);
+      create table if not exists tokens (mint text primary key, data text not null, volume24h text not null, updated_at integer not null);
+      create table if not exists feed (slot integer not null, ordinal integer not null, signature text not null, type text not null, vault text, mint text, data text not null, provenance text not null, at integer not null, primary key (slot, ordinal, signature));`);
     if (have !== SCHEMA_VERSION) this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
   }
   async pruneStreams(vault: string, keep: string[]) {
@@ -289,8 +312,24 @@ class SqliteStore implements Store {
     return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
   }
   async listSky(limit: number) { return this.db.prepare("select data from sky order by claimable desc limit ?").all(limit).map((x: any) => JSON.parse(x.data)); }
+  async appendFeed(rows: FeedRow[]) {
+    const ins = this.db.prepare("insert or ignore into feed (slot, ordinal, signature, type, vault, mint, data, provenance, at) values (?,?,?,?,?,?,?,?,?)");
+    for (const r of rows) ins.run(r.slot, r.ordinal, r.signature, r.type, r.vault, r.mint, JSON.stringify(r.data), JSON.stringify(r.provenance), r.at);
+  }
+  async listFeedSince(since: { slot: number; ordinal: number; signature: string } | null, limit: number) {
+    const rows = since
+      ? this.db.prepare("select * from feed where slot > ? or (slot = ? and ordinal > ?) or (slot = ? and ordinal = ? and signature > ?) order by slot asc, ordinal asc, signature asc limit ?").all(since.slot, since.slot, since.ordinal, since.slot, since.ordinal, since.signature, limit)
+      : this.db.prepare("select * from feed order by slot asc, ordinal asc, signature asc limit ?").all(limit);
+    return rows.map(sqFeed);
+  }
+  async oldestFeed() { const x = this.db.prepare("select * from feed order by slot asc, ordinal asc, signature asc limit 1").get(); return x ? sqFeed(x) : null; }
+  async headFeed() { const x = this.db.prepare("select * from feed order by slot desc, ordinal desc, signature desc limit 1").get(); return x ? sqFeed(x) : null; }
+  async pruneFeed(beforeSlot: number) { this.db.prepare("delete from feed where slot < ?").run(beforeSlot); }
   async close() { this.db.close(); }
 }
 
 function pgTrade(x: any): TradeRow { return { signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: x.buy, amountIn: x.amount_in, amountOut: x.amount_out, venue: x.venue ?? undefined, baseAmountRaw: x.base_amount ?? undefined, quoteAmountLamports: x.quote_amount ?? undefined, executionPriceSol: x.price ?? null }; }
 function sqTrade(x: any): TradeRow { return { signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: !!x.buy, amountIn: x.amount_in, amountOut: x.amount_out, venue: x.venue ?? undefined, baseAmountRaw: x.base_amount ?? undefined, quoteAmountLamports: x.quote_amount ?? undefined, executionPriceSol: x.price ?? null }; }
+
+function pgFeed(x: any): FeedRow { return { slot: Number(x.slot), ordinal: x.ordinal, signature: x.signature, type: x.type, vault: x.vault, mint: x.mint, data: x.data, provenance: x.provenance, at: Number(x.at) }; }
+function sqFeed(x: any): FeedRow { return { slot: x.slot, ordinal: x.ordinal, signature: x.signature, type: x.type, vault: x.vault, mint: x.mint, data: JSON.parse(x.data), provenance: JSON.parse(x.provenance), at: x.at }; }

@@ -8,6 +8,7 @@ import { loadConfig } from "./config";
 import { Indexer } from "./indexer";
 import { startApi } from "./api";
 import { scanSky } from "./sky";
+import { feedFromTokens, publish } from "./feed";
 import { scanTokens } from "./tokens";
 import { openStore } from "./store";
 import { keeperPass } from "./keeper";
@@ -43,7 +44,10 @@ async function main() {
           const rows = await scanSky(chain, cfg.skyConfigs, store); await store.upsertSky(rows); await store.pruneSky(rows.map((r) => r.pool));
           // the token rows behind /api/tokens follow the Sky's curve rows
           const tokens = await scanTokens(chain, rows, store, new Set(cfg.migrateConfigs.map((k) => k.toBase58())));
+          const previous = new Map((await store.listTokens()).map((t) => [t.mint, t]));
           await store.upsertTokens(tokens); await store.pruneTokens(tokens.map((t) => t.mint));
+          // the first scan of a fresh store announces nothing: every token would read as a launch
+          if (previous.size > 0) await publish(store, feedFromTokens(previous, tokens, (await store.observedSlot()) ?? 0));
           await store.setMeta("tokens_scanned_at", String(Date.now()));
           log("token scan", { tokens: tokens.length, graduated: tokens.filter((t) => t.stage === "graduated").length });
         } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }

@@ -39,9 +39,20 @@ export function formatFixed(v: bigint, decimals: number): string {
   return frac ? `${int}.${frac}` : int;
 }
 /** Quote lamports over base raw as SOL per whole token, 12 decimals. */
-export function executionPrice(quoteLamports: bigint, baseRaw: bigint, baseDecimals: number): string | null {
+export function executionPrice(quoteLamports: bigint, baseRaw: bigint, baseDecimals: number, quoteDecimals = 9): string | null {
   if (baseRaw === 0n) return null;
-  return formatFixed((quoteLamports * 10n ** BigInt(baseDecimals) * 10n ** 12n) / (baseRaw * 10n ** 9n), 12);
+  return formatFixed((quoteLamports * 10n ** BigInt(baseDecimals) * 10n ** 12n) / (baseRaw * 10n ** BigInt(quoteDecimals)), 12);
+}
+export const WSOL_MINT = "So11111111111111111111111111111111111111112";
+const quoteDecimalsCache = new Map<string, number>([[WSOL_MINT, 9]]);
+/** Decimals of a quote mint, read once from its mint account (Token or Token-2022: the field sits at offset 44 in both). */
+export async function quoteDecimalsOf(conn: Connection, quoteMint: string): Promise<number> {
+  const cached = quoteDecimalsCache.get(quoteMint);
+  if (cached !== undefined) return cached;
+  const info = await conn.getAccountInfo(new PublicKey(quoteMint));
+  const d = info && info.data.length >= 45 ? info.data[44] : 9;
+  quoteDecimalsCache.set(quoteMint, d);
+  return d;
 }
 
 function metadataPda(mint: PublicKey): PublicKey {
@@ -145,17 +156,18 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
       if (uri) { const img = await imageFromUri(uri); imageUrl = img.image; metadataStatus = img.status; links = img.links; }
       // stage and price: the DBC pool while bonding, the DAMM v2 pool after graduation
       const progress = Number(pool.migrationProgress);
+      const quoteDecimals = await quoteDecimalsOf(conn, r.quoteMint);
       const stage: TokenRow["stage"] = progress === 3 ? "graduated" : progress === 0 ? "bonding" : "completed";
       const dammInfo = r.dammPool ? dammInfos.get(r.dammPool) : null;
       let priceSol: string | null = null, priceSource: string | null = null;
       let liquidityLamports: string | null = null, liquidityBasis: TokenRow["liquidityBasis"] = null;
       if (stage === "graduated" && dammInfo) {
         const damm: any = chain.damm.coder.accounts.decode("pool", dammInfo.data);
-        priceSol = sqrtPriceToSolPerToken(BigInt(damm.sqrtPrice.toString()), mint.decimals); priceSource = "damm";
+        priceSol = sqrtPriceToSolPerToken(BigInt(damm.sqrtPrice.toString()), mint.decimals, quoteDecimals); priceSource = "damm";
         liquidityLamports = (BigInt(damm.tokenBAmount.toString()) * 2n).toString(); liquidityBasis = "damm-quote-x2";
       } else {
         liquidityLamports = BigInt(pool.quoteReserve.toString()).toString(); liquidityBasis = "curve-quote-reserve";
-        priceSol = sqrtPriceToSolPerToken(BigInt(pool.sqrtPrice.toString()), mint.decimals); priceSource = "curve";
+        priceSol = sqrtPriceToSolPerToken(BigInt(pool.sqrtPrice.toString()), mint.decimals, quoteDecimals); priceSource = "curve";
       }
       const quoteRaised = BigInt(pool.quoteReserve.toString());
       const target = BigInt(cfg.migrationQuoteThreshold.toString());
@@ -170,7 +182,7 @@ export async function scanTokens(chain: Chain, rows: SkyRow[], store: Store, pla
         mint: r.baseMint, decimals: mint.decimals, name, symbol, imageUrl, metadataUri: uri || null, metadataStatus,
         creator: r.creator, custody: r.custody, config: r.config, tokenKind: plainConfigs.has(r.config) ? "plain" : "stream",
         dbcPool: r.pool, dammPool: r.dammPool, quoteMint: r.quoteMint, vault: r.vault, stage,
-        priceSol, priceSource, priceAtMs: now, totalSupplyRaw: mint.supply.toString(),
+        priceQuote: priceSol, priceSol: r.quoteMint === WSOL_MINT ? priceSol : null, quoteDecimals, priceSource, priceAtMs: now, totalSupplyRaw: mint.supply.toString(),
         quoteRaisedLamports: quoteRaised.toString(), targetLamports: target.toString(),
         progressBps: target > 0n ? Number((quoteRaised * 10_000n) / target > 10_000n ? 10_000n : (quoteRaised * 10_000n) / target) : null,
         holders: h.count, holdersAtMs: h.at, liquidityLamports, liquidityBasis, links,
