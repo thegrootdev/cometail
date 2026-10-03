@@ -17,6 +17,7 @@ import http from "http";
 import net from "net";
 import { Store, TokenRow, TradeRow } from "./store";
 import { attachFeed, parseCursor, replay } from "./feed";
+import { executionPrice } from "./tokens";
 import { log } from "./tx";
 
 export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string }
@@ -221,6 +222,16 @@ function tokenView(t: TokenRow, solUsd: number | null) {
     updatedAtMs: t.updatedAt,
   };
 }
+/** A trade's quote fields, derived from the token it belongs to when the stored row lacks them
+ *  (the trades table carries no quote columns; the decoder's values live only in the feed). */
+function withQuote(t: TradeRow, token: TokenRow | null): TradeRow {
+  if (t.quoteMint && t.quoteDecimals !== undefined && t.executionPriceQuote !== undefined) return t;
+  const quoteMint = t.quoteMint ?? token?.quoteMint ?? WSOL;
+  const quoteDecimals = t.quoteDecimals ?? token?.quoteDecimals ?? 9;
+  const base = t.baseAmountRaw ? BigInt(t.baseAmountRaw) : 0n, quote = t.quoteAmountLamports ? BigInt(t.quoteAmountLamports) : 0n;
+  const executionPriceQuote = t.executionPriceQuote ?? (token && base > 0n ? executionPrice(quote, base, token.decimals, quoteDecimals) : t.executionPriceSol ?? null);
+  return { ...t, quoteMint, quoteDecimals, executionPriceQuote, executionPriceSol: quoteMint === WSOL ? (t.executionPriceSol ?? executionPriceQuote) : null };
+}
 function tradeView(t: TradeRow) {
   return { id: `${t.signature}:${t.idx}:${t.pool}`, signature: t.signature, ordinal: t.idx, slot: t.slot, blockTimeSec: t.blockTime, pool: t.pool, venue: t.venue ?? null, side: t.buy ? "buy" : "sell", baseAmountRaw: t.baseAmountRaw ?? null, quoteAmountLamports: t.quoteAmountLamports ?? null, executionPriceSol: t.executionPriceSol ?? null, executionPriceQuote: t.executionPriceQuote ?? t.executionPriceSol ?? null, quoteMint: t.quoteMint ?? WSOL, quoteDecimals: t.quoteDecimals ?? 9, trader: t.trader, traderKind: t.traderKind };
 }
@@ -282,7 +293,7 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
     const trades = await store.listTradesByPools(pools, limit + 1, before);
     const page = trades.slice(0, limit);
     const last = page[page.length - 1];
-    return send(200, await envelope(store, opts, { trades: page.map(tradeView), nextCursor: trades.length > limit && last ? `${last.slot}:${last.idx}:${last.signature}` : null }), { "cache-control": "public, max-age=5" });
+    return send(200, await envelope(store, opts, { trades: page.map((x) => tradeView(withQuote(x, t))), nextCursor: trades.length > limit && last ? `${last.slot}:${last.idx}:${last.signature}` : null }), { "cache-control": "public, max-age=5" });
   }
   return send(404, { error: "not found" });
 }
