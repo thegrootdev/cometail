@@ -24,9 +24,11 @@ export interface TokenRow {
   links: { x: string | null; telegram: string | null; discord: string | null; website: string | null } | null;
   volume24hLamports: string; buys24h: number; sells24h: number; volumeComplete: boolean; createdAtMs: number | null; updatedAt: number;
 }
-/** One row of the public feed (docs/api.md): a program event, a trade, a launch or a graduation,
- *  ordered by (slot, ordinal, signature); the cursor is "slot:ordinal:signature". */
-export interface FeedRow { slot: number; ordinal: number; signature: string; type: string; vault: string | null; mint: string | null; data: any; provenance: any; at: number }
+/** One row of the public feed (docs/api.md): a program event, a trade, a launch or a graduation.
+ *  Its identity is (type, signature, ordinal); `seq` is the publication sequence the store assigns
+ *  on insert, and the cursor is "seq:slot:signature": unique, strictly increasing in the order rows
+ *  were published, so a row indexed late still arrives after everything delivered before it. */
+export interface FeedRow { seq?: number; slot: number; ordinal: number; signature: string; type: string; vault: string | null; mint: string | null; data: any; provenance: any; at: number }
 /** Where the trade index stands on one pool. `head` is the newest signature whose history is fully
  *  indexed. A catch-up walks backward from the newest signature (`newHead`) toward `head` (`target`)
  *  in bounded pages, continuing from `tail`; only when the walk reaches the target does head move,
@@ -89,8 +91,11 @@ export interface Store {
   listEvents(vault: string | null, limit: number): Promise<EventRow[]>;
   listSky(limit: number): Promise<SkyRow[]>;
   /** The feed: append (idempotent on the cursor), read forward from an exclusive cursor, the bounds, and retention. */
-  appendFeed(rows: FeedRow[]): Promise<void>;
-  listFeedSince(since: { slot: number; ordinal: number; signature: string } | null, limit: number): Promise<FeedRow[]>;
+  /** Appends what is new (identity (type, signature, ordinal)) and returns those rows with their sequence. */
+  appendFeed(rows: FeedRow[]): Promise<FeedRow[]>;
+  /** The token snapshot and the feed rows it implies, committed together; returns the feed rows inserted. */
+  upsertTokensAndFeed(tokens: TokenRow[], keep: string[], feed: FeedRow[]): Promise<FeedRow[]>;
+  listFeedSince(since: { seq: number } | null, limit: number): Promise<FeedRow[]>;
   oldestFeed(): Promise<FeedRow | null>;
   headFeed(): Promise<FeedRow | null>;
   pruneFeed(beforeSlot: number): Promise<void>;
@@ -99,7 +104,7 @@ export interface Store {
 
 /** Schema version: a store written by an older version is rebuilt from the chain (the chain is
  *  the source of truth for every row here), never patched by guessing at old encodings. */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /** JSON-safe copy, converted before any serialization: bigints and BNs to decimal strings,
  *  public keys to base58, byte arrays to arrays. (JSON.stringify would call BN.toJSON first and
@@ -152,7 +157,7 @@ class PgStore implements Store {
       create table if not exists trades (signature text not null, idx int not null, slot bigint not null, block_time bigint, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy boolean not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
       create table if not exists tokens (mint text primary key, data jsonb not null, volume24h numeric not null, updated_at bigint not null);
-      create table if not exists feed (slot bigint not null, ordinal int not null, signature text not null, type text not null, vault text, mint text, data jsonb not null, provenance jsonb not null, at bigint not null, primary key (slot, ordinal, signature));`);
+      create table if not exists feed (seq bigserial primary key, slot bigint not null, ordinal int not null, signature text not null, type text not null, vault text, mint text, data jsonb not null, provenance jsonb not null, at bigint not null, unique (type, signature, ordinal));`);
     if (have !== SCHEMA_VERSION) await this.pool.query("insert into meta (key, value) values ('schema', $1) on conflict (key) do update set value = $1", [String(SCHEMA_VERSION)]);
   }
   async pruneStreams(vault: string, keep: string[]) { await this.pool.query("delete from streams where vault = $1 and not (stream = any($2))", [vault, keep]); }
@@ -181,8 +186,20 @@ class PgStore implements Store {
   }
   async getMeta(key: string) { const r = await this.pool.query("select value from meta where key = $1", [key]); return r.rows[0]?.value ?? null; }
   async setMeta(key: string, value: string) { await this.pool.query("insert into meta (key, value) values ($1, $2) on conflict (key) do update set value = $2", [key, value]); }
-  async upsertTokens(rows: TokenRow[]) { for (const t of rows) await this.pool.query("insert into tokens (mint, data, volume24h, updated_at) values ($1,$2,$3,$4) on conflict (mint) do update set data = $2, volume24h = $3, updated_at = $4", [t.mint, t, t.volume24hLamports, t.updatedAt]); }
+  async upsertTokens(rows: TokenRow[]) { await this.upsertTokensWith(this.pool, rows); }
+  private async upsertTokensWith(q: { query: (text: string, values?: any[]) => Promise<any> }, rows: TokenRow[]) { for (const t of rows) await q.query("insert into tokens (mint, data, volume24h, updated_at) values ($1,$2,$3,$4) on conflict (mint) do update set data = $2, volume24h = $3, updated_at = $4", [t.mint, t, t.volume24hLamports, t.updatedAt]); }
   async pruneTokens(keep: string[]) { await this.pool.query("delete from tokens where not (mint = any($1))", [keep]); }
+  async upsertTokensAndFeed(tokens: TokenRow[], keep: string[], feed: FeedRow[]) {
+    const c = await this.pool.connect();
+    try {
+      await c.query("begin");
+      await this.upsertTokensWith(c, tokens);
+      await c.query("delete from tokens where not (mint = any($1))", [keep]);
+      const inserted = await this.appendFeedWith(c, feed);
+      await c.query("commit");
+      return inserted;
+    } catch (e) { try { await c.query("rollback"); } catch { /* connection gone */ } throw e; } finally { c.release(); }
+  }
   async listTokens() { const r = await this.pool.query("select data from tokens"); return r.rows.map((x: any) => x.data); }
   async getToken(mint: string) { const r = await this.pool.query("select data from tokens where mint = $1", [mint]); return r.rows[0]?.data ?? null; }
   async observedSlot() { const r = await this.pool.query("select greatest((select max(slot) from events), (select max(slot) from trades)) as s"); return r.rows[0]?.s === null || r.rows[0]?.s === undefined ? null : Number(r.rows[0].s); }
@@ -207,15 +224,23 @@ class PgStore implements Store {
     return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
   }
   async listSky(limit: number) { const r = await this.pool.query("select data from sky order by (data->>'claimableLamports')::numeric desc limit $1", [limit]); return r.rows.map((x: any) => x.data); }
-  async appendFeed(rows: FeedRow[]) { for (const r of rows) await this.pool.query("insert into feed (slot, ordinal, signature, type, vault, mint, data, provenance, at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict do nothing", [r.slot, r.ordinal, r.signature, r.type, r.vault, r.mint, r.data, r.provenance, r.at]); }
-  async listFeedSince(since: { slot: number; ordinal: number; signature: string } | null, limit: number) {
+  async appendFeed(rows: FeedRow[]) { return this.appendFeedWith(this.pool, rows); }
+  private async appendFeedWith(q: { query: (text: string, values?: any[]) => Promise<any> }, rows: FeedRow[]) {
+    const out: FeedRow[] = [];
+    for (const r of rows) {
+      const res = await q.query("insert into feed (slot, ordinal, signature, type, vault, mint, data, provenance, at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict (type, signature, ordinal) do nothing returning *", [r.slot, r.ordinal, r.signature, r.type, r.vault, r.mint, r.data, r.provenance, r.at]);
+      if (res.rows[0]) out.push(pgFeed(res.rows[0]));
+    }
+    return out;
+  }
+  async listFeedSince(since: { seq: number } | null, limit: number) {
     const r = since
-      ? await this.pool.query("select * from feed where slot > $1 or (slot = $1 and ordinal > $2) or (slot = $1 and ordinal = $2 and signature > $3) order by slot asc, ordinal asc, signature asc limit $4", [since.slot, since.ordinal, since.signature, limit])
-      : await this.pool.query("select * from feed order by slot asc, ordinal asc, signature asc limit $1", [limit]);
+      ? await this.pool.query("select * from feed where seq > $1 order by seq asc limit $2", [since.seq, limit])
+      : await this.pool.query("select * from feed order by seq asc limit $1", [limit]);
     return r.rows.map(pgFeed);
   }
-  async oldestFeed() { const r = await this.pool.query("select * from feed order by slot asc, ordinal asc, signature asc limit 1"); return r.rows[0] ? pgFeed(r.rows[0]) : null; }
-  async headFeed() { const r = await this.pool.query("select * from feed order by slot desc, ordinal desc, signature desc limit 1"); return r.rows[0] ? pgFeed(r.rows[0]) : null; }
+  async oldestFeed() { const r = await this.pool.query("select * from feed order by seq asc limit 1"); return r.rows[0] ? pgFeed(r.rows[0]) : null; }
+  async headFeed() { const r = await this.pool.query("select * from feed order by seq desc limit 1"); return r.rows[0] ? pgFeed(r.rows[0]) : null; }
   async pruneFeed(beforeSlot: number) { await this.pool.query("delete from feed where slot < $1", [beforeSlot]); }
   async close() { await this.pool.end(); }
 }
@@ -246,7 +271,7 @@ class SqliteStore implements Store {
       create table if not exists trades (signature text not null, idx integer not null, slot integer not null, block_time integer, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy integer not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
       create table if not exists tokens (mint text primary key, data text not null, volume24h text not null, updated_at integer not null);
-      create table if not exists feed (slot integer not null, ordinal integer not null, signature text not null, type text not null, vault text, mint text, data text not null, provenance text not null, at integer not null, primary key (slot, ordinal, signature));`);
+      create table if not exists feed (seq integer primary key autoincrement, slot integer not null, ordinal integer not null, signature text not null, type text not null, vault text, mint text, data text not null, provenance text not null, at integer not null, unique (type, signature, ordinal));`);
     if (have !== SCHEMA_VERSION) this.db.prepare("insert into meta (key, value) values ('schema', ?) on conflict (key) do update set value = excluded.value").run(String(SCHEMA_VERSION));
   }
   async pruneStreams(vault: string, keep: string[]) {
@@ -285,8 +310,15 @@ class SqliteStore implements Store {
   }
   async getMeta(key: string) { const x = this.db.prepare("select value from meta where key = ?").get(key); return x ? x.value : null; }
   async setMeta(key: string, value: string) { this.db.prepare("insert into meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value").run(key, value); }
-  async upsertTokens(rows: TokenRow[]) { const ins = this.db.prepare("insert into tokens (mint, data, volume24h, updated_at) values (?,?,?,?) on conflict (mint) do update set data = excluded.data, volume24h = excluded.volume24h, updated_at = excluded.updated_at"); for (const t of rows) ins.run(t.mint, JSON.stringify(t), t.volume24hLamports, t.updatedAt); }
-  async pruneTokens(keep: string[]) { const rows = this.db.prepare("select mint from tokens").all(); const del = this.db.prepare("delete from tokens where mint = ?"); const k = new Set(keep); for (const r of rows) if (!k.has(r.mint)) del.run(r.mint); }
+  async upsertTokens(rows: TokenRow[]) { this.upsertTokensSync(rows); }
+  private upsertTokensSync(rows: TokenRow[]) { const ins = this.db.prepare("insert into tokens (mint, data, volume24h, updated_at) values (?,?,?,?) on conflict (mint) do update set data = excluded.data, volume24h = excluded.volume24h, updated_at = excluded.updated_at"); for (const t of rows) ins.run(t.mint, JSON.stringify(t), t.volume24hLamports, t.updatedAt); }
+  async pruneTokens(keep: string[]) { this.pruneTokensSync(keep); }
+  private pruneTokensSync(keep: string[]) { const rows = this.db.prepare("select mint from tokens").all(); const del = this.db.prepare("delete from tokens where mint = ?"); const k = new Set(keep); for (const r of rows) if (!k.has(r.mint)) del.run(r.mint); }
+  async upsertTokensAndFeed(tokens: TokenRow[], keep: string[], feed: FeedRow[]) {
+    this.db.exec("begin");
+    try { this.upsertTokensSync(tokens); this.pruneTokensSync(keep); const inserted = this.appendFeedSync(feed); this.db.exec("commit"); return inserted; }
+    catch (e) { try { this.db.exec("rollback"); } catch { /* already rolled back */ } throw e; }
+  }
   async listTokens() { return this.db.prepare("select data from tokens").all().map((x: any) => JSON.parse(x.data)); }
   async getToken(mint: string) { const x = this.db.prepare("select data from tokens where mint = ?").get(mint); return x ? JSON.parse(x.data) : null; }
   async observedSlot() { const x = this.db.prepare("select max(s) as s from (select max(slot) as s from events union all select max(slot) as s from trades)").get(); return x && x.s !== null && x.s !== undefined ? Number(x.s) : null; }
@@ -314,18 +346,21 @@ class SqliteStore implements Store {
     return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
   }
   async listSky(limit: number) { return this.db.prepare("select data from sky order by claimable desc limit ?").all(limit).map((x: any) => JSON.parse(x.data)); }
-  async appendFeed(rows: FeedRow[]) {
-    const ins = this.db.prepare("insert or ignore into feed (slot, ordinal, signature, type, vault, mint, data, provenance, at) values (?,?,?,?,?,?,?,?,?)");
-    for (const r of rows) ins.run(r.slot, r.ordinal, r.signature, r.type, r.vault, r.mint, JSON.stringify(r.data), JSON.stringify(r.provenance), r.at);
+  async appendFeed(rows: FeedRow[]) { return this.appendFeedSync(rows); }
+  private appendFeedSync(rows: FeedRow[]): FeedRow[] {
+    const ins = this.db.prepare("insert into feed (slot, ordinal, signature, type, vault, mint, data, provenance, at) values (?,?,?,?,?,?,?,?,?) on conflict (type, signature, ordinal) do nothing returning *");
+    const out: FeedRow[] = [];
+    for (const r of rows) { const x = ins.get(r.slot, r.ordinal, r.signature, r.type, r.vault, r.mint, JSON.stringify(r.data), JSON.stringify(r.provenance), r.at); if (x) out.push(sqFeed(x)); }
+    return out;
   }
-  async listFeedSince(since: { slot: number; ordinal: number; signature: string } | null, limit: number) {
+  async listFeedSince(since: { seq: number } | null, limit: number) {
     const rows = since
-      ? this.db.prepare("select * from feed where slot > ? or (slot = ? and ordinal > ?) or (slot = ? and ordinal = ? and signature > ?) order by slot asc, ordinal asc, signature asc limit ?").all(since.slot, since.slot, since.ordinal, since.slot, since.ordinal, since.signature, limit)
-      : this.db.prepare("select * from feed order by slot asc, ordinal asc, signature asc limit ?").all(limit);
+      ? this.db.prepare("select * from feed where seq > ? order by seq asc limit ?").all(since.seq, limit)
+      : this.db.prepare("select * from feed order by seq asc limit ?").all(limit);
     return rows.map(sqFeed);
   }
-  async oldestFeed() { const x = this.db.prepare("select * from feed order by slot asc, ordinal asc, signature asc limit 1").get(); return x ? sqFeed(x) : null; }
-  async headFeed() { const x = this.db.prepare("select * from feed order by slot desc, ordinal desc, signature desc limit 1").get(); return x ? sqFeed(x) : null; }
+  async oldestFeed() { const x = this.db.prepare("select * from feed order by seq asc limit 1").get(); return x ? sqFeed(x) : null; }
+  async headFeed() { const x = this.db.prepare("select * from feed order by seq desc limit 1").get(); return x ? sqFeed(x) : null; }
   async pruneFeed(beforeSlot: number) { this.db.prepare("delete from feed where slot < ?").run(beforeSlot); }
   async close() { this.db.close(); }
 }
@@ -333,5 +368,5 @@ class SqliteStore implements Store {
 function pgTrade(x: any): TradeRow { return { signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: x.buy, amountIn: x.amount_in, amountOut: x.amount_out, venue: x.venue ?? undefined, baseAmountRaw: x.base_amount ?? undefined, quoteAmountLamports: x.quote_amount ?? undefined, executionPriceSol: x.price ?? null }; }
 function sqTrade(x: any): TradeRow { return { signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, pool: x.pool, vault: x.vault, trader: x.trader, traderKind: x.trader_kind, buy: !!x.buy, amountIn: x.amount_in, amountOut: x.amount_out, venue: x.venue ?? undefined, baseAmountRaw: x.base_amount ?? undefined, quoteAmountLamports: x.quote_amount ?? undefined, executionPriceSol: x.price ?? null }; }
 
-function pgFeed(x: any): FeedRow { return { slot: Number(x.slot), ordinal: x.ordinal, signature: x.signature, type: x.type, vault: x.vault, mint: x.mint, data: x.data, provenance: x.provenance, at: Number(x.at) }; }
-function sqFeed(x: any): FeedRow { return { slot: x.slot, ordinal: x.ordinal, signature: x.signature, type: x.type, vault: x.vault, mint: x.mint, data: JSON.parse(x.data), provenance: JSON.parse(x.provenance), at: x.at }; }
+function pgFeed(x: any): FeedRow { return { seq: Number(x.seq), slot: Number(x.slot), ordinal: x.ordinal, signature: x.signature, type: x.type, vault: x.vault, mint: x.mint, data: x.data, provenance: x.provenance, at: Number(x.at) }; }
+function sqFeed(x: any): FeedRow { return { seq: Number(x.seq), slot: x.slot, ordinal: x.ordinal, signature: x.signature, type: x.type, vault: x.vault, mint: x.mint, data: JSON.parse(x.data), provenance: JSON.parse(x.provenance), at: x.at }; }

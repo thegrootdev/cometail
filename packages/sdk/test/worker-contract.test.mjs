@@ -76,6 +76,7 @@ test('SDK consumes all worker feed kinds, replay envelope, resume sentinel and r
   const names=['harvested','routed','settled','cashedOut','unwound','streamWithdrawn'];
   const events=names.map((name,i)=>({name,slot:10+i,idx:0,signature:'abc'+i,vault:mint,data:name==='unwound'?{stMint:mint,dbcPool:mint,incomeReturned:raw,launchedAt:'1',unwoundAt:'2'}:{}}));
   const rows=[...feed.feedFromEvents(events),...feed.feedFromTrades([{slot:16,idx:0,signature:'trade',pool:mint,vault:null,buy:true,trader:mint,traderKind:'feePayer'}],()=>null),...feed.feedFromTokens(new Map(),[{mint,name:'Test',symbol:'TEST',imageUrl:null,creator:mint,config:mint,dbcPool:mint,dammPool:null,quoteMint:mint,tokenKind:'plain',stage:'graduated',vault:null,updatedAt:100}],17)];
+  rows.forEach((r,i)=>{r.seq=i+5;}); // the store assigns the publication sequence on insert
   for(const r of rows) assert.equal(decodeFrame(JSON.parse(JSON.stringify(feed.rowFrame('devnet',r)))).type,r.type);
   const store={oldestFeed:async()=>rows[0],headFeed:async()=>rows.at(-1),listFeedSince:async(cursor,limit)=>rows.filter(r=>!cursor||feed.compareCursor(r,cursor)>0).slice(0,limit),listPoolCursors:async()=>[],observedSlot:async()=>17,getMeta:async()=>100};
   const server=await worker.startApi(store,{host:'127.0.0.1',port:0,origins:[],ratePerMinute:1000,cluster:'devnet'});
@@ -85,8 +86,8 @@ test('SDK consumes all worker feed kinds, replay envelope, resume sentinel and r
   try {
     let expired;try{await client.replay({since:'1:0:abc'});}catch(e){expired=e;}
     assert.equal(expired instanceof ApiError,true);assert.equal(expired.status,410);
-    const resume=expired.body.resume;assert.equal(resume,'9:999999999:~');
-    const first=await client.replay({since:resume,limit:2});assert.equal(first.type,'replay');assert.equal(first.cluster,'devnet');assert.equal(first.schemaVersion,1);assert.equal(first.events.length,2);assert.equal(first.nextCursor,'11:0:abc1');
+    const resume=expired.body.resume;assert.equal(resume,'4:10:~');
+    const first=await client.replay({since:resume,limit:2});assert.equal(first.type,'replay');assert.equal(first.cluster,'devnet');assert.equal(first.schemaVersion,1);assert.equal(first.events.length,2);assert.equal(first.nextCursor,'6:11:abc1');
     const replay=[];for await(const e of client.replayAll(resume))replay.push(e);
     assert.equal(replay.length,9);assert.equal(replay.find(e=>e.type==='unwind').data.incomeReturned,raw);
     assert.equal(replay.find(e=>e.type==='trade').data.baseAmountRaw,null);assert.equal(replay.find(e=>e.type==='graduation').data.signature,undefined);
@@ -96,7 +97,7 @@ test('SDK consumes all worker feed kinds, replay envelope, resume sentinel and r
     assert.equal(errors.length,0);assert.equal(seen.length,9);assert.equal(sub.cursor,replay.at(-1).cursor);
     assert.equal(controls.find(c=>c.type==='hello').schemaVersion,1);
     const live=feed.feedFromEvents([{name:'harvested',slot:18,idx:0,signature:'live',vault:mint,data:{stream:mint,toIncome:raw}}])[0];
-    feed.feedBus.emit('event',live);await until(()=>seen.length===10||errors.length);
+    live.seq=14;feed.feedBus.emit('event',live);await until(()=>seen.length===10||errors.length);
     assert.equal(errors.length,0);assert.equal(seen.at(-1).data.incomeLamports,raw);
     let gap;const expiredSub=client.feed({since:'1:0:abc',heartbeatTimeoutMs:0,reconnect:false,onEvent(){assert.fail('Gap must stop before replay');},onError:e=>{gap=e}});subscriptions.push(expiredSub);
     await until(()=>gap);assert.equal(gap instanceof FeedGapError,true);assert.equal(gap.resume,resume);assert.equal(expiredSub.cursor,'1:0:abc');assert.equal(expiredSub.closed,true);

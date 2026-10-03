@@ -40,7 +40,7 @@ export function evidence(value: unknown, estimates: EstimateLabel[] = []): Evide
   });
   return { provenance: row.provenance === undefined ? { source: "indexer" } : provenance(row.provenance), estimates: [...supplied, ...estimates.filter(e => !supplied.some(s => s.path === e.path))] };
 }
-/** Cursors sort numerically by slot and ordinal, then by signature; never lexically by the full string. */
+/** Cursors are "sequence:slot:signature": they sort numerically by the publication sequence (unique and strictly increasing), then by slot and signature; never lexically by the full string. */
 export function parseCursor(value: string): readonly [bigint, bigint, string] {
   const m = /^(\d{1,12}):(\d{1,9}):([^:\s]{1,96})$/.exec(value);
   if (!m) throw new ProtocolError("Invalid feed cursor");

@@ -14,16 +14,19 @@ export const FEED_RETENTION_SLOTS = 1_512_000; // about seven days at 0.4 s per 
 export const feedBus = new EventEmitter();
 feedBus.setMaxListeners(1000);
 
-export type Cursor = { slot: number; ordinal: number; signature: string };
-export const cursorOf = (c: Cursor) => `${c.slot}:${c.ordinal}:${c.signature}`;
+/** "seq:slot:signature": the publication sequence first (unique, strictly increasing in the order
+ *  rows were published), then the slot and the signature as information. Compare by `seq`. */
+export type Cursor = { seq: number; slot: number; signature: string };
+export type CursorLike = { seq?: number; slot: number; signature: string };
+export const cursorOf = (c: { seq?: number; slot: number; signature: string }) => `${c.seq ?? 0}:${c.slot}:${c.signature}`;
 export function parseCursor(s: string | null | undefined): Cursor | null {
   if (!s) return null;
-  const m = /^(\d{1,12}):(\d{1,9}):([^:\s]{1,96})$/.exec(s);
-  return m ? { slot: Number(m[1]), ordinal: Number(m[2]), signature: m[3] } : null;
+  const m = /^(\d{1,12}):(\d{1,12}):([^:\s]{1,96})$/.exec(s);
+  return m ? { seq: Number(m[1]), slot: Number(m[2]), signature: m[3] } : null;
 }
-export const compareCursor = (a: Cursor, b: Cursor) => a.slot - b.slot || a.ordinal - b.ordinal || (a.signature < b.signature ? -1 : a.signature > b.signature ? 1 : 0);
+export const compareCursor = (a: { seq?: number }, b: { seq?: number }) => (a.seq ?? 0) - (b.seq ?? 0);
 /** The cursor to pass as `since` so that `oldest` itself is delivered (since is exclusive). */
-export const resumeBefore = (oldest: Cursor): string => `${Math.max(0, oldest.slot - 1)}:999999999:~`;
+export const resumeBefore = (oldest: CursorLike): string => `${Math.max(0, (oldest.seq ?? 0) - 1)}:${oldest.slot}:~`;
 
 const now = () => Date.now();
 const chain = (signature: string, slot: number) => ({ source: "chain", signature, slot });
@@ -61,7 +64,8 @@ export function feedFromTrades(rows: TradeRow[], mintOfPool: (pool: string) => s
 }
 
 /** Launches and graduations from one token scan against the previous one. Token rows carry no
- *  transaction, so the cursor's third part is the mint and the slot is the scan's observed slot. */
+ *  transaction: their identity is (type, mint), so a retried scan cannot publish one twice, and the
+ *  slot is the scan's observed slot. */
 export function feedFromTokens(previous: Map<string, TokenRow>, next: TokenRow[], observedSlot: number): FeedRow[] {
   const out: FeedRow[] = [];
   for (const t of next) {
@@ -78,11 +82,11 @@ export function feedFromTokens(previous: Map<string, TokenRow>, next: TokenRow[]
   return out;
 }
 
-/** Append and push. */
+/** Append durably, then push what was new (a row already published is never pushed twice). */
 export async function publish(store: Store, rows: FeedRow[]): Promise<void> {
   if (!rows.length) return;
-  await store.appendFeed(rows);
-  for (const r of rows) feedBus.emit("event", r);
+  const inserted = await store.appendFeed(rows);
+  for (const r of inserted) feedBus.emit("event", r);
 }
 
 export function frame(cluster: string, type: string, extra: Record<string, unknown>) {
@@ -93,12 +97,12 @@ export function rowFrame(cluster: string, r: FeedRow) {
 }
 
 /** Replay from an exclusive cursor: { events, nextCursor } or an expiry. */
-export async function replay(store: Store, cluster: string, since: Cursor | null, limit: number): Promise<{ status: 200 | 410; body: any }> {
+export async function replay(store: Store, cluster: string, since: CursorLike | null, limit: number): Promise<{ status: 200 | 410; body: any }> {
   const oldest = await store.oldestFeed();
   if (since && oldest && compareCursor(since, oldest) < 0 && cursorOf(since) !== resumeBefore(oldest)) {
     return { status: 410, body: { error: "cursor expired", oldest: cursorOf(oldest), resume: resumeBefore(oldest) } };
   }
-  const rows = await store.listFeedSince(since, limit + 1);
+  const rows = await store.listFeedSince(since ? { seq: since.seq ?? 0 } : null, limit + 1);
   const page = rows.slice(0, limit);
   return { status: 200, body: { ...frame(cluster, "replay", {}), events: page.map((r) => rowFrame(cluster, r)), nextCursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null } };
 }
@@ -186,7 +190,7 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
     socket.on("data", (c: Buffer) => client.feed(c));
     socket.on("close", drop); socket.on("error", drop); socket.on("end", drop);
     if (head?.length) client.feed(head);
-    let delivered: Cursor | null = sinceCursor;
+    let delivered: CursorLike | null = sinceCursor;
     let replaying = true;
     const queued: FeedRow[] = [];
     const live = (r: FeedRow) => {
@@ -210,7 +214,7 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
       }
       if (delivered) for (;;) {
         if (client.closed) break;
-        const rows = await store.listFeedSince(delivered, 500);
+        const rows = await store.listFeedSince({ seq: delivered.seq ?? 0 }, 500);
         for (const r of rows) {
           if (client.closed) break;
           client.send(rowFrame(opts.cluster, r)); delivered = r;

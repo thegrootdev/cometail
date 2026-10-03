@@ -59,7 +59,7 @@ Types and `data`:
 - `unwind` { vault, stMint, dbcPool, incomeReturned, launchedAt, unwoundAt, signature }
 - `vault` { vault, event, ...the event's fields, signature }: every other program event (vaultCreated, streamDeposited, streamPositionRegistered, streamWithdrawn, launched, pairRegistered, live), so a consumer that ignores unknown types loses nothing it asked for.
 
-Token rows (`launch`, `graduation`) carry no transaction: their cursor's third part is the mint and the slot is the scan's observed slot; `provenance.source` is `indexer`. Harvest rows carry `grossLamports`, `toDepositorLamports`, `toProtocolLamports` and `oneTime` next to `incomeLamports`.
+Token rows (`launch`, `graduation`) carry no transaction: their cursor's third part is the mint and the slot is the scan's observed slot (their identity is the type and the mint); `provenance.source` is `indexer`. Harvest rows carry `grossLamports`, `toDepositorLamports`, `toProtocolLamports` and `oneTime` next to `incomeLamports`.
 
 Control frames: `hello` { cursor, retentionSlots }: first on a socket opened without `since`;
 on a socket opened with `since` the backlog is replayed first and `hello` follows it, and its
@@ -70,8 +70,12 @@ the oldest retained event is not skipped. A gap is explicit: a consumer reconcil
 acknowledges anything past it. Replay answers an expired cursor with HTTP 410
 `{ error: "cursor expired", oldest, resume }`. Retention: 1,512,000 slots, about seven days.
 
-Cursors are `slot:ordinal:signature`, strictly increasing within a connection and shared by
-every type; `since` is exclusive.
+Cursors are `sequence:slot:signature`. The first part is the feed's publication sequence:
+unique, strictly increasing in the order rows were published and shared by every type, so a
+row the indexer discovers late (an older slot found on a later scan) still arrives after
+everything delivered before it; the slot and the signature are information, never the
+order. Compare cursors by the first part; `since` is exclusive. A row's identity is its type,
+signature and ordinal, so a replayed or retried index never publishes a row twice.
 
 ## Non-SOL quotes
 Every quote-denominated figure names its quote: `market.quoteMint` and `market.quoteDecimals`
