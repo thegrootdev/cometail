@@ -25,7 +25,7 @@ process.on("SIGTERM", () => { stopping = true; });
 async function main() {
   const cfg = loadConfig();
   const chain = new Chain(new Connection(cfg.rpcUrl, "confirmed"));
-  log(`cometail worker ${WORKER_VERSION}`, { mode: cfg.mode, rpc: cfg.rpcUrl, dryRun: cfg.dryRun, keeper: cfg.keeper?.publicKey });
+  log(`cometail worker ${WORKER_VERSION}`, { mode: cfg.mode, rpc: new URL(cfg.rpcUrl).origin, dryRun: cfg.dryRun, keeper: cfg.keeper?.publicKey });
 
   if (cfg.mode === "indexer") {
     if (!cfg.databaseUrl) throw new Error("DATABASE_URL is required in indexer mode");

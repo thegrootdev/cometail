@@ -1,8 +1,9 @@
 // Transaction helpers: every write is simulated first, then sent with a compute budget and
-// confirmed; an expired blockhash is retried once. A simulation failure is a normal outcome
+// confirmed; ambiguous broadcasts retain their signature and are never re-signed here.
+// A simulation failure is a normal outcome
 // (policy says no, nothing to claim) and is logged, not thrown. Wide instructions go out as
 // v0 transactions with a lookup table.
-import { EventParser } from "@coral-xyz/anchor";
+import { EventParser, utils } from "@coral-xyz/anchor";
 import {
   AddressLookupTableAccount, ComputeBudgetProgram, Connection, Keypair, PublicKey, Transaction, TransactionInstruction, TransactionMessage, VersionedTransaction,
 } from "@solana/web3.js";
@@ -50,7 +51,7 @@ async function build(a: SendArgs, blockhash: string): Promise<{ raw: Buffer | Ui
 
 export async function sendTx(a: SendArgs): Promise<SendResult> {
   let last: SendResult = { ok: false, logs: [], events: [], error: "not sent" };
-  for (let attempt = 0; attempt < 2; attempt++) {
+  {
     const { blockhash, lastValidBlockHeight } = await a.connection.getLatestBlockhash("confirmed");
     const { raw, sim: simulate } = await build(a, blockhash);
     const sim = await simulate();
@@ -62,8 +63,11 @@ export async function sendTx(a: SendArgs): Promise<SendResult> {
       return { ok: false, logs, error, events };
     }
     if (a.dryRun) { log(`${a.label}: dry run, would send`, { cu: sim.value.unitsConsumed }); return { ok: true, logs, events }; }
+    // Derive the signature locally: sendRawTransaction can accept the transaction and
+    // then lose its response. Never sign a replacement after an ambiguous broadcast.
+    const signature = utils.bytes.bs58.encode(VersionedTransaction.deserialize(raw).signatures[0]);
     try {
-      const signature = await a.connection.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 3 });
+      await a.connection.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 3 });
       const conf = await a.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, "confirmed");
       if (conf.value.err) {
         const error = JSON.stringify(conf.value.err);
@@ -75,13 +79,17 @@ export async function sendTx(a: SendArgs): Promise<SendResult> {
       return { ok: true, signature, logs, events };
     } catch (e) {
       const error = String((e as Error).message ?? e);
-      last = { ok: false, logs, error, events };
-      const expired = /block height exceeded|expired|Blockhash not found/i.test(error);
-      log(`${a.label}: send failed${expired && attempt === 0 ? ", retrying with a fresh blockhash" : ""}`, { error });
-      if (!expired) break;
+      try {
+        const status = (await a.connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
+        if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) {
+          return { ok: !status.err, signature, logs, events, ...(status.err ? { error: JSON.stringify(status.err) } : {}) };
+        }
+      } catch { /* keep the signed transaction's identity when the status RPC is unavailable */ }
+      last = { ok: false, signature, logs, error: "confirmation unknown: " + error, events };
+      log(a.label + ": confirmation unknown; not re-signing", { signature, error });
     }
   }
-  await alert("error", `${a.label} not sent`, { error: last.error });
+  await alert("error", `${a.label} confirmation unknown`, { signature: last.signature, error: last.error });
   return last;
 }
 

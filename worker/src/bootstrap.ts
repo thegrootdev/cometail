@@ -9,7 +9,7 @@ import { DLMM_PROGRAM_ID } from "@cometail/client";
 import { Chain, DBC_PROGRAM_ID, DBC_PROGRESS, isDefault } from "./chain";
 import { Config } from "./config";
 import { binsForSpread } from "./ladder";
-import { log, sendTx } from "./tx";
+import { log, sendTx, simulateEvents } from "./tx";
 import type { Keypair } from "@solana/web3.js";
 
 export interface BootstrapContext { chain: Chain; cfg: Config; keeper: Keypair }
@@ -50,7 +50,7 @@ export async function bootstrapPair(ctx: BootstrapContext, vaultPk: PublicKey, v
   const stMint: PublicKey = vault.stMint;
   const pool = await chain.dammPool(vault.dammPool);
   if (!pool) return false;
-  const pair = deriveCustomizablePair(stMint, NATIVE_MINT);
+  let pair = deriveCustomizablePair(stMint, NATIVE_MINT);
   const existing = await chain.lbPair(pair);
   const keeperSt = getAssociatedTokenAddressSync(stMint, keeper.publicKey);
   const keeperWsol = getAssociatedTokenAddressSync(NATIVE_MINT, keeper.publicKey);
@@ -81,6 +81,42 @@ export async function bootstrapPair(ctx: BootstrapContext, vaultPk: PublicKey, v
     }).instruction();
     const r = await sendTx({ connection: chain.connection, payer: keeper, ixs: [init], cu: 400_000, cuPrice: cfg.cuPriceMicroLamports, dryRun: cfg.dryRun, label: `pair ${pair.toBase58()} active=${activeId}` });
     if (!r.ok) return false;
+  }
+  // A permissionless creator can occupy the customizable address with incompatible settings.
+  // Probe registration before spending rent; the program remains the eligibility authority.
+  const canRegister = async (key: PublicKey) => {
+    const ix = await chain.client.registerPair({ vault: vaultPk, signer: keeper.publicKey, lbPair: key });
+    return (await simulateEvents({ connection: chain.connection, payer: keeper.publicKey, ixs: [ix], parser: chain.events, cu: 200_000 })).ok;
+  };
+  if (!(await canRegister(pair))) {
+    const presets = await (chain.dlmm.account as any).presetParameter2.all();
+    let fallback: PublicKey | null = null;
+    const [lo, hi] = sorted(stMint, NATIVE_MINT);
+    for (const preset of presets) {
+      const p = preset.account;
+      const step = Number(p.binStep), power = Number(p.baseFeePowerFactor);
+      if (![10, 20, 25, 50, 80, 100].includes(step) || Number(p.concreteFunctionType) !== 0 || Number(p.collectFeeMode) !== 1 || power > 9) continue;
+      const fee = BigInt(p.baseFactor) * BigInt(step) * 10n * (10n ** BigInt(power));
+      if (fee > 10_000_000n) continue;
+      // PresetParameter2 pairs use the preset address, then sorted mints (pinned DLMM SDK).
+      const key = PublicKey.findProgramAddressSync([preset.publicKey.toBuffer(), lo.toBuffer(), hi.toBuffer()], DLMM_PROGRAM_ID)[0];
+      if (!(await chain.lbPair(key))) {
+        const activeId = binIdForPrice(BigInt(pool.sqrtPrice.toString()), step, pool.tokenAMint.equals(stMint));
+        const init = await chain.dlmm.methods.initializeLbPair2({ activeId, padding: new Array(96).fill(0) }).accountsStrict({
+          lbPair: key, binArrayBitmapExtension: DLMM_PROGRAM_ID, tokenMintX: stMint, tokenMintY: NATIVE_MINT,
+          reserveX: reserve(key, stMint), reserveY: reserve(key, NATIVE_MINT), oracle: oracle(key), presetParameter: preset.publicKey,
+          funder: keeper.publicKey, tokenBadgeX: DLMM_PROGRAM_ID, tokenBadgeY: DLMM_PROGRAM_ID,
+          tokenProgramX: TOKEN_PROGRAM_ID, tokenProgramY: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          eventAuthority: DLMM_EVENT_AUTHORITY, program: DLMM_PROGRAM_ID,
+        }).instruction();
+        const r = await sendTx({ connection: chain.connection, payer: keeper, ixs: [init], cu: 400_000, cuPrice: cfg.cuPriceMicroLamports, dryRun: cfg.dryRun, label: "pair fallback " + key.toBase58() });
+        if (!r.ok) continue;
+        if (cfg.dryRun) return false; // the simulated pair does not exist for the next read
+      }
+      if (await canRegister(key)) { fallback = key; break; }
+    }
+    if (!fallback) { log("pair: no eligible preset fallback available", { vault: vaultPk }); return false; }
+    pair = fallback;
   }
   const state = await chain.lbPair(pair);
   if (!state) return false;

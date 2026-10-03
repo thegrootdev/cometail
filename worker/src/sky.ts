@@ -106,7 +106,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
     const s = p.state;
     const cfg = configMap.get(s.config.toBase58());
     const reasons: string[] = [];
-    if (!cfg) reasons.push("config missing");
+    if (!cfg) throw new Error(`Sky scan incomplete: config ${s.config.toBase58()} missing`);
     const quoteMint: PublicKey = cfg ? cfg.quoteMint : PublicKey.default;
     const creatorInfo = creatorInfos.get(s.creator.toBase58());
     const custody: SkyRow["custody"] = !creatorInfo ? "unknown" : creatorInfo.owner.equals(new PublicKey("11111111111111111111111111111111")) ? "wallet" : "program";
@@ -164,7 +164,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
     try {
       const poolKey = new PublicKey(w.dammPool);
       const poolState: any = await chain.dammPool(poolKey);
-      if (!poolState) continue;
+      if (!poolState) throw new Error("migrated DAMM pool missing");
       const found = (await positionsOf(chain, poolKey)).filter((x) => BigInt(x.state.permanentLockedLiquidity.toString()) > 0n);
       if (!found.length) continue;
       const nftInfos = await accounts(conn, found.map((x) => x.nftAccount));
@@ -217,7 +217,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
         });
         positions++;
       }
-    } catch (e) { log("sky positions failed", { pool: w.dammPool, error: String((e as Error).message ?? e) }); }
+    } catch (e) { log("sky positions failed", { pool: w.dammPool, error: String((e as Error).message ?? e) }); throw e; }
   }
   log("sky scan", { pools: rows.length - positions, positions, eligible: rows.filter((r) => r.eligible).length, configs: configs.length || "all" });
   return rows;

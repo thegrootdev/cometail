@@ -3,11 +3,12 @@
 // settlement). Order of work per vault: migrate -> register positions -> cash out -> harvest
 // -> settle -> route. Each write is simulated first; a rejected simulation is logged and skipped.
 import { BN } from "@coral-xyz/anchor";
-import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { DBC_POOL_AUTHORITY, deriveStream } from "@cometail/client";
 import { derivePositionAddress, derivePositionNftAccount } from "@meteora-ag/cp-amm-sdk";
 import {
+  deriveBaseKeyForLocker, deriveEscrow, deriveLockerEventAuthority, LOCKER_PROGRAM_ID,
   deriveDammV2EventAuthority, deriveDammV2MigrationMetadataAddress, deriveDammV2PoolAddress, deriveDammV2PoolAuthority,
   deriveDammV2TokenVaultAddress, deriveDbcTokenVaultAddress,
 } from "@meteora-ag/dynamic-bonding-curve-sdk";
@@ -65,13 +66,14 @@ async function vaultPass(ctx: KeeperContext, protocol: any, entry: Decoded): Pro
     const after = await chain.dbcPool(vault.dbcPool);
     if (after && after.migrationProgress === DBC_PROGRESS.createdPool && isDefault(vault.ownPosition)) {
       const mine = await chain.positionsOwnedBy(vault.dammPool, vaultPk);
-      if (mine.length > 0) {
+      for (const candidate of mine) {
         const ix = await chain.client.registerOwnPosition({
           vault: vaultPk, payer: keeper.publicKey, streamIndex: vault.streamCount, dbcPool: vault.dbcPool, dbcConfig: vault.dbcConfig,
-          dammPool: vault.dammPool, position: mine[0].position, nftAccount: mine[0].nftAccount,
+          dammPool: vault.dammPool, position: candidate.position, nftAccount: candidate.nftAccount,
         });
-        await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 400_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label: `register_own_position ${vaultPk.toBase58()}` });
+        const registered = await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 400_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label: `register_own_position ${vaultPk.toBase58()}` });
         vault = (await chain.vault(vaultPk)) ?? vault;
+        if (registered.ok || !isDefault(vault.ownPosition)) break;
       }
     }
     if (after && after.migrationProgress === DBC_PROGRESS.createdPool && big(vault.accounting.cashedOut) === 0n) {
@@ -109,6 +111,23 @@ async function migrate(ctx: KeeperContext, poolPk: PublicKey, pool: any): Promis
   const { chain, cfg, keeper } = ctx;
   const config = await chain.dbcConfig(pool.config);
   if (!config) return;
+  if (Number(pool.migrationProgress) === DBC_PROGRESS.postBonding) {
+    // Base-token vesting is separate from creator LP vesting and is allowed on external
+    // rights streams. DBC requires its locker before advancing to LockedVesting.
+    const tokenProgram = (await chain.accountOwner(pool.baseMint)) ?? TOKEN_PROGRAM_ID;
+    const base = deriveBaseKeyForLocker(poolPk), escrow = deriveEscrow(base);
+    const escrowToken = getAssociatedTokenAddressSync(pool.baseMint, escrow, true, tokenProgram);
+    const locker = await chain.dbc.methods.createLocker().accountsPartial({
+      virtualPool: poolPk, config: pool.config, poolAuthority: DBC_POOL_AUTHORITY,
+      baseVault: pool.baseVault, baseMint: pool.baseMint, base, creator: pool.creator,
+      escrow, escrowToken, payer: keeper.publicKey, tokenProgram, lockerProgram: LOCKER_PROGRAM_ID,
+      lockerEventAuthority: deriveLockerEventAuthority(), systemProgram: SystemProgram.programId,
+    }).instruction();
+    await sendTx({ connection: chain.connection, payer: keeper, ixs: [
+      createAssociatedTokenAccountIdempotentInstruction(keeper.publicKey, escrowToken, escrow, pool.baseMint, tokenProgram), locker,
+    ], cu: 600_000, cuPrice: cfg.cuPriceMicroLamports, dryRun: cfg.dryRun, label: "create_locker " + poolPk.toBase58() });
+    return; // migrate on the next pass after re-reading DBC's progress
+  }
   const option = Number(config.migrationFeeOption);
   const dammConfig = DAMM_V2_MIGRATION_CONFIGS[option];
   if (!dammConfig) { log("unknown migration fee option", { pool: poolPk, option }); return; }
@@ -160,9 +179,10 @@ async function streamPass(ctx: KeeperContext, protocol: any, vaultPk: PublicKey,
     // external curves migrate on their own; the creator position then registers permissionlessly
     if (!s.isOwn && pool.migrationProgress === DBC_PROGRESS.createdPool && isDefault(s.position)) {
       const mine = await chain.positionsOwnedBy(s.derivedDammPool, vaultPk);
-      if (mine.length > 0) {
-        const ix = await chain.client.registerStreamPosition({ vault: vaultPk, stream: streamPk, payer: keeper.publicKey, dbcPool: s.pool, dbcConfig: s.config, dammPool: s.derivedDammPool, position: mine[0].position, nftAccount: mine[0].nftAccount });
-        await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 400_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label: `register_stream_position ${streamPk.toBase58()}` });
+      for (const candidate of mine) {
+        const ix = await chain.client.registerStreamPosition({ vault: vaultPk, stream: streamPk, payer: keeper.publicKey, dbcPool: s.pool, dbcConfig: s.config, dammPool: s.derivedDammPool, position: candidate.position, nftAccount: candidate.nftAccount });
+        const registered = await sendTx({ connection: chain.connection, payer: keeper, ixs: [ix], cu: 400_000, cuPrice: cfg.cuPriceMicroLamports, parser: chain.events, dryRun: cfg.dryRun, label: `register_stream_position ${streamPk.toBase58()}` });
+        if (registered.ok) break;
       }
     }
     // creator trading fees accrue while the curve trades and stay claimable after

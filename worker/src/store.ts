@@ -138,6 +138,7 @@ class PgStore implements Store {
     const have = r.rows[0] ? Number(r.rows[0].value) : 0;
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      await this.pool.query("delete from meta where key <> 'schema'");
       await this.pool.query("drop table if exists events, cursor, vaults, streams, sky, cursors, trades, tokens, feed");
     }
     await this.pool.query(`
@@ -231,6 +232,7 @@ class SqliteStore implements Store {
     const have = r ? Number(r.value) : 0;
     if (have !== SCHEMA_VERSION) {
       if (have > 0) console.log(JSON.stringify({ msg: "store schema changed: rebuilding from the chain", from: have, to: SCHEMA_VERSION }));
+      this.db.exec("delete from meta where key <> 'schema'");
       this.db.exec("drop table if exists events; drop table if exists cursor; drop table if exists vaults; drop table if exists streams; drop table if exists sky; drop table if exists cursors; drop table if exists feed; drop table if exists trades; drop table if exists tokens");
     }
     this.db.exec(`
