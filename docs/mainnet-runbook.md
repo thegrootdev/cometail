@@ -35,6 +35,15 @@ Each step is skipped once its account exists, so a partial run is resumed by run
 Record the four config addresses and the protocol address in `configs/mainnet.json` (public
 addresses only; the file is committed).
 
+## 3b. The stock quote for the stock preset (owner's pick, read-only scan 2026-10-03)
+All xStocks carry a DBC token badge. By holders and depth on mainnet: NVIDIA xStock (NVDAx,
+`Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh`, 8 decimals) 172,851 holders, 0.01 % price
+impact on a 10,000 USD buy and 0.13 % on 100,000; SP500 xStock (SPYx,
+`XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`) 81,422 holders, 0.04 % and 0.12 %; Tesla
+(TSLAx) 44,606 holders, 0.16 % and 0.23 %. The stock preset's config is created with the
+chosen mint as quote and its badge as remaining account 0 (`tokenBadge` in the SDK);
+`NEXT_PUBLIC_QUOTE_STOCK` and the config address go to Vercel.
+
 ## 4. Keeper key (box)
 Generate a fresh keypair on the box, mode 600, outside the repository; fund it with operating
 SOL only (bin-array rent 0.071 SOL per array plus fees; 1 SOL to start). Never the admin key.
