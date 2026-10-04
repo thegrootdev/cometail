@@ -77,7 +77,8 @@ const MAX_TRANSACTION_BYTES = 1232;
  *  through its own RPC. A transaction that is sent to the wallet already carrying other
  *  signatures is what triggers the "multi-signer" warning. Before the wallet sees anything the
  *  transaction is size-checked and simulated without signatures (sigVerify false), so a
- *  transaction that would fail never reaches the wallet. */
+ *  transaction that fails in that dry run stops here with plain copy instead of reaching the wallet
+ *  (the dry run sees the chain at that moment; it is a filter, not a guarantee). */
 export function useTx() {
   const { connection } = useConnection();
   const { sendTransaction, signTransaction, publicKey } = useWallet();
@@ -104,13 +105,17 @@ export function useTx() {
         const latest = await connection.getLatestBlockhash("confirmed");
         tx.recentBlockhash = latest.blockhash;
         tx.lastValidBlockHeight = latest.lastValidBlockHeight;
-        const size = tx.serialize({ requireAllSignatures: false, verifySignatures: false }).length;
+        // wire size = compact signature count (1 byte here) + 64 bytes per signer + the message;
+        // measured on the message because serialize() itself refuses an oversized transaction
+        const signerCount = tx.compileMessage().header.numRequiredSignatures;
+        const size = 1 + 64 * signerCount + tx.serializeMessage().length;
         if (size > MAX_TRANSACTION_BYTES) throw new DesignedError(failures.txTooLarge);
-        // dry run without any signature (web3.js sets sigVerify only when signers are passed)
+        // dry run without any signature (web3.js sets sigVerify only when signers are passed); a
+        // failure observed now stops before the wallet, mapped to the same plain copy as a live failure
         const dry = await connection.simulateTransaction(tx);
         if (dry.value.err) {
-          const detail = (dry.value.logs ?? []).filter((l) => /Error|failed/.test(l)).slice(-2).join(" | ");
-          throw new DesignedError(detail ? `${failures.simulationFailed} ${detail}` : failures.simulationFailed);
+          const detail = [JSON.stringify(dry.value.err), ...(dry.value.logs ?? [])].join(" | ");
+          throw new DesignedError(friendlyError(new Error(detail), failures.simulationFailed));
         }
         if (signers.length > 0) {
           if (!signTransaction) throw new DesignedError(failures.walletCannotSign);
