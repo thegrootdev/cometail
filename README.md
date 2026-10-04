@@ -1,151 +1,221 @@
-# COMETAIL
+<p align="center">
+  <a href="https://cometail.fun"><img src="web/public/brand/og.png" alt="COMETAIL" width="640"></a>
+</p>
 
-Launch a comet. Sell the tail.
+<p align="center"><b>A token launchpad on Meteora where a creator can sell a coin's future trading fees for SOL today.</b><br>
+<i>Launch a comet. Sell the tail.</i></p>
 
-I'm building a launchpad on Meteora's Dynamic Bonding Curve with one twist: a token
-launched here (or any eligible stream from another DBC launchpad) earns fees for as long
-as it trades, and I let the creator sell that stream of fees as its own token. The fee
-stream is the tail. The tail of `$CAT` trades as `tCAT`.
+<p align="center">
+  <img alt="Solana mainnet-beta" src="https://img.shields.io/badge/Solana-mainnet--beta-9945FF?logo=solana&logoColor=white">
+  <img alt="Anchor 1.2.0" src="https://img.shields.io/badge/Anchor-1.2.0-2563EB">
+  <img alt="Meteora DBC, DAMM v2, DLMM" src="https://img.shields.io/badge/Meteora-DBC%20%C2%B7%20DAMM%20v2%20%C2%B7%20DLMM-F5C451">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white">
+  <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white">
+  <a href="https://cometail.fun"><img alt="cometail.fun" src="https://img.shields.io/badge/site-cometail.fun-5BC8FF"></a>
+  <a href="https://x.com/cometailfun"><img alt="@cometailfun on X" src="https://img.shields.io/badge/X-%40cometailfun-000000?logo=x&logoColor=white"></a>
+</p>
 
-## Where it runs
+<p align="center">Live on Solana mainnet since October 4, 2026 · <a href="https://cometail.fun">cometail.fun</a> · <a href="https://cometail.fun/sell">sell your fees</a> · <a href="https://cometail.fun/launch">launch a token</a> · <a href="https://cometail.fun/sky">explore tokens</a></p>
 
-Devnet: program `5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg` (the same id is reserved for
-mainnet), protocol account `3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR`, configs and the
-rest in `configs/devnet.json`. The devnet deployment carries small-threshold configs with the
-presets' economics so a curve fills with half a SOL; the full-size configs are deployed next
-to them. Nothing is on mainnet yet: the economics, the authority model and every disclosure
-are written down in `docs/` before the code that implements them, the release gates in
-`docs/release-gates.md` have to pass before anything ships, and `docs/deploy.md` says how
-the program is built for size and deployed with a program-data account no larger than the
-binary.
+<!-- Demo video: link goes here after the launch. -->
 
-## Layout
+## What it does
 
-- `programs/cometail_vault`: the on-chain program (Anchor). It custodies fee streams (DBC
-  creator rights and DAMM v2 position NFTs) under a program-derived vault, launches the
-  stream token on DBC with the vault as pool creator, harvests income through CPI, and turns
-  that income into DLMM limit-order bids that burn whatever they fill.
-- `packages/client`: TypeScript instruction builders and PDA helpers for the program, used
-  by the site, the worker and the tests.
-- `web`: the site (Next.js). The launchpad front door, The Sky (every Meteora fee stream as
-  a comet), token pages, the sell-your-tail wizard, vault pages, the portfolio. Every line of
-  copy lives in `web/src/content/cometail.ts`.
-- `worker`: the keeper and indexer, one process with modes: migrates, registers, cashes out,
-  harvests, opens and registers the stream token's DLMM pair, places and settles bids;
-  indexes events, snapshots vaults, scans the Sky, serves the site's read API.
-- `configs`: the four DBC partner config parameter files and the devnet addresses.
-- `tests`: the LiteSVM harness that runs the program against the live mainnet Meteora
-  binaries, the regression suite, the release gates, and the devnet scripts.
-- `idls`: pinned Meteora IDLs.
-- `docs`: how a vault works, the economics, the security model, the release gates, the
-  deploy plan, the devnet browser checklist.
+- **Launch a token.** Six fixed price curves on Meteora's Dynamic Bonding Curve (DBC), 0.01 SOL to launch. Every trade pays a 1% fee: 60% of it is yours while the coin is on its curve, 32% once it trades in its pool. When the curve completes, the liquidity moves to a DAMM v2 pool and locks for good (80% in your position, 20% in the protocol's).
+- **Sell your fees.** A coin that still earns fees can turn its future fees into SOL now. Its creator fee rights (or a permanently locked DAMM v2 position) go into a vault, and the vault launches a *fee token* on its own curve. When that curve completes you receive your chosen share of the raise (25%, 50% or 75%) in SOL. From then on the coin's fees buy the fee token back and burn it. If the curve has not completed thirty days after launch, you can unwind and take your fee rights back.
+- **For buyers of a fee token.** Holding it gives no claim on the fees. The fees fund standing buy orders on a DLMM pair below the market price, and whatever those orders buy is burned. Finite orders, no guaranteed floor; every disclosure is on the vault page.
 
-## Running it
+## How it works
+
+### Where each 1 SOL of fees goes
+
+Gross figures per stage, as the program constants and `docs/economics.md` define them and as the site states them.
+
+```mermaid
+flowchart LR
+  subgraph plain["Plain launch, per 1 SOL of trading fees"]
+    direction TB
+    C1["On the curve"] --> C1a["Meteora 0.20"]
+    C1 --> C1b["Protocol 0.20"]
+    C1 --> C1c["Creator 0.60"]
+    P1["In the pool, after completion"] --> P1a["Meteora 0.20"]
+    P1 --> P1b["Protocol 0.08"]
+    P1 --> P1c["Creator 0.32"]
+    P1 --> P1d["Stays in the pool 0.40"]
+  end
+  subgraph sale["Fee sale: the fee token, per 1 SOL of its trading fees"]
+    direction TB
+    C2["On the curve"] --> C2a["Meteora 0.20"]
+    C2 --> C2b["Protocol 0.20"]
+    C2 --> C2c["Seller 0.32"]
+    C2 --> C2d["Buybacks 0.28"]
+    P2["In the pool, after completion"] --> P2a["Meteora 0.20"]
+    P2 --> P2b["Protocol 0.08"]
+    P2 --> P2c["Seller 0.16"]
+    P2 --> P2d["Buybacks 0.16"]
+    P2 --> P2e["Stays in the pool 0.40"]
+  end
+  subgraph sold["The sold coin's own fees, per 1 SOL"]
+    direction TB
+    S["Fees the vault collects"] --> Sa["Protocol 0.20"]
+    S --> Sb["Buybacks 0.80"]
+  end
+```
+
+At completion of a fee token's curve the seller is paid the chosen share of the raise (25%, 50% or 75%); the rest becomes permanently locked liquidity, 80% in the vault's position and 20% in the protocol's.
+
+### A vault's life
+
+States and instruction names are the program's (`programs/cometail_vault/src/state.rs`, `lib.rs`).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: create_vault
+    Open --> Open: deposit_dbc_rights / deposit_position / withdraw_stream
+    Open --> Launched: launch (the fee token starts on a stream config)
+    Launched --> Live: register_own_position (the fee token's curve completed and migrated; cashout paid the seller)
+    Launched --> Unwound: unwind (thirty days after launch, curve still below its target)
+    Live --> Live: harvest, route, settle (collect fees, place buy orders, burn fills)
+    Unwound --> [*]: withdraw_stream returns every fee source
+```
+
+### Architecture
+
+```mermaid
+flowchart LR
+  user["Creator or trader<br>(wallet signs in the browser)"]
+  site["Site · Next.js<br>cometail.fun"]
+  api["Read API and feed<br>api.cometail.fun"]
+  worker["Worker · one process<br>indexer mode and keeper mode"]
+  program["COMETAIL vault program<br>Anchor, mainnet"]
+  dbc["Meteora DBC<br>curves and fees"]
+  damm["Meteora DAMM v2<br>pools after completion"]
+  dlmm["Meteora DLMM<br>buy orders"]
+  user --> site
+  site -- "reads" --> api
+  site -- "transactions" --> program
+  site -- "launches and trades" --> dbc
+  api --- worker
+  worker -- "keeper hot key: harvest, route, settle" --> program
+  worker -- "indexes events, scans pools" --> dbc
+  program -- "CPI" --> dbc
+  program -- "CPI" --> damm
+  program -- "CPI" --> dlmm
+```
+
+The program custodies fee rights under a program-derived vault, launches the fee token with the vault as the pool's creator, harvests income through CPI, and turns that income into DLMM limit orders that burn what they fill. The keeper's hot key has bounded power: it chooses when to harvest and where to place orders, never a destination it controls. The admin wallet signs nothing in day-to-day operation. See `docs/security.md`.
+
+## On mainnet
+
+Program deployed and protocol initialized on October 4, 2026. The upgrade authority is the admin wallet. The deployed bytes are the reviewed release (`docs/deploy.md`). Every address below is from `configs/mainnet.json`.
+
+| What | Address |
+|---|---|
+| Vault program | [`5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg`](https://solscan.io/account/5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg) |
+| Protocol account | [`3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR`](https://solscan.io/account/3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR) |
+| Admin wallet (upgrade authority, protocol admin) | [`CXcbg8xiVmiUNCymi1EmUCq49g11NZbUb4JSE5z2KJU9`](https://solscan.io/account/CXcbg8xiVmiUNCymi1EmUCq49g11NZbUb4JSE5z2KJU9) |
+| Launch treasury (fee claimer of the six launch presets) | [`3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL`](https://solscan.io/account/3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL) |
+| Protocol treasury (admin's WSOL account) | [`3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD`](https://solscan.io/account/3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD) |
+| Keeper | [`Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7`](https://solscan.io/account/Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7) |
+| Config: Standard (plain) | [`GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr`](https://solscan.io/account/GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr) |
+| Config: Long curve | [`CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f`](https://solscan.io/account/CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f) |
+| Config: Flat curve | [`25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6`](https://solscan.io/account/25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6) |
+| Config: Exponential | [`BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ`](https://solscan.io/account/BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ) |
+| Config: Dollar-paired (USDC) | [`9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33`](https://solscan.io/account/9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33) |
+| Config: Stock-paired (NVDAx) | [`9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf`](https://solscan.io/account/9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf) |
+| Config: fee sale, take 25% | [`3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk`](https://solscan.io/account/3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk) |
+| Config: fee sale, take 50% | [`6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L`](https://solscan.io/account/6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L) |
+| Config: fee sale, take 75% | [`D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na`](https://solscan.io/account/D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na) |
+| Quote mints | USDC [`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`](https://solscan.io/account/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v) · NVDAx [`Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh`](https://solscan.io/account/Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh) |
+
+## Presets
+
+Every preset is a Meteora DBC config owned by the protocol: its curve, fees and completion point cannot change. Parameters are the full-size files in `configs/`, as `web/src/content/presets.ts` presents them.
+
+| Launch preset | Quote | Market cap, start to completion | Raise to complete | Fee claimer |
+|---|---|---|---|---|
+| Standard | SOL | 20 to 120 SOL | 34.788 SOL | launch treasury |
+| Long curve | SOL | 20 to 360 SOL, sixteen segments | 122.709 SOL | launch treasury |
+| Flat curve | SOL | 60 to 120 SOL, sixteen segments | 47.601 SOL | launch treasury |
+| Exponential | SOL | 20 to 240 SOL, sixteen segments | 30.675 SOL | launch treasury |
+| Dollar-paired | USDC | 2,000 to 12,000 USDC | 3,478.78 USDC | launch treasury |
+| Stock-paired | NVDAx | 2 to 16 stock units, sixteen segments | 5.667 units | launch treasury |
+
+Common to the six: a 1% trade fee with 60% to the creator on the curve, 0.01 SOL to launch, a fixed supply of 1,000,000,000, liquidity locked for good at completion.
+
+| Fee-sale config | Seller receives at completion | Raise to complete | Locked liquidity (before Meteora's 0.2% migration fee) | Fee claimer |
+|---|---|---|---|---|
+| Take 25% | 9.376 SOL (25%) | 37.506 SOL | 28.129 SOL | admin |
+| Take 50% | 20.343 SOL (50%) | 40.685 SOL | 20.343 SOL | admin |
+| Take 75% | 33.340 SOL (75%) | 44.453 SOL | 11.113 SOL | admin |
+
+Fee-sale configs charge no creation fee. Locked liquidity splits 80% to the vault's position and 20% to the protocol's.
+
+### Fee splits, per 1 SOL of each line
+
+| Line | Meteora | Protocol | Creator or seller | Buybacks | Stays in the pool |
+|---|---|---|---|---|---|
+| Plain launch, on the curve | 0.20 | 0.20 | 0.60 | | |
+| Plain launch, in the pool | 0.20 | 0.08 | 0.32 | | 0.40 |
+| Fee token, on the curve | 0.20 | 0.20 | 0.32 | 0.28 | |
+| Fee token, in the pool | 0.20 | 0.08 | 0.16 | 0.16 | 0.40 |
+| The sold coin's fees | taken upstream | 0.20 | 0 | 0.80 | |
+| DLMM fees earned by the buy orders | per DLMM | 0 | 0 | all | |
+
+The three vault-internal ratios are program constants (`programs/cometail_vault/src/constants.rs`): seller 8/15 of the vault's share of curve fees, 1/2 of its pool position fees, protocol 1/5 of deposited income. The protocol's partner shares are claimed through DBC and DAMM v2 directly and never pass through the vault program.
+
+## For builders
+
+### Repository layout
+
+| Path | What it is |
+|---|---|
+| `programs/cometail_vault` | The on-chain program (Anchor). Custodies fee rights under a program-derived vault, launches the fee token, harvests through CPI, places DLMM buy orders, burns fills, unwinds. |
+| `packages/client` | `@cometail/client`: PDAs, instruction builders and account decoders for the program. Used by the site, the worker and the tests. |
+| `packages/sdk` | `@cometail/sdk`: typed read clients for the public API and a resumable event feed. No wallet, never signs. |
+| `web` | The site (Next.js 15). Every line of copy lives in `web/src/content/cometail.ts`. |
+| `worker` | The keeper and the indexer: one process, three modes (keeper, indexer, once). Serves the read API. |
+| `configs` | The nine DBC config files and the deployed addresses (`mainnet.json`, `devnet.json`). |
+| `tests` | The LiteSVM harness against the real Meteora programs, the regression suite, the release gates, the devnet and mainnet scripts. |
+| `idls` | Pinned Meteora IDLs. |
+| `deploy` | Service units, reverse-proxy config and the worker environment example. |
+| `docs` | Architecture, economics, security, release gates, deploy and hosting, the API, the runbooks. |
+
+### Running it locally
 
 ```
 pnpm install
-pnpm build:program          # anchor build --arch v0
-pnpm --filter @cometail/tests build:forwarder   # separate step: the test suite does not build it
-pnpm test:program
-pnpm dev:web
+pnpm build:program                                  # anchor build --arch v0
+pnpm --filter @cometail/tests build:forwarder       # the test suite does not build it
+pnpm test:program                                   # one process per test file
+pnpm dev:web                                        # copy web/.env.local.example to web/.env.local first
 ```
 
-Used here: Node 22.23, pnpm 12.8, Rust stable 1.99 on the host, Solana CLI 3.1.10 with
-SBF platform tools v1.54, Anchor CLI 1.2.0. The program builds in the classic sBPF v0
-format; Anchor 1.2 defaults to v3, which the LiteSVM release used by the harness cannot
-load. The verifiable mainnet build gets its own pinned, documented toolchain.
+Toolchain used: Node 22.12 or newer, pnpm 12.8, Rust 1.99, Solana CLI 3.1.10, Anchor CLI 1.2.0. The program is built in the sBPF v0 format (`--arch v0`): Anchor 1.2 defaults to v3, which the LiteSVM release in the harness cannot load. The release build and its hash are in `docs/deploy.md`.
 
-## Built on Meteora
+### Read API and SDK
 
-DBC for the curves, DAMM v2 for the graduated pools (compounding), DLMM for the buyback
-ladder. All three are load-bearing.
+The read API at `https://api.cometail.fun` is GET-only JSON: tokens, trades, vaults, events, the pool map, prices, metrics, and a WebSocket feed with a resumable cursor. Routes and the envelope are in `docs/api.md`. From TypeScript:
 
-## Running the worker
-
-One process, three modes, all configured from the environment:
-
-```
-COMETAIL_MODE=keeper|indexer|once   # keeper loop, event indexer, or a single keeper pass
-COMETAIL_RPC_URL=http://127.0.0.1:8899
-COMETAIL_KEEPER_KEYPAIR=~/.config/cometail/keeper.json   # the bounded hot key
-COMETAIL_POLL_MS=15000
-COMETAIL_DUST_LAMPORTS=1000000        # harvests below this gross are skipped
-COMETAIL_MIN_ROUTE_LAMPORTS=100000000 # idle income below 0.1 SOL is not laddered
-COMETAIL_MAX_ROUTE_LAMPORTS=5000000000
-COMETAIL_LADDER_BINS=5 COMETAIL_LADDER_NEAR_BPS=200 COMETAIL_LADDER_FAR_BPS=2000 COMETAIL_LADDER_DECAY=0.85
-COMETAIL_STALE_ORDER_SECONDS=86400    # resting bins older than this are cancelled and re-laddered
-COMETAIL_DRY_RUN=1                    # simulate everything, send nothing
-COMETAIL_ALERT_WEBHOOK=               # optional JSON webhook for failures
-DATABASE_URL=postgres://... | sqlite:/path/to/file.sqlite   # indexer mode: Postgres in production, SQLite anywhere
-COMETAIL_API_PORT=8841                # indexer mode: the read API the site uses (0 = off); the worker refuses to start if the port is taken
-COMETAIL_SKY_CONFIGS=                 # comma-separated DBC configs the Sky scan is limited to (empty = every pool)
-COMETAIL_SKY_EVERY_PASSES=4           # scan the Sky every N indexer passes
-COMETAIL_MIGRATE_CONFIGS=             # keeper mode: DBC configs whose complete curves the keeper migrates (the plain-launch configs)
-COMETAIL_DEMO_ACTORS=                 # indexer mode: team and demo wallets, reported apart from independent actors by /api/metrics
+```ts
+import { CometailClient } from "@cometail/sdk";
+const api = new CometailClient({ baseUrl: "https://api.cometail.fun" });
 ```
 
-The keeper's order per vault is migrate, register positions, cash out, harvest, create and
-register the stream token's DLMM pair once the vault is Live (it buys a little stream token on
-the graduated pool to fund the pair, opens it at the pool's price, prepares the bin arrays the
-ladder uses), settle, route. Complete curves on the configured plain-launch configs and on
-deposited rights are migrated as well.
-Every write is simulated first and a rejected simulation is logged and skipped, so the loop is
-safe to run against a vault whose policy says no. Ladders spread their bins across a band 2% to 20% away
-from the market (nearest bins weighted most) and drop any bin outside the price cap; ladders wider than twelve bins
-go out as v0 transactions with a per-vault address lookup table.
+`packages/sdk/README.md` has the rest. Anyone can create pools on the six launch configs with Meteora's DBC SDK: the fee split is applied by the DBC program on every swap, no agreement needed (`docs/presets.md`).
 
-The indexer follows the program's transactions into the store, snapshots every vault and
-stream, scans the Sky (every DBC pool joined to its config: custody, eligibility, progress,
-claimable backlog, realized curve income; for every migrated pool, one row per permanently
-locked DAMM v2 position with the NFT holder and its custody, the position's share of the pool's
-permanent liquidity, pending quote fees, quote fees claimed so far, and whether the program's
-size rule would admit it, keyed by the position address with `kind: "position"`), and serves `/api/sky`, `/api/vaults`,
-`/api/vaults/:vault`, `/api/events`, `/api/prices` (SOL/USD for display, cached, with its source),
-`/api/metrics` (computed at most every 30 s) and the launchpad routes `/api/tokens` (sort by 24 h
-volume or newest, stage and search filters, cursor paging), `/api/tokens/:mint` and
-`/api/tokens/:mint/trades` for the site. Token answers carry an envelope (schema version, cluster,
-generated time, newest indexed slot, coverage with pending pools, SOL/USD with its source and age);
-every number is from the chain or the trade index: price from the pool's sqrt price (the DBC curve
-while bonding, the DAMM v2 pool after), supply from the mint, bonding progress from the pool and its
-config, holders as unique owners of nonzero token accounts (a full read, cached ten minutes), 24 h
-volume as executed WSOL legs with buy and sell counts and a completeness flag from the per-pool
-cursors, FDV as price x total supply x SOL/USD (labelled fdv; market cap is null until a
-circulating definition exists). Unknown is null, never zero. The trade index follows every launch's
-DBC curve and its DAMM v2 pool after graduation (venue curve or damm), plus every vault's pool. Vault rows carry a live
-view (the standing bids bin by bin with prices and the pool's active price) and stream rows the
-registered position's share of its pool's locked liquidity. `/api/metrics` reports the submission
-numbers with independent actors apart from the demo set (`COMETAIL_DEMO_ACTORS`): plain launches
-and their fee volume by creator, recurring external and own income apart from one-time proceeds,
-depositors, bid depth (unfilled principal from the bin arrays), fills and burns and refunded
-principal by vault depositor; anything whose owner is not yet resolved is reported as
-unattributed, never independent. Stream-token buyers come from a trade index: every swap on a
-vault's graduated pool (cp-amm `EvtSwap2` paired with its `swap`/`swap2` instruction) is stored
-with the swap's own signer, or with the fee payer marked as such when the pairing is not possible
-(never counted as an independent buyer). Each pool catches up backward in bounded pages with a
-persisted frontier, so no interval is skipped, and a pool still catching up marks the metrics
-incomplete. The vault detail lists the trades.
+### Docs
 
-## Running the site
+- [`docs/architecture.md`](docs/architecture.md): how a vault works end to end.
+- [`docs/economics.md`](docs/economics.md): every fee split with numbers.
+- [`docs/security.md`](docs/security.md): the authority model, the keys and what each can do.
+- [`docs/release-gates.md`](docs/release-gates.md): the tests that must pass before a release.
+- [`docs/deploy.md`](docs/deploy.md): the size build and the deployment record.
+- [`docs/worker.md`](docs/worker.md): the keeper and the indexer, configuration and behaviour.
+- [`docs/hosting.md`](docs/hosting.md): services and the reverse proxy.
+- [`docs/api.md`](docs/api.md): the read API and the feed.
+- [`docs/presets.md`](docs/presets.md): the launch presets, for any launchpad.
+- [`docs/mainnet-runbook.md`](docs/mainnet-runbook.md): the ordered mainnet procedure.
+- [`docs/devnet-checklist.md`](docs/devnet-checklist.md): the browser pass on devnet.
 
-`pnpm dev:web`. Copy `web/.env.local.example` to `web/.env.local` and point
-`NEXT_PUBLIC_RPC_URL` and `NEXT_PUBLIC_API_URL` at the cluster and the worker's API; the
-devnet addresses are the defaults in `web/src/lib/addresses.ts`. Pages: the Sky, launch,
-token, sell-your-tail wizard, vault, portfolio. Every line of copy is in
-`web/src/content/cometail.ts`.
-
-## Devnet
-
-`tests/devnet/verify-configs.ts` checks a cluster's DBC configs and the protocol account against the
-program's own pins (the three stream presets as `check_stream_config` requires them, the plain config as
-the eligibility routine requires it): `cd tests && RPC=<rpc> CLUSTER=devnet SET=configs node
-../worker/node_modules/tsx/dist/cli.mjs devnet/verify-configs.ts`. It runs before anything launches on a
-new config set.
-
-`tests/devnet/setup.ts` creates the treasury, the four configs and the protocol and funds
-the actor keys. `tests/devnet/e2e.ts` runs a vault with both DBC-rights stream states and
-in-process keeper passes; `tests/devnet/e2e2.ts` runs a second vault with a standalone
-position stream, the keeper and indexer as the real worker processes, and the trades through
-the app's own helpers. Both use devnet-only configs with the presets' economics and market
-caps divided by 80 (curves fill with half a SOL) and a reduced routing threshold; they are
-integration evidence, not production thresholds. Addresses live in `configs/devnet.json`;
-keys never leave `keys/devnet/`.
+Built on Meteora: DBC for the curves, DAMM v2 for the pools after completion, DLMM for the buy orders. All three are load-bearing.

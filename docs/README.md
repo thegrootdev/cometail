@@ -1,6 +1,13 @@
 # Docs
 
-- `architecture.md`: how a vault works end to end (written as the program lands).
+- `architecture.md`: how a vault works end to end.
 - `economics.md`: every fee split with numbers.
-- `security.md`: what can go wrong and what we do about it, including who holds which keys.
-- `release-gates.md`: the tests that must pass before mainnet.
+- `security.md`: the authority model, the keys and what each can do.
+- `release-gates.md`: the tests that must pass before a release.
+- `deploy.md`: the size build, the deployment procedure and the release record.
+- `worker.md`: the keeper and the indexer, configuration and behaviour.
+- `hosting.md`: the services and the reverse proxy on the host.
+- `api.md`: the read API and the feed.
+- `presets.md`: the launch presets, for any launchpad.
+- `mainnet-runbook.md`: the ordered mainnet procedure, with the accepted operational risks.
+- `devnet-checklist.md`: the browser pass on devnet.
