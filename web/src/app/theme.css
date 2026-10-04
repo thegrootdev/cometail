@@ -1856,3 +1856,10 @@ small, .caption {
 .example-list { margin: 0; padding-left: 20px; display: grid; gap: 10px; font-size: 14px; line-height: 1.5; }
 .example-list li::marker { font-weight: 700; }
 .presets-fees { margin: 0 0 18px; }
+
+/* Partner review of d5f7f85: the longer plain labels must fit four across at 390 and 360. */
+@media (max-width: 760px) {
+  .mobile-nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .mobile-nav a { font-size: 10px; letter-spacing: 0; white-space: normal; text-align: center; line-height: 1.15; min-width: 0; padding-left: 2px; padding-right: 2px; overflow-wrap: anywhere; }
+}
+@media (max-width: 380px) { .mobile-nav a { font-size: 9.5px; } }

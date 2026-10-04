@@ -55,7 +55,7 @@ export const hero = {
   title: "Got a coin that still earns fees? Sell those future fees for SOL today.",
   titleLine1: "Got a coin that still earns fees?",
   titleLine2: "Sell those future fees for SOL today.",
-  body: "Or launch a new coin here: 0.01 SOL, a fair price curve on Meteora, and you keep most of the trading fees it earns.",
+  body: "Or launch a new coin here: 0.01 SOL, a fair price curve on Meteora, and 60% of every trading fee is yours on the curve, 32% once it trades in its pool.",
   launch: "Launch a token",
   sell: "Sell my coin's fees",
 } as const;
@@ -95,7 +95,7 @@ export const tokenPage = {
   quoteStale: "The quote changed while you were trading. Review the new minimum and try again.",
   confirmed: "Confirmed",
   refreshing: "Updating balances…",
-  streamUnwindNote: "This is a fee token: it pays out another coin's future fees. If its curve is still below its target thirty days after launch, the seller can close the vault behind it and take those fees back. The token keeps trading on this curve either way.",
+  streamUnwindNote: "This fee token uses another coin's future fees to fund buybacks and burns. Holding it does not give you a right to those fees. If its curve is still below its target thirty days after launch, the seller can close the vault behind it and take those fee rights back. The token keeps trading on this curve either way.",
 } as const;
 
 export const amounts = {
@@ -178,12 +178,12 @@ export const wizard = {
   withdrawLock:
     "Fee rights can be withdrawn until you launch. A coin whose curve has completed but not moved to its pool yet cannot be moved until it does.",
   irreversible: "Launching is final while the curve runs. If the curve is still below its target thirty days after launch, you can unwind: your fee rights come back with whatever the vault collected, and the vault closes for good.",
-  connect: "Connect the wallet that owns the coin.",
+  connect: "Connect the wallet that owns the creator fee rights or a supported locked-liquidity position.",
   step1: "1. The fees you sell",
   step2: "2. Your share when the curve completes",
   step3: "3. The fee token",
   scanning: "Scanning the wallet…",
-  nothingFound: "No coins or locked positions found for this wallet.",
+  nothingFound: "No eligible creator fee rights or locked positions found for this wallet.",
   rights: "Creator rights",
   position: "Locked position",
   claimable: "claimable",
@@ -217,7 +217,7 @@ export const openVault = {
 
 export const splits = {
   summary:
-    "You get your chosen share of the raise in SOL when the fee token's curve completes, plus 40% of that token's own trading fees. The fees you sold fund buybacks of the fee token (80%) and the protocol (20%).",
+    "You get your chosen share of the raise in SOL when the fee token's curve completes, plus 32% of the fee token's trading fees while it is on its curve and 16% once it trades in its pool. The fees you sold fund buybacks of the fee token (80%) and the protocol (20%).",
   curve:
     "While the fee token is on its curve: of its trading fees after Meteora's cut, 40% to you, 25% to the protocol, 35% to buybacks.",
   pool: "After the curve completes: half of the pool's fees after Meteora's cut compound into the pool (40% of the gross fee); the protocol holds 20% of the locked liquidity; the vault's claimable fees go half to you, half to buybacks.",
@@ -233,8 +233,8 @@ export const sellExample = {
   lines: [
     "Say your coin earns about 1 SOL a month in creator fees, and you choose Take 50%.",
     "You put the coin's fee rights into a vault and launch a fee token. Its curve raises 40.685 SOL.",
-    "When the curve completes you receive 20.343 SOL. The other 20.343 SOL becomes locked liquidity for the fee token.",
-    "From then on your coin's fees buy the fee token back: of that 1 SOL a month, 0.8 SOL goes to buybacks and 0.2 SOL to the protocol. You also keep 40% of the fee token's own trading fees while it is on its curve.",
+    "When the curve completes you receive 20.343 SOL. The other half becomes locked liquidity for the fee token: about 20.302 SOL after Meteora's 0.2% migration fee (an illustration from the rounded raise, not an exact on-chain figure).",
+    "From then on your coin's fees buy the fee token back: of that 1 SOL a month, 0.8 SOL goes to buybacks and 0.2 SOL to the protocol. You also get 32% of the fee token's own trading fees while it is on its curve, then 16% once it trades in its pool.",
     "If the curve has not completed thirty days after launch, you can unwind: your fee rights come back, with whatever was collected.",
   ],
   note: "Figures from the Take 50% setting at full size; fees and prices are never guaranteed.",
@@ -243,7 +243,7 @@ export const sellExample = {
 export const experience = {
   eyebrow: "Launch a comet. Sell the tail.",
   homeBody:
-    "Or launch a new coin here: 0.01 SOL, a fair price curve on Meteora, and you keep most of the trading fees it earns.",
+    "Or launch a new coin here: 0.01 SOL, a fair price curve on Meteora, and 60% of every trading fee is yours on the curve, 32% once it trades in its pool.",
   explore: "Explore all tokens",
   observatory: "Every coin and the fees it earns",
   live: "Index connected",
@@ -252,7 +252,7 @@ export const experience = {
   reconnect: "Try again",
   atlas: "Token map",
   atlasNote:
-    "The longer a tail, the more fees that coin has earned: fees ready to claim plus fees collected in the last 30 days, compared within each paying token. Gold sparks mark newly seen fees.",
+    "The longer a tail, the more fees that coin has earned: fees ready to claim plus fees collected in the last 30 days, compared within each paying token. When collection history is unavailable, we use an estimate from the curve. Gold sparks mark newly seen fees.",
   atlasEmpty: "An open sky. Room for your coin.",
   atlasEmptyBody:
     "No coins have been indexed in this view yet. They appear here as the data arrives.",
