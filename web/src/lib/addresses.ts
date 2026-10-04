@@ -12,6 +12,10 @@ function presetKey(value: string | undefined, devnetDefault: string): PublicKey 
   if (!address) return null;
   try { return new PublicKey(address); } catch { return null; }
 }
+// The admin wallet (program upgrade authority and protocol admin) and the keeper hot key's public key;
+// only the /admin/init page reads them, to build and check init_protocol for the owner's wallet.
+export const ADMIN = presetKey(process.env.NEXT_PUBLIC_ADMIN, "3eBuya2rggMkpqJC4jM9vJo2u91njEWTuH7AV4RnNNEC");
+export const KEEPER = presetKey(process.env.NEXT_PUBLIC_KEEPER, "A4iqXrFHjjpDzKbzHgwpeCMbYVFSdVeK5eHkpLe32gKz");
 export const ADDRESSES = {
   protocol: new PublicKey(process.env.NEXT_PUBLIC_PROTOCOL ?? "3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR"),
   // devnet carries small-threshold configs with the presets' economics (configs/devnet.json, e2e), so curves fill with half a SOL

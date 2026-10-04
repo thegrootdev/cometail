@@ -13,6 +13,7 @@
 // non-zero.
 //
 //   cd tests && RPC=<keyed mainnet rpc> ADMIN=<admin wallet> TREASURY=<launch treasury wallet> KEEPER=<keeper pubkey> \
+//     [PAYER=<box payer pubkey> PAYER_KEYPAIR=<its file>]   (real run without the admin key on the box; init_protocol is then signed on the site) \
 //     COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v COMETAIL_QUOTE_STOCK=Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh \
 //     DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/setup.ts
 //   The real run adds ADMIN_KEYPAIR=<path to the owner's keypair file, mode 600, outside the repo>
@@ -88,11 +89,24 @@ async function main() {
   if (badAuthorities.length) throw new Error(badAuthorities.map((c) => `${c.what}: ${c.detail}`).join("; "));
   const usdc = new PublicKey(need("COMETAIL_QUOTE_USDC"));
   const stock = new PublicKey(need("COMETAIL_QUOTE_STOCK"));
-  let adminKeypair: Keypair | null = null;
+  // Who pays for the treasury account and the nine configs: PAYER (a box key holding only that budget)
+  // or, when PAYER is unset, ADMIN. init_protocol is signed by ADMIN itself: with ADMIN_KEYPAIR here,
+  // or deferred to the owner's wallet on the site (the program stores the signer as admin and requires
+  // it to be the upgrade authority, so a box key can never take that role).
+  const payer = process.env.PAYER ? new PublicKey(process.env.PAYER) : admin;
+  if (!payer.equals(admin) && (payer.equals(treasuryOwner) || payer.equals(keeper))) throw new Error("PAYER must not be the launch treasury or the keeper");
+  let adminKeypair: Keypair | null = null, payerKeypair: Keypair | null = null;
+  const loadKey = (envName: string, expected: PublicKey): Keypair => {
+    const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(need(envName), "utf8"))));
+    if (!kp.publicKey.equals(expected)) throw new Error(`${envName} does not match ${expected.toBase58()}`);
+    return kp;
+  };
   if (!DRY) {
-    const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(need("ADMIN_KEYPAIR"), "utf8"))));
-    if (!kp.publicKey.equals(admin)) throw new Error("ADMIN_KEYPAIR does not match ADMIN");
-    adminKeypair = kp;
+    if (process.env.ADMIN_KEYPAIR) adminKeypair = loadKey("ADMIN_KEYPAIR", admin);
+    if (process.env.PAYER_KEYPAIR) payerKeypair = loadKey("PAYER_KEYPAIR", payer);
+    else if (adminKeypair && payer.equals(admin)) payerKeypair = adminKeypair;
+    if (!payerKeypair) throw new Error("a real run needs PAYER + PAYER_KEYPAIR (the box payer), or ADMIN_KEYPAIR with PAYER unset");
+    if (!adminKeypair) console.log("init_protocol is DEFERRED to the owner's wallet (no ADMIN_KEYPAIR): sign it on the site's /admin/init page after this run");
   }
 
   // the recorded deployment, never rewritten with different authorities or quotes
@@ -110,7 +124,7 @@ async function main() {
   const state: any = { ...header, configs: {}, presets: {}, ...(recorded ?? {}), ...header };
   const save = () => { if (!DRY) fs.writeFileSync(STATE, JSON.stringify(state, null, 2) + "\n"); };
   const balance = await connection.getBalance(admin);
-  console.log(`mode ${DRY ? "DRY RUN (simulation only, nothing sent, nothing written)" : "REAL"}; admin ${admin.toBase58()}; launch treasury ${treasuryOwner.toBase58()}; keeper ${keeper.toBase58()}; admin balance ${balance / 1e9} SOL`);
+  console.log(`mode ${DRY ? "DRY RUN (simulation only, nothing sent, nothing written)" : "REAL"}; admin ${admin.toBase58()}; launch treasury ${treasuryOwner.toBase58()}; keeper ${keeper.toBase58()}; payer ${payer.equals(admin) ? "admin" : payer.toBase58()}; admin balance ${balance / 1e9} SOL`);
 
   // preflight: everything below must pass before any simulation, send or save
   const program = await connection.getAccountInfo(VAULT_PROGRAM_ID);
@@ -133,9 +147,20 @@ async function main() {
   const rent = async (bytes: number) => await connection.getMinimumBalanceForRentExemption(bytes);
   const pendingConfigs = CONFIG_NAMES.filter((n) => !(PROTOCOL_SET.includes(n) ? state.configs : state.presets)[n]).length;
   const pendingTreasury = !(await connection.getAccountInfo(treasury)), pendingProtocol = !(await connection.getAccountInfo(client.protocol));
-  const needed = pendingConfigs * (await rent(CONFIG_BYTES) + TX_FEE_LAMPORTS) + (pendingTreasury ? await rent(ATA_BYTES) + TX_FEE_LAMPORTS : 0) + (pendingProtocol ? await rent(PROTOCOL_BYTES) + TX_FEE_LAMPORTS : 0);
-  const required = needed > 0 ? needed + MARGIN_LAMPORTS : 0;
+  const configsNeeded = pendingConfigs * (await rent(CONFIG_BYTES) + TX_FEE_LAMPORTS) + (pendingTreasury ? await rent(ATA_BYTES) + TX_FEE_LAMPORTS : 0);
+  const protocolNeeded = pendingProtocol ? await rent(PROTOCOL_BYTES) + TX_FEE_LAMPORTS : 0;
+  if (payer.equals(admin)) {
+    const needed = configsNeeded + protocolNeeded;
+    const required = needed > 0 ? needed + MARGIN_LAMPORTS : 0;
   note({ step: "admin balance", status: balance >= required ? "PASS" : "FAIL", detail: `${balance / 1e9} SOL; pending ${pendingConfigs} config(s)${pendingTreasury ? ", treasury" : ""}${pendingProtocol ? ", protocol" : ""} need ${required / 1e9} SOL (rent, fees, ${MARGIN_LAMPORTS / 1e9} margin)${balance >= required ? "" : "; a simulation with an unfunded payer fails too"}` });
+  } else {
+    // the box payer covers the configs and the treasury account; the admin wallet pays init_protocol on the site
+    const payerBalance = await connection.getBalance(payer);
+    const payerRequired = configsNeeded > 0 ? configsNeeded + MARGIN_LAMPORTS : 0;
+    note({ step: "payer balance", status: payerBalance >= payerRequired ? "PASS" : "FAIL", detail: `${payerBalance / 1e9} SOL at ${payer.toBase58()}; pending ${pendingConfigs} config(s)${pendingTreasury ? ", treasury" : ""} need ${payerRequired / 1e9} SOL (rent, fees, ${MARGIN_LAMPORTS / 1e9} margin)${payerBalance >= payerRequired ? "" : "; a simulation with an unfunded payer fails too"}` });
+    const adminRequired = protocolNeeded > 0 ? protocolNeeded + TX_FEE_LAMPORTS * 10 : 0;
+    note({ step: "admin balance", status: balance >= adminRequired ? "PASS" : "FAIL", detail: `${balance / 1e9} SOL; ${pendingProtocol ? `init_protocol on the site needs ${adminRequired / 1e9} SOL` : "protocol already exists"}` });
+  }
   if (failed().length) throw new Error(`preflight failed, nothing simulated, sent or saved:\n${failed().map((o) => `${o.step}: ${o.detail}`).join("\n")}`);
 
   // recorded accounts: validated before they are skipped
@@ -157,7 +182,7 @@ async function main() {
 
   // 1. treasury
   if (await connection.getAccountInfo(treasury)) note({ step: "treasury ata", status: "EXISTS", detail: state.treasury });
-  else await run(connection, "treasury ata", [createAssociatedTokenAccountIdempotentInstruction(admin, treasury, admin, NATIVE_MINT)], admin, adminKeypair ? [adminKeypair] : []);
+  else await run(connection, "treasury ata", [createAssociatedTokenAccountIdempotentInstruction(payer, treasury, admin, NATIVE_MINT)], payer, payerKeypair ? [payerKeypair] : []);
 
   // 2. the nine configs
   for (const name of CONFIG_NAMES) {
@@ -169,10 +194,10 @@ async function main() {
     const authorities = configAuthorities(name, admin.toBase58(), treasuryOwner.toBase58());
     note({ step: `authorities ${name}`, status: "PASS", detail: `fee claimer ${authorities.feeClaimer}; leftover receiver ${authorities.leftoverReceiver}` });
     let builder = dbcProgram.methods.createConfig(configParams(name)).accountsPartial({
-      config: config.publicKey, feeClaimer: new PublicKey(authorities.feeClaimer), leftoverReceiver: new PublicKey(authorities.leftoverReceiver), quoteMint: quote, payer: admin, systemProgram: SystemProgram.programId,
+      config: config.publicKey, feeClaimer: new PublicKey(authorities.feeClaimer), leftoverReceiver: new PublicKey(authorities.leftoverReceiver), quoteMint: quote, payer, systemProgram: SystemProgram.programId,
     });
     if (name === "stock-xstock" && stockIs2022) builder = builder.remainingAccounts([{ pubkey: badge, isSigner: false, isWritable: false }]);
-    const done = await run(connection, `config ${name} (${quote.equals(NATIVE_MINT) ? "WSOL" : quote.toBase58().slice(0, 8)})`, [await builder.instruction()], admin, adminKeypair ? [adminKeypair, config] : []);
+    const done = await run(connection, `config ${name} (${quote.equals(NATIVE_MINT) ? "WSOL" : quote.toBase58().slice(0, 8)})`, [await builder.instruction()], payer, payerKeypair ? [payerKeypair, config] : []);
     if (done && !DRY) { bucket[name] = config.publicKey.toBase58(); save(); }
   }
 
@@ -181,6 +206,7 @@ async function main() {
   const prerequisites = deployed && streams.every(Boolean) && !!(await connection.getAccountInfo(treasury));
   if (protocolInfo) note({ step: "init_protocol", status: "EXISTS", detail: `${state.protocol} (admin, keeper, treasury and pins match)` });
   else if (halted()) note({ step: "init_protocol", status: "SKIPPED", detail: "a send failed above; nothing else is sent (rerun to resume)" });
+  else if (!DRY && !adminKeypair) note({ step: "init_protocol", status: "SKIPPED", detail: `DEFERRED to the owner's wallet: open the site's /admin/init page with ${admin.toBase58()} (Phantom) and sign; then run verify-configs${prerequisites ? "" : " (the program, the three stream configs and the treasury must be on chain first)"}` });
   else if (!prerequisites) note({ step: "init_protocol", status: DRY ? "SKIPPED" : "FAIL", detail: `needs the deployed program, the three stream configs and the treasury on chain${DRY ? " (expected in a dry run before step 5)" : ": setup is incomplete, fix the failures above and rerun"}` });
   else {
     const ix = await client.initProtocol({ admin, keeper, payer: admin, treasury, streamConfigs: streams.map((k: string) => new PublicKey(k)) as [PublicKey, PublicKey, PublicKey] });

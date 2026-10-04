@@ -29,9 +29,11 @@ reviewed ELF plus the program account and fees (docs/deploy.md; re-quote with `s
 on the day): 3.65 SOL. Setup (step 5): nine configs at 0.006 SOL each, the treasury account
 and the protocol account under 0.004 SOL, fees, 0.02 SOL margin: 0.08 SOL, which the script
 computes itself for the work still pending (a no-op rerun needs nothing). First launches
-(step 9): creation fees and first buys, 0.5 SOL and up. Fund 4.5 SOL before step 4: 0.77 SOL
-remains after deployment and setup, 0.27 SOL after the minimum launch allowance.
-The keeper: operating SOL only (bin-array rent 0.071 SOL per array plus fees), 1 SOL to start.
+(step 9): creation fees and first buys, 0.5 SOL and up. With the phone flow of step 4 the admin
+wallet makes ONE transfer of 4.26 SOL to the deployer (deployment, configs, the keeper's operating
+balance and a margin, unused SOL returned) and keeps about 0.74 SOL of its 5 SOL for init_protocol
+and the first launch allowance. The keeper: operating SOL only (bin-array rent 0.071 SOL per array
+plus fees); 0.5 SOL to start, the owner's choice (`KEEPER_SOL`).
 
 ## 3. Dry run (no transaction)
 ```
@@ -65,25 +67,69 @@ impact on a 10,000 USD buy and 0.13 % on 100,000; SP500 xStock (SPYx,
 `XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`) 81,422 holders, 0.04 % and 0.12 %. The setup
 script verifies the badge of the mint it is given on the day.
 
-## 4. Deploy the program (owner)
-`docs/deploy.md`: `solana program deploy` with the reviewed ELF (the hash in the release
-record; verify it with `sha256sum` first), max-len the ELF size, upgrade authority and
-`--fee-payer` both the owner's wallet keypair (the authority flag alone does not select the
-payer), the keyed mainnet RPC given explicitly with `-u`. Verify with
-`solana program show 5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg -u <keyed mainnet rpc>`:
-authority the owner's wallet.
+## 4. Deploy the program (box, root; the owner funds once from Phantom)
+No computer is needed. A temporary deployer key lives in `/root` for the minutes the deploy takes;
+the admin wallet never signs for the deploy itself, because the loader's set-upgrade-authority needs
+only the current authority's signature (`--skip-new-upgrade-authority-signer-check`). The script is
+`deploy-root.sh` in the team notes (spike 73; the reviewed hash is in THREAD), run from a root-owned
+copy. Its pins (program id, ELF hash and size, ADMIN, KEEPER, box payer) are the review's; a different
+value means a new review.
+```
+/root/deploy-root.sh tools        # Solana CLI 3.1.10 for root, from release.anza.xyz; nothing under /home is executed
+/root/deploy-root.sh prepare      # deployer keypair (600 root); ELF and program keypair copied and pin-checked; prints the deployer address and the amount
+```
+Phantom signature 1 of 2: send the printed amount to the deployer address (4.26 SOL with the
+defaults, see the table). Then, with the box's keyed mainnet RPC:
+```
+RPC=<keyed mainnet rpc> /root/deploy-root.sh all     # or preflight, deploy, handover, fund, sweep one by one
+```
+Each phase verifies on chain before the next: `deploy` writes the reviewed ELF with `--max-len 710400`,
+the deployer as payer and upgrade authority, and compares the dumped bytes with the pinned hash;
+`handover` sets the upgrade authority to ADMIN and reads it back; `fund` sends `PAYER_SOL` to the box
+payer and `KEEPER_SOL` to the keeper; `sweep` refuses unless the authority is ADMIN, sends every remaining
+lamport to ADMIN, and shreds the deployer key and the program-keypair copy. A stalled deploy leaves a
+buffer: `recover` closes it back to the deployer. `/root/cometail-deploy/RECORD` keeps every signature.
 
-## 5. Configs and protocol (owner, real transactions)
-The step 3 command without `DRY_RUN`, plus `ADMIN_KEYPAIR=<path to the owner's keypair file>`.
-It creates, in order, what does not exist yet: the treasury WSOL account, the nine configs,
-`init_protocol` with the three stream configs, the treasury and `KEEPER`. The real run
-requires the deployed program and fails, rather than skipping, when `init_protocol` cannot
-run. Every address goes to `configs/mainnet.json` as it is confirmed, so an interrupted run
-is resumed by running the same command again: a rerun refuses to start if the recorded
-admin, launch treasury owner, keeper or quote mints differ from the command's, and it skips a recorded account only
-after decoding it and matching every parameter. After a failed send the run sends nothing
-more (the later steps read SKIPPED), keeps what confirmed, and exits non-zero; fix the cause
-and rerun. Then the readback:
+| SOL | from | to | what |
+|---|---|---|---|
+| 4.26 | admin wallet (Phantom, signature 1) | deployer | the whole budget below |
+| 3.60971084 + 0.00083312 | deployer | program-data and program accounts | rent (quoted 2026-10-04; `solana rent 710445 -um` on the day) |
+| up to 0.04 | deployer | fees | about 705 write transactions, buffer, finalize, authority handover |
+| 0.10 (`PAYER_SOL`) | deployer | box payer `5NrHfqjMYFAPNgkWJHGQ4pzKnFUzqHpduBtspAZM1hNq` | treasury account + nine configs (0.075 needed) |
+| 0.5 (`KEEPER_SOL`, owner's choice) | deployer | keeper `Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7` | operating balance (bin-array rent 0.071 each); top up as it spends |
+| 0.01 | margin | | returned |
+| the rest (about 0.04) | deployer | admin wallet | `sweep` |
+| about 0.0023 + fee | admin wallet (Phantom, signature 2) | protocol account | init_protocol rent, step 5 |
+
+The admin wallet keeps about 0.74 SOL after signature 1: enough for init_protocol and the first team
+launch allowance (step 9, 0.5 SOL and up; top up from Phantom when needed).
+Verify afterwards: `solana program show 5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg -u <rpc>`
+reports the admin wallet as authority and 710,400 bytes.
+
+## 5. Configs (box, dev; the box payer pays) and init_protocol (owner, Phantom signature 2 of 2)
+Configs: the step 3 command without `DRY_RUN`, plus `PAYER=5NrHfqjMYFAPNgkWJHGQ4pzKnFUzqHpduBtspAZM1hNq
+PAYER_KEYPAIR=../keys/mainnet/payer.json` (the box payer: dev-owned, git-excluded, holds only `PAYER_SOL`).
+It creates, in order, what does not exist yet: the treasury WSOL account (owned by ADMIN, paid by the
+payer) and the nine configs with ADMIN as fee claimer and leftover receiver on the three stream
+configs and TREASURY on the six launch configs; `init_protocol` is reported SKIPPED / DEFERRED because
+no admin key is on the box. Every address goes to `configs/mainnet.json` as it is confirmed; an
+interrupted run is resumed by the same command (a rerun refuses to start if the recorded admin, launch
+treasury owner, keeper or quote mints differ, and skips a recorded account only after decoding it and
+matching every parameter; after a failed send it sends nothing more and exits non-zero). Commit
+`configs/mainnet.json`, set the step 7 variables (including `NEXT_PUBLIC_ADMIN`, `NEXT_PUBLIC_KEEPER` and
+the three stream configs) and deploy the site.
+
+init_protocol: open `https://cometail.fun/admin/init` in Phantom's browser and connect the admin
+wallet. The page reads the chain and refuses to offer the signature unless the program's upgrade
+authority is the connected wallet, the treasury account exists and the protocol is not initialized
+yet; it lists the seven addresses it will record (admin = your wallet, keeper, treasury, the three
+stream configs, the program) for comparison with `configs/mainnet.json`, simulates, and only then
+offers "Sign". One signature: your wallet is both the admin the program stores and the payer of the
+protocol account's rent. The page then reads the protocol back and shows PASS or FAIL per field.
+The program itself enforces the rule that matters: `init_protocol` requires the signer to be the
+upgrade authority and stores that signer as admin, so a box key cannot take the role.
+
+Then the readback:
 ```
 cd tests && RPC=<keyed mainnet rpc> ADMIN=<admin wallet> TREASURY=<launch treasury wallet> CLUSTER=mainnet ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/verify-configs.ts
 ```
@@ -98,7 +144,10 @@ the manifest and config authorities. `treasuryOwner` in the manifest is the laun
 wallet; the existing `treasury` field remains ADMIN's canonical WSOL ATA. Legacy mainnet
 manifests without `treasuryOwner` are not silently relabeled: their immutable config
 ownership must be inspected before migration. Devnet manifests without the field retain
-the existing all-admin expectations. Commit `configs/mainnet.json`.
+the existing all-admin expectations.
+
+The box payer's leftover (about 0.02 SOL) goes back with
+`solana transfer <admin wallet> ALL -k keys/mainnet/payer.json -u <rpc>` as dev, optional.
 
 The reviewed program is unchanged. The protocol's 1/5 external-stream share and the three
 stream configs' partner fees remain with ADMIN. Direct launch configs never enter the
@@ -160,6 +209,8 @@ NEXT_PUBLIC_RPC_URL=<origin-restricted mainnet rpc>
 NEXT_PUBLIC_API_URL=https://api.cometail.fun
 NEXT_PUBLIC_PROTOCOL=<configs/mainnet.json protocol>
 NEXT_PUBLIC_TREASURY=<configs/mainnet.json treasury>
+NEXT_PUBLIC_ADMIN=<admin wallet>            # /admin/init only: the wallet that signs init_protocol
+NEXT_PUBLIC_KEEPER=<keeper pubkey>          # /admin/init only
 NEXT_PUBLIC_PLAIN_CONFIG=<configs.plain>
 NEXT_PUBLIC_STREAM_CONFIG_25=<configs.stream-25>
 NEXT_PUBLIC_STREAM_CONFIG_50=<configs.stream-50>
