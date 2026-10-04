@@ -1,10 +1,16 @@
 # Partner configs
 
-Nine DBC configs, all protocol-owned: the four core configs below and five additional
+Nine COMETAIL DBC configs (accounts owned by the Meteora DBC program): the four core configs below and five additional
 public presets in docs/presets.md. Each fixes the raise target and curve.
 `tests/harness/dbc.ts` selects the SDK market-cap or liquidity-weight builder from
 `curve.mode`; `tests/devnet/setup.ts` creates the core devnet set. For mainnet, the owner
 runs `tests/mainnet/setup.ts` for all nine, then `tests/mainnet/verify-configs.ts` for readback.
+Mainnet setup takes separate `ADMIN` and `TREASURY` wallet public keys: the three stream
+configs use ADMIN as fee claimer and leftover receiver; plain and the five other launch
+presets use TREASURY for both. The protocol WSOL treasury remains ADMIN's canonical ATA.
+Manifest `treasuryOwner` records the launch treasury wallet; `treasury` records that protocol
+ATA. The historical `configs` bucket includes plain but does not determine its authority.
+Readback also takes ADMIN/TREASURY on mainnet and rejects either authority being wrong.
 
 | File | Migration fee | Creator share of it | Creation fee | Use |
 |---|---|---|---|---|

@@ -3,6 +3,7 @@
 // program id matches, every config decodes and matches every parameter (readback.ts), the quote
 // mints are initialized mints of the recorded decimals, a Token-2022 quote has its DBC badge
 // (required on mainnet), and the protocol pins the file's admin, keeper, treasury and streams.
+//   Mainnet also requires ADMIN=<admin wallet> TREASURY=<launch treasury wallet> to check owner intent.
 //   cd tests && RPC=<rpc> CLUSTER=devnet|mainnet ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/verify-configs.ts
 import fs from "fs";
 import path from "path";
@@ -11,7 +12,7 @@ import { BorshAccountsCoder, Idl } from "@coral-xyz/anchor";
 import { expect } from "chai";
 import { VAULT_PROGRAM_ID } from "@cometail/client";
 import { configParams } from "../harness/dbc";
-import { CONFIG_NAMES, DBC_PROGRAM, WSOL, Check, compareConfig, compareProtocol, fileChecks, readBadge, readMint } from "./readback";
+import { CONFIG_NAMES, DBC_PROGRAM, WSOL, Check, configAuthorities, compareConfig, compareProtocol, fileChecks, readBadge, readMint } from "./readback";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const RPC = process.env.RPC ?? "https://api.devnet.solana.com";
@@ -20,6 +21,11 @@ const CLUSTER_NAME = CLUSTER === "mainnet" ? "mainnet-beta" : CLUSTER;
 
 async function main() {
   const file = JSON.parse(fs.readFileSync(path.join(ROOT, "configs", `${CLUSTER}.json`), "utf8"));
+  const isMainnet = CLUSTER_NAME === "mainnet-beta";
+  const admin = isMainnet ? process.env.ADMIN : file.admin;
+  // Existing devnet configs were created before the split and remain admin-owned.
+  const treasuryOwner = isMainnet ? process.env.TREASURY : (file.treasuryOwner ?? file.admin);
+  if (!admin || !treasuryOwner) throw new Error("mainnet readback requires ADMIN and TREASURY public keys");
   const conn = new Connection(RPC, "confirmed");
   const dbcIdl = JSON.parse(fs.readFileSync(path.join(ROOT, "idls", "dynamic_bonding_curve.json"), "utf8")) as Idl;
   const vaultIdl = JSON.parse(fs.readFileSync(path.join(ROOT, "packages", "client", "idl", "cometail_vault.json"), "utf8")) as Idl;
@@ -30,7 +36,7 @@ async function main() {
   const report = (scope: string, checks: Check[]) => { for (const c of checks) { console.log(`${c.ok ? "PASS" : "FAIL"} ${scope}: ${c.what} ${c.detail}`); if (!c.ok) failures.push(`${scope}: ${c.what} ${c.detail}`); } };
 
   // the file and the cluster
-  report("file", fileChecks(file, { clusterName: CLUSTER_NAME, genesis: await conn.getGenesisHash(), programId: VAULT_PROGRAM_ID.toBase58() }));
+  report("file", fileChecks(file, { clusterName: CLUSTER_NAME, genesis: await conn.getGenesisHash(), programId: VAULT_PROGRAM_ID.toBase58(), admin, treasuryOwner }));
   process.env.COMETAIL_QUOTE_USDC = file.quoteMints?.usdc ?? ""; process.env.COMETAIL_QUOTE_STOCK = file.quoteMints?.stock ?? "";
   const quoteOf = (name: string) => (name === "stock-usdc" ? file.quoteMints?.usdc : name === "stock-xstock" ? file.quoteMints?.stock : WSOL) as string | undefined;
   const recorded: Record<string, string> = { ...(file.configs ?? {}), ...(file.presets ?? {}) };
@@ -55,7 +61,7 @@ async function main() {
       report(name, [{ what: "quote token badge", ok: badge.ok || CLUSTER_NAME !== "mainnet-beta", detail: badge.ok ? badge.detail : `${badge.detail} (devnet stand-ins are permissionless; mainnet needs the badge)` }]);
     }
     const c: any = dbc.decode(POOL_CONFIG, info.data);
-    report(name, compareConfig(c, configParams(name), { quoteMint: quote, quoteIs2022: mint.is2022, admin: file.admin }));
+    report(name, compareConfig(c, configParams(name), { quoteMint: quote, quoteIs2022: mint.is2022, ...configAuthorities(name, admin, treasuryOwner) }));
   }
 
   if (file.protocol) {

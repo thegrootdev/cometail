@@ -1,9 +1,10 @@
 // The mainnet readback cannot pass silently: every parameter group, every authority, the
 // protocol pins and the state file's completeness each fail on their own when mutated.
 import { expect } from "chai";
+import { getAssociatedTokenAddressSync, NATIVE_MINT } from "@solana/spl-token";
 import { PublicKey, Keypair } from "@solana/web3.js";
 import { configParams } from "../harness/dbc";
-import { CONFIG_NAMES, GENESIS, compareConfig, compareProtocol, fileChecks } from "../mainnet/readback";
+import { CONFIG_NAMES, GENESIS, configAuthorities, authorityChecks, compareConfig, compareProtocol, fileChecks } from "../mainnet/readback";
 
 const ADMIN = Keypair.generate().publicKey, KEEPER = Keypair.generate().publicKey, TREASURY = Keypair.generate().publicKey;
 const WSOL = "So11111111111111111111111111111111111111112";
@@ -66,27 +67,47 @@ describe("mainnet readback", () => {
     for (const name of CONFIG_NAMES) {
       const p = configParams(name);
       const quote = name === "stock-usdc" ? process.env.COMETAIL_QUOTE_USDC! : name === "stock-xstock" ? process.env.COMETAIL_QUOTE_STOCK! : WSOL;
-      const exp = { quoteMint: quote, quoteIs2022: name === "stock-xstock", admin: ADMIN.toBase58() };
-      expect(failures(compareConfig(onchainOf(p, ADMIN, quote, name === "stock-xstock"), p, exp)), name).to.deep.equal([]);
+      const owner = new PublicKey(configAuthorities(name, ADMIN.toBase58(), TREASURY.toBase58()).feeClaimer);
+      const exp = { quoteMint: quote, quoteIs2022: name === "stock-xstock", ...configAuthorities(name, ADMIN.toBase58(), TREASURY.toBase58()) };
+      expect(failures(compareConfig(onchainOf(p, owner, quote, name === "stock-xstock"), p, exp)), name).to.deep.equal([]);
       for (const [what, mutate] of mutations) {
-        const c = onchainOf(p, ADMIN, quote, name === "stock-xstock");
+        const c = onchainOf(p, owner, quote, name === "stock-xstock");
         mutate(c);
         const bad = failures(compareConfig(c, p, exp));
         expect(bad.some((f) => f.startsWith(what)), `${name}: mutating ${what} must fail that check, got ${bad.join("; ") || "nothing"}`).to.equal(true);
       }
-      expect(failures(compareConfig(onchainOf(p, ADMIN, quote, name === "stock-xstock"), p, { ...exp, quoteMint: KEEPER.toBase58() }))[0]).to.match(/^quote mint/);
+      expect(failures(compareConfig(onchainOf(p, owner, quote, name === "stock-xstock"), p, { ...exp, quoteMint: KEEPER.toBase58() }))[0]).to.match(/^quote mint/);
       const extra = { ...p, newSdkField: 1 };
-      expect(failures(compareConfig(onchainOf(p, ADMIN, quote, name === "stock-xstock"), extra, exp))).to.deep.equal(["every parameter compared uncompared: newSdkField"]);
+      expect(failures(compareConfig(onchainOf(p, owner, quote, name === "stock-xstock"), extra, exp))).to.deep.equal(["every parameter compared uncompared: newSdkField"]);
     }
+  });
+
+  it("assigns only the three stream configs to admin, including plain among the six treasury configs", () => {
+    const streams = ["stream-25", "stream-50", "stream-75"];
+    for (const name of CONFIG_NAMES) {
+      const expected = (streams.includes(name) ? ADMIN : TREASURY).toBase58();
+      expect(configAuthorities(name, ADMIN.toBase58(), TREASURY.toBase58())).to.deep.equal({ feeClaimer: expected, leftoverReceiver: expected });
+    }
+    const layout = { admin: ADMIN.toBase58(), treasuryOwner: TREASURY.toBase58(), keeper: KEEPER.toBase58() };
+    expect(failures(authorityChecks(layout))).to.deep.equal([]);
+    expect(failures(authorityChecks({ ...layout, treasuryOwner: layout.admin }))).to.have.length(1);
+    expect(failures(authorityChecks({ ...layout, keeper: layout.treasuryOwner }))).to.have.length(1);
+    expect(failures(authorityChecks({ ...layout, treasuryOwner: "" }))).not.to.have.length(0);
+    expect(failures(authorityChecks({ ...layout, treasuryOwner: "11111111111111111111111111111111" }))).not.to.have.length(0);
   });
 
   it("requires the exact nine names, the protocol, the cluster and the program id in the state file", () => {
     const programId = Keypair.generate().publicKey.toBase58();
-    const full: any = { cluster: "mainnet-beta", programId, admin: ADMIN.toBase58(), keeper: KEEPER.toBase58(), treasury: TREASURY.toBase58(), protocol: Keypair.generate().publicKey.toBase58(), configs: {}, presets: {} };
+    const full: any = { cluster: "mainnet-beta", programId, admin: ADMIN.toBase58(), keeper: KEEPER.toBase58(), treasuryOwner: TREASURY.toBase58(), treasury: getAssociatedTokenAddressSync(NATIVE_MINT, ADMIN).toBase58(), protocol: Keypair.generate().publicKey.toBase58(), configs: {}, presets: {} };
     for (const n of CONFIG_NAMES) (["stream-25", "stream-50", "stream-75", "plain"].includes(n) ? full.configs : full.presets)[n] = Keypair.generate().publicKey.toBase58();
-    const exp = { clusterName: "mainnet-beta", genesis: GENESIS["mainnet-beta"], programId };
+    const exp = { clusterName: "mainnet-beta", genesis: GENESIS["mainnet-beta"], programId, admin: ADMIN.toBase58(), treasuryOwner: TREASURY.toBase58() };
     expect(failures(fileChecks(full, exp))).to.deep.equal([]);
     expect(failures(fileChecks({ cluster: "mainnet-beta", configs: {}, presets: {} }, exp)).length).to.be.greaterThan(12);
+    expect(failures(fileChecks({ ...full, treasuryOwner: undefined }, exp)).some((x) => x.startsWith("recorded treasury owner"))).to.equal(true);
+    expect(failures(fileChecks({ ...full, treasuryOwner: full.admin }, exp)).some((x) => x.startsWith("recorded treasury owner"))).to.equal(true);
+    expect(failures(fileChecks(full, { ...exp, treasuryOwner: undefined })).length).to.be.greaterThan(0);
+    expect(failures(fileChecks({ ...full, treasury: getAssociatedTokenAddressSync(NATIVE_MINT, TREASURY).toBase58() }, exp)).some((x) => x.startsWith("protocol treasury ATA"))).to.equal(true);
+    expect(failures(fileChecks({ ...full, cluster: "devnet", treasuryOwner: undefined }, { clusterName: "devnet", genesis: GENESIS.devnet, programId }))).to.deep.equal([]);
     const noStock = JSON.parse(JSON.stringify(full)); delete noStock.presets["stock-xstock"];
     expect(failures(fileChecks(noStock, exp))).to.deep.equal(["names stock-xstock missing"]);
     const noProtocol = { ...full, protocol: undefined };

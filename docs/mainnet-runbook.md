@@ -9,9 +9,14 @@ launch in step 9 is the intended next transaction, not a guarantee on permission
 `configs/mainnet.json`; no key and no keyed URL ever enters the repository.
 
 ## 1. Keys (first, before anything that names them)
-- Owner's wallet: admin, fee claimer, leftover receiver, treasury owner. Its public key is
+- Admin wallet: upgrade authority, protocol admin, fee claimer and leftover receiver for the
+  three stream configs, and owner of the protocol WSOL treasury ATA. Its public key is
   `ADMIN` below; its keypair file stays with the owner (mode 600, outside the repository) and
   is used in steps 4 and 5 only (the deploy's payer and upgrade authority, the setup's signer).
+- Launch treasury wallet: `TREASURY` below, fee claimer and leftover receiver for **plain,
+  long, flat, exp, stock-usdc and stock-xstock**. Distinct from admin and keeper. Only its
+  public key is needed for setup; its private key stays with the owner and later signs claims.
+  This wallet is separate from the admin-owned protocol WSOL treasury account.
 - Keeper hot key: generated on the box now, `solana-keygen new -o <path outside the repo>`,
   mode 600, readable by the service user. Its public key is `KEEPER` below and the same key
   the worker runs with in step 6; the protocol stores it at init. Never the admin key.
@@ -30,7 +35,7 @@ The keeper: operating SOL only (bin-array rent 0.071 SOL per array plus fees), 1
 
 ## 3. Dry run (no transaction)
 ```
-cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> \
+cd tests && RPC=<keyed mainnet rpc> ADMIN=<admin wallet> TREASURY=<launch treasury wallet> KEEPER=<keeper pubkey> \
   COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v \
   COMETAIL_QUOTE_STOCK=Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh \
   DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/setup.ts
@@ -42,8 +47,10 @@ wallet's balance against the rent and fees of what is still pending (0.08 SOL fo
 run; an unfunded payer cannot even simulate). A failed preflight stops
 the run before anything is simulated. Then it simulates the treasury account and the nine
 `create_config` transactions (three stream presets, plain, long, flat, exp, stock-usdc,
-stock-xstock, with the full-size files in `configs/`) with the owner's wallet as every
-authority and the stock badge as remaining account 0. The `init_protocol` simulation needs
+stock-xstock, with the full-size files in `configs/`) with ADMIN as fee claimer and leftover receiver on the three stream configs, TREASURY
+as both authorities on the six launch configs, and the stock badge as remaining account 0.
+ADMIN pays/signs all setup transactions; the treasury wallet need not be funded for config
+creation. Authority addresses are logged for each new config before simulation. The `init_protocol` simulation needs
 the real stream configs and treasury, so before step 5 it is reported SKIPPED. Any failed
 simulation fails the run. The dry run writes nothing: `configs/mainnet.json` is written by
 the real run only. Keep the output with the deployment record.
@@ -73,12 +80,12 @@ It creates, in order, what does not exist yet: the treasury WSOL account, the ni
 requires the deployed program and fails, rather than skipping, when `init_protocol` cannot
 run. Every address goes to `configs/mainnet.json` as it is confirmed, so an interrupted run
 is resumed by running the same command again: a rerun refuses to start if the recorded
-admin, keeper or quote mints differ from the command's, and it skips a recorded account only
+admin, launch treasury owner, keeper or quote mints differ from the command's, and it skips a recorded account only
 after decoding it and matching every parameter. After a failed send the run sends nothing
 more (the later steps read SKIPPED), keeps what confirmed, and exits non-zero; fix the cause
 and rerun. Then the readback:
 ```
-cd tests && RPC=<keyed mainnet rpc> CLUSTER=mainnet ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/verify-configs.ts
+cd tests && RPC=<keyed mainnet rpc> ADMIN=<admin wallet> TREASURY=<launch treasury wallet> CLUSTER=mainnet ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 mainnet/verify-configs.ts
 ```
 requires exactly the nine configs and the protocol in the file, the mainnet genesis and the
 program id, and compares every parameter of every config with its file (quote mint, decimals
@@ -86,7 +93,17 @@ and token flag, fee claimer and leftover receiver, base and dynamic fees, thresh
 price, every curve segment, supply and its fixed flag, update authority, locked vesting,
 liquidity split and vesting, migration option and fees, the migrated pool's fee settings,
 creation fee), the stock badge, and the protocol's owner, admin, keeper, treasury and
-stream-config pins. Commit `configs/mainnet.json`.
+stream-config pins. The supplied ADMIN/TREASURY public keys are checked independently against
+the manifest and config authorities. `treasuryOwner` in the manifest is the launch treasury
+wallet; the existing `treasury` field remains ADMIN's canonical WSOL ATA. Legacy mainnet
+manifests without `treasuryOwner` are not silently relabeled: their immutable config
+ownership must be inspected before migration. Devnet manifests without the field retain
+the existing all-admin expectations. Commit `configs/mainnet.json`.
+
+The reviewed program is unchanged. The protocol's 1/5 external-stream share and the three
+stream configs' partner fees remain with ADMIN. Direct launch configs never enter the
+vault's stream-config authority check. DBC fee claimer/leftover receiver are fixed at
+creation; rotating either wallet in the manifest does not transfer existing config rights.
 
 ## 6. Worker (box, root)
 Stop both services. Keep the devnet database file where it is. Write

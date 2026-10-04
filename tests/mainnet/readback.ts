@@ -2,13 +2,33 @@
 // produces, compared with the decoded PoolConfig account, plus the authorities, the quote mint
 // and the protocol pins. Used by verify-configs.ts (any cluster) and setup.ts (mainnet).
 import { Connection, PublicKey } from "@solana/web3.js";
-import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { PresetName } from "../harness/dbc";
 
 export type Check = { what: string; ok: boolean; detail: string };
+// File buckets are historical: plain lives in configs, but belongs to the launch treasury.
 export const PROTOCOL_SET: PresetName[] = ["stream-25", "stream-50", "stream-75", "plain"];
 export const PUBLIC_SET: PresetName[] = ["long", "flat", "exp", "stock-usdc", "stock-xstock"];
 export const CONFIG_NAMES: PresetName[] = [...PROTOCOL_SET, ...PUBLIC_SET];
+export const STREAM_SET: PresetName[] = ["stream-25", "stream-50", "stream-75"];
+/** Authority selection is independent of the manifest's configs/presets buckets. */
+export function configAuthorities(name: PresetName, admin: string, treasuryOwner: string): { feeClaimer: string; leftoverReceiver: string } {
+  if (!CONFIG_NAMES.includes(name)) throw new Error(`unknown config ${name}`);
+  const owner = STREAM_SET.includes(name) ? admin : treasuryOwner;
+  if (!owner) throw new Error(`missing authority for ${name}`);
+  return { feeClaimer: owner, leftoverReceiver: owner };
+}
+/** Mainnet uses three distinct ordinary wallets; treasuryOwner is not the protocol WSOL ATA. */
+export function authorityChecks(a: { admin: string; treasuryOwner: string; keeper: string }): Check[] {
+  const out: Check[] = [];
+  for (const role of ["admin", "treasuryOwner", "keeper"] as const) {
+    let valid = false;
+    try { valid = !!a[role] && PublicKey.isOnCurve(new PublicKey(a[role]).toBytes()) && a[role] !== "11111111111111111111111111111111"; } catch { /* invalid public key */ }
+    out.push({ what: `${role} wallet`, ok: valid, detail: valid ? a[role] : "must be an ordinary wallet public key" });
+  }
+  out.push({ what: "distinct wallets", ok: new Set([a.admin, a.treasuryOwner, a.keeper]).size === 3, detail: "admin, launch treasury and keeper must differ" });
+  return out;
+}
 export const DBC_PROGRAM = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN");
 export const WSOL = "So11111111111111111111111111111111111111112";
 export const GENESIS: Record<string, string> = { devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG", "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d" };
@@ -58,14 +78,14 @@ function schedulerBytes(s: any): string {
  * fails when the parameters carry a key this list does not cover, so a new SDK field cannot go
  * unverified.
  */
-export function compareConfig(c: any, p: any, exp: { quoteMint: string; quoteIs2022: boolean; admin: string }): Check[] {
+export function compareConfig(c: any, p: any, exp: { quoteMint: string; quoteIs2022: boolean; feeClaimer: string; leftoverReceiver: string }): Check[] {
   const out: Check[] = [];
   const eq = (what: string, onchain: any, expected: any) => out.push({ what, ok: num(onchain) === num(expected), detail: `${num(onchain)} vs ${num(expected)}` });
   const fees = get(c, "pool_fees"), base = get(fees, "base_fee"), dyn = get(fees, "dynamic_fee");
   eq("quote mint", key(get(c, "quote_mint")), exp.quoteMint);
   eq("quote token flag", get(c, "quote_token_flag"), exp.quoteIs2022 ? 1 : 0);
-  eq("fee claimer", key(get(c, "fee_claimer")), exp.admin);
-  eq("leftover receiver", key(get(c, "leftover_receiver")), exp.admin);
+  eq("fee claimer", key(get(c, "fee_claimer")), exp.feeClaimer);
+  eq("leftover receiver", key(get(c, "leftover_receiver")), exp.leftoverReceiver);
   eq("base fee cliff numerator", get(base, "cliff_fee_numerator"), p.poolFees.baseFee.cliffFeeNumerator);
   eq("base fee first factor", get(base, "first_factor"), p.poolFees.baseFee.firstFactor);
   eq("base fee second factor", get(base, "second_factor"), p.poolFees.baseFee.secondFactor);
@@ -108,9 +128,18 @@ export function compareConfig(c: any, p: any, exp: { quoteMint: string; quoteIs2
 }
 
 /** The state file itself: cluster, genesis, program id, the authorities and exactly the nine config names. */
-export function fileChecks(file: any, exp: { clusterName: string; genesis: string; programId: string }): Check[] {
+export function fileChecks(file: any, exp: { clusterName: string; genesis: string; programId: string; admin?: string; treasuryOwner?: string }): Check[] {
   const recorded: Record<string, string> = { ...(file.configs ?? {}), ...(file.presets ?? {}) };
   const unknown = Object.keys(recorded).filter((n) => !CONFIG_NAMES.includes(n as PresetName));
+  const mainnet: Check[] = [];
+  if (exp.clusterName === "mainnet-beta") {
+    mainnet.push(...authorityChecks({ admin: exp.admin ?? "", treasuryOwner: exp.treasuryOwner ?? "", keeper: file.keeper }));
+    mainnet.push({ what: "recorded admin", ok: !!exp.admin && file.admin === exp.admin, detail: `${file.admin} vs ${exp.admin}` });
+    mainnet.push({ what: "recorded treasury owner", ok: !!exp.treasuryOwner && file.treasuryOwner === exp.treasuryOwner, detail: `${file.treasuryOwner} vs ${exp.treasuryOwner}` });
+    let expectedAta = "invalid admin";
+    try { expectedAta = getAssociatedTokenAddressSync(NATIVE_MINT, new PublicKey(exp.admin!)).toBase58(); } catch { /* reported above */ }
+    mainnet.push({ what: "protocol treasury ATA", ok: file.treasury === expectedAta, detail: `${file.treasury} vs ${expectedAta}` });
+  }
   return [
     { what: "cluster", ok: file.cluster === exp.clusterName, detail: `${file.cluster} vs ${exp.clusterName}` },
     { what: "rpc genesis", ok: exp.genesis === GENESIS[exp.clusterName], detail: exp.genesis },
@@ -118,6 +147,7 @@ export function fileChecks(file: any, exp: { clusterName: string; genesis: strin
     ...["admin", "keeper", "treasury", "protocol"].map((f) => ({ what: f, ok: typeof file[f] === "string" && file[f].length > 0, detail: String(file[f]) })),
     ...CONFIG_NAMES.map((n) => ({ what: `names ${n}`, ok: typeof recorded[n] === "string" && recorded[n].length > 0, detail: recorded[n] ?? "missing" })),
     { what: "no unknown config names", ok: unknown.length === 0, detail: unknown.join(",") || `${CONFIG_NAMES.length} names` },
+    ...mainnet,
   ];
 }
 

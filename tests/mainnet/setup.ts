@@ -12,11 +12,13 @@
 // send once one has failed (the record keeps what confirmed; rerun to resume). Any FAIL exits
 // non-zero.
 //
-//   cd tests && RPC=<keyed mainnet rpc> ADMIN=<owner wallet> KEEPER=<keeper pubkey> \
+//   cd tests && RPC=<keyed mainnet rpc> ADMIN=<admin wallet> TREASURY=<launch treasury wallet> KEEPER=<keeper pubkey> \
 //     COMETAIL_QUOTE_USDC=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v COMETAIL_QUOTE_STOCK=Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh \
 //     DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/setup.ts
 //   The real run adds ADMIN_KEYPAIR=<path to the owner's keypair file, mode 600, outside the repo>
 //   and drops DRY_RUN. State: configs/mainnet.json (public addresses only).
+// ADMIN owns the three stream configs and protocol WSOL ATA; TREASURY owns the six launch configs.
+// The treasury key does not sign config creation; its public key alone is sufficient.
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { BorshAccountsCoder, Idl } from "@coral-xyz/anchor";
@@ -25,7 +27,7 @@ import path from "path";
 import { VaultClientStep6, VAULT_PROGRAM_ID } from "@cometail/client";
 import { dbcProgram } from "../harness/programs";
 import { configParams, PresetName } from "../harness/dbc";
-import { CONFIG_NAMES, DBC_PROGRAM, GENESIS, PROTOCOL_SET, Check, badgeOf, compareConfig, compareProtocol, readBadge, readMint } from "./readback";
+import { CONFIG_NAMES, DBC_PROGRAM, GENESIS, PROTOCOL_SET, Check, authorityChecks, configAuthorities, badgeOf, compareConfig, compareProtocol, readBadge, readMint } from "./readback";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const STATE = path.join(ROOT, "configs", "mainnet.json");
@@ -67,11 +69,11 @@ async function run(connection: Connection, label: string, ixs: TransactionInstru
 }
 
 /** A recorded config is skipped only when the account exists, belongs to DBC and matches every parameter. */
-async function recordedConfigMatches(connection: Connection, name: PresetName, key: string, quote: PublicKey, quoteIs2022: boolean, admin: PublicKey): Promise<string[]> {
+async function recordedConfigMatches(connection: Connection, name: PresetName, key: string, quote: PublicKey, quoteIs2022: boolean, admin: PublicKey, treasuryOwner: PublicKey): Promise<string[]> {
   const info = await connection.getAccountInfo(new PublicKey(key));
   if (!info) return [`recorded config ${name} ${key} does not exist on chain`];
   if (!info.owner.equals(DBC_PROGRAM)) return [`recorded config ${name} is owned by ${info.owner.toBase58()}, not DBC`];
-  const checks = compareConfig(dbcCoder.decode(POOL_CONFIG, info.data), configParams(name), { quoteMint: quote.toBase58(), quoteIs2022, admin: admin.toBase58() });
+  const checks = compareConfig(dbcCoder.decode(POOL_CONFIG, info.data), configParams(name), { quoteMint: quote.toBase58(), quoteIs2022, ...configAuthorities(name, admin.toBase58(), treasuryOwner.toBase58()) });
   return checks.filter((c) => !c.ok).map((c) => `recorded config ${name}: ${c.what} ${c.detail}`);
 }
 
@@ -80,8 +82,10 @@ async function main() {
   const genesis = await connection.getGenesisHash();
   if (genesis !== GENESIS["mainnet-beta"]) throw new Error(`RPC is not mainnet (genesis ${genesis})`);
   const admin = new PublicKey(need("ADMIN"));
+  const treasuryOwner = new PublicKey(need("TREASURY"));
   const keeper = new PublicKey(need("KEEPER"));
-  if (keeper.equals(admin)) throw new Error("KEEPER must be the keeper hot key, not the admin");
+  const badAuthorities = authorityChecks({ admin: admin.toBase58(), treasuryOwner: treasuryOwner.toBase58(), keeper: keeper.toBase58() }).filter((c) => !c.ok);
+  if (badAuthorities.length) throw new Error(badAuthorities.map((c) => `${c.what}: ${c.detail}`).join("; "));
   const usdc = new PublicKey(need("COMETAIL_QUOTE_USDC"));
   const stock = new PublicKey(need("COMETAIL_QUOTE_STOCK"));
   let adminKeypair: Keypair | null = null;
@@ -93,17 +97,20 @@ async function main() {
 
   // the recorded deployment, never rewritten with different authorities or quotes
   const recorded = fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, "utf8")) : null;
-  const header = { cluster: "mainnet-beta", programId: VAULT_PROGRAM_ID.toBase58(), admin: admin.toBase58(), keeper: keeper.toBase58(), quoteMints: { wsol: NATIVE_MINT.toBase58(), usdc: usdc.toBase58(), stock: stock.toBase58() } };
+  const header = { cluster: "mainnet-beta", programId: VAULT_PROGRAM_ID.toBase58(), admin: admin.toBase58(), treasuryOwner: treasuryOwner.toBase58(), keeper: keeper.toBase58(), quoteMints: { wsol: NATIVE_MINT.toBase58(), usdc: usdc.toBase58(), stock: stock.toBase58() } };
   if (recorded) {
     const diffs: string[] = [];
-    for (const f of ["cluster", "programId", "admin", "keeper"] as const) if (recorded[f] !== undefined && recorded[f] !== header[f]) diffs.push(`${f}: recorded ${recorded[f]}, run ${header[f]}`);
+    // Old manifests implicitly used admin for every config. Never relabel their immutable authorities.
+    if (recorded.treasury !== undefined && recorded.treasury !== getAssociatedTokenAddressSync(NATIVE_MINT, admin).toBase58()) diffs.push("treasury: recorded protocol treasury is not ADMIN's canonical WSOL ATA");
+    if (recorded.treasuryOwner === undefined) diffs.push("treasuryOwner missing: legacy manifest used admin for launch configs; inspect existing accounts before any migration");
+    for (const f of ["cluster", "programId", "admin", "treasuryOwner", "keeper"] as const) if (recorded[f] !== undefined && recorded[f] !== header[f]) diffs.push(`${f}: recorded ${recorded[f]}, run ${header[f]}`);
     for (const f of ["wsol", "usdc", "stock"] as const) if (recorded.quoteMints?.[f] !== undefined && recorded.quoteMints[f] !== header.quoteMints[f]) diffs.push(`quoteMints.${f}: recorded ${recorded.quoteMints[f]}, run ${header.quoteMints[f]}`);
     if (diffs.length) throw new Error(`configs/mainnet.json records a different deployment; refusing to rewrite it:\n${diffs.join("\n")}`);
   }
   const state: any = { ...header, configs: {}, presets: {}, ...(recorded ?? {}), ...header };
   const save = () => { if (!DRY) fs.writeFileSync(STATE, JSON.stringify(state, null, 2) + "\n"); };
   const balance = await connection.getBalance(admin);
-  console.log(`mode ${DRY ? "DRY RUN (simulation only, nothing sent, nothing written)" : "REAL"}; admin ${admin.toBase58()}; keeper ${keeper.toBase58()}; balance ${balance / 1e9} SOL`);
+  console.log(`mode ${DRY ? "DRY RUN (simulation only, nothing sent, nothing written)" : "REAL"}; admin ${admin.toBase58()}; launch treasury ${treasuryOwner.toBase58()}; keeper ${keeper.toBase58()}; admin balance ${balance / 1e9} SOL`);
 
   // preflight: everything below must pass before any simulation, send or save
   const program = await connection.getAccountInfo(VAULT_PROGRAM_ID);
@@ -119,6 +126,7 @@ async function main() {
   const badge = badgeOf(stock);
   if (stockIs2022) { const b = await readBadge(connection, stock); note({ step: "stock token badge", status: b.ok ? "PASS" : "FAIL", detail: b.ok ? b.detail : `${b.detail}: a Meteora operator must create the badge first` }); }
   else note({ step: "stock token badge", status: "PASS", detail: "not needed for an SPL quote" });
+  // The reviewed protocol treasury remains the admin WSOL ATA, separate from TREASURY.
   // the budget: rent and fees of the work still pending (nothing when everything is recorded)
   const treasury = getAssociatedTokenAddressSync(NATIVE_MINT, admin);
   const client = new VaultClientStep6(connection);
@@ -136,7 +144,7 @@ async function main() {
   const mismatches: string[] = [];
   for (const name of CONFIG_NAMES) {
     const bucket = PROTOCOL_SET.includes(name) ? state.configs : state.presets;
-    if (bucket[name]) mismatches.push(...(await recordedConfigMatches(connection, name, bucket[name], quoteOf(name), name === "stock-xstock" && stockIs2022, admin)));
+    if (bucket[name]) mismatches.push(...(await recordedConfigMatches(connection, name, bucket[name], quoteOf(name), name === "stock-xstock" && stockIs2022, admin, treasuryOwner)));
   }
   const protocolInfo = await connection.getAccountInfo(client.protocol);
   if (protocolInfo) {
@@ -158,8 +166,10 @@ async function main() {
     if (halted()) { note({ step: `config ${name}`, status: "SKIPPED", detail: "a send failed above; nothing else is sent (rerun to resume)" }); continue; }
     const config = Keypair.generate();
     const quote = quoteOf(name);
+    const authorities = configAuthorities(name, admin.toBase58(), treasuryOwner.toBase58());
+    note({ step: `authorities ${name}`, status: "PASS", detail: `fee claimer ${authorities.feeClaimer}; leftover receiver ${authorities.leftoverReceiver}` });
     let builder = dbcProgram.methods.createConfig(configParams(name)).accountsPartial({
-      config: config.publicKey, feeClaimer: admin, leftoverReceiver: admin, quoteMint: quote, payer: admin, systemProgram: SystemProgram.programId,
+      config: config.publicKey, feeClaimer: new PublicKey(authorities.feeClaimer), leftoverReceiver: new PublicKey(authorities.leftoverReceiver), quoteMint: quote, payer: admin, systemProgram: SystemProgram.programId,
     });
     if (name === "stock-xstock" && stockIs2022) builder = builder.remainingAccounts([{ pubkey: badge, isSigner: false, isWritable: false }]);
     const done = await run(connection, `config ${name} (${quote.equals(NATIVE_MINT) ? "WSOL" : quote.toBase58().slice(0, 8)})`, [await builder.instruction()], admin, adminKeypair ? [adminKeypair, config] : []);
@@ -181,7 +191,7 @@ async function main() {
   for (const name of CONFIG_NAMES) {
     const bucket = PROTOCOL_SET.includes(name) ? state.configs : state.presets;
     if (!bucket[name]) continue;
-    const bad = await recordedConfigMatches(connection, name, bucket[name], quoteOf(name), name === "stock-xstock" && stockIs2022, admin);
+    const bad = await recordedConfigMatches(connection, name, bucket[name], quoteOf(name), name === "stock-xstock" && stockIs2022, admin, treasuryOwner);
     note({ step: `readback ${name}`, status: bad.length ? "FAIL" : "PASS", detail: bad.length ? bad.join("; ").slice(0, 300) : "every parameter matches the file" });
   }
   if (!DRY && !protocolInfo) {
