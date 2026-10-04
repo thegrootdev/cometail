@@ -27,6 +27,8 @@ export default function AdminInitPage() {
   const [treasuryExists, setTreasuryExists] = useState<boolean | undefined>(undefined);
   const [simulation, setSimulation] = useState<string>("");
   const [rows, setRows] = useState<Row[]>([]);
+  const [readError, setReadError] = useState<string>("");
+  const [sentSignature, setSentSignature] = useState<string>("");
 
   const client = new VaultClientStep6(connection);
   const admin = ADMIN;
@@ -44,15 +46,30 @@ export default function AdminInitPage() {
     { what: "program", expected: VAULT_PROGRAM_ID.toBase58() },
   ] : [];
 
+  const LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
   const refresh = useCallback(async () => {
-    const info = await connection.getAccountInfo(client.protocol);
-    setProtocol(info ? client.decodeProtocol(info.data) : null);
-    const data = await connection.getAccountInfo(client.programData);
-    // ProgramData: 4 bytes kind, 8 bytes slot, 1 byte option, 32 bytes authority
-    setAuthority(data && data.data.length >= 45 && data.data[12] === 1 ? new PublicKey(data.data.subarray(13, 45)).toBase58() : null);
-    setTreasuryExists(treasury ? !!(await connection.getAccountInfo(treasury)) : false);
+    setReadError("");
+    try {
+      const [info, data, ata] = await Promise.all([
+        connection.getAccountInfo(client.protocol),
+        connection.getAccountInfo(client.programData),
+        treasury ? connection.getAccountInfo(treasury) : Promise.resolve(null),
+      ]);
+      if (info && !info.owner.equals(VAULT_PROGRAM_ID)) throw new Error("protocol address is owned by another program");
+      setProtocol(info ? client.decodeProtocol(info.data) : null);
+      // ProgramData: u32 kind (3 = ProgramData), u64 slot, Option<Pubkey> upgrade authority (1 byte tag + 32 bytes)
+      if (!data) setAuthority(null);
+      else if (!data.owner.equals(new PublicKey(LOADER)) || data.data.length < 45 || data.data.readUInt32LE(0) !== 3) throw new Error("program data account is not an upgradeable-loader ProgramData account");
+      else setAuthority(data.data[12] === 1 ? new PublicKey(data.data.subarray(13, 45)).toBase58() : null);
+      setTreasuryExists(!!ata);
+    } catch (e: any) {
+      setReadError(String(e?.message ?? e));
+      setProtocol(undefined); setAuthority(undefined); setTreasuryExists(undefined);
+    }
   }, [connection, treasury?.toBase58()]);
-  useEffect(() => { refresh().catch(() => undefined); }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
+  // any change of wallet or chain state invalidates an earlier simulation
+  useEffect(() => { setSimulation(""); }, [publicKey?.toBase58(), authority, treasuryExists, protocol === null]);
 
   useEffect(() => {
     if (!protocol || !admin || !KEEPER || !treasury) return;
@@ -79,7 +96,7 @@ export default function AdminInitPage() {
 
   const sign = async () => {
     const sig = await run(build, [], 200_000);
-    if (sig) await refresh();
+    if (sig) { setSentSignature(sig); await refresh(); }
   };
 
   const missing = !admin ? "NEXT_PUBLIC_ADMIN" : !KEEPER ? "NEXT_PUBLIC_KEEPER" : !treasury ? "treasury" : null;
@@ -98,6 +115,8 @@ export default function AdminInitPage() {
         {missing && <p className="mt-2 text-sm">Missing site variable: {missing}.</p>}
       </Card>
       <Card title="2. Preconditions (read from the chain)">
+        {readError && <p className="mb-2 text-sm">Could not read the chain: {readError} <button className="pill" onClick={() => refresh()}>Retry</button></p>}
+        {!readError && (protocol === undefined || authority === undefined) && <p className="mb-2 text-sm">Reading the chain. <button className="pill" onClick={() => refresh()}>Retry</button></p>}
         <ul className="text-sm space-y-1">
           <li>program upgrade authority: {authority === undefined ? "reading" : authority ?? "none"} {authority && admin && authority === admin.toBase58() ? "= admin wallet" : authority ? "(must be the admin wallet first: run the deploy script's handover)" : ""}</li>
           <li>treasury account {treasury?.toBase58()}: {treasuryExists === undefined ? "reading" : treasuryExists ? "exists" : "missing (the setup run creates it)"}</li>
@@ -120,6 +139,11 @@ export default function AdminInitPage() {
           {status.state === "sending" && <p className="mt-2 text-sm">Waiting for the wallet and the confirmation.</p>}
           {status.state === "error" && <p className="mt-2 text-sm">Failed: {status.message}</p>}
           {status.state === "done" && status.signature && <p className="mt-2 text-sm">Sent: <a href={EXPLORER("tx", status.signature)} target="_blank" rel="noreferrer">{status.signature}</a></p>}
+        </Card>
+      )}
+      {sentSignature && (
+        <Card title="Sent">
+          <p className="text-sm">init_protocol signature: <a href={EXPLORER("tx", sentSignature)} target="_blank" rel="noreferrer">{sentSignature}</a>{protocol === undefined ? " (readback pending or failed: use Retry above)" : ""}</p>
         </Card>
       )}
       {protocol && (
