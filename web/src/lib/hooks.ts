@@ -1,5 +1,5 @@
 "use client";
-import { friendlyError } from "./errors";
+import { DesignedError, friendlyError } from "./errors";
 import { failures } from "@/content/cometail";
 import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -64,12 +64,23 @@ export type TxStatus = {
   message?: string;
 };
 
+/** The largest transaction the network accepts, in bytes (packet size). */
+const MAX_TRANSACTION_BYTES = 1232;
+
 /** Send a transaction with the connected wallet and wait for it. A transaction that lands with
  *  an error is a failure (the signature is kept for the explorer link); the confirmation waits on
- *  the blockhash the transaction was signed with, so expiry is reported, not hidden. */
+ *  the blockhash the transaction was signed with, so expiry is reported, not hidden.
+ *
+ *  Wallet order, per Phantom's guidance on transaction warnings: the wallet is asked to sign
+ *  alone and first. When the transaction needs other signers (a new mint, a vault placeholder),
+ *  they add their signatures after the wallet, and the site sends the fully signed transaction
+ *  through its own RPC. A transaction that is sent to the wallet already carrying other
+ *  signatures is what triggers the "multi-signer" warning. Before the wallet sees anything the
+ *  transaction is size-checked and simulated without signatures (sigVerify false), so a
+ *  transaction that would fail never reaches the wallet. */
 export function useTx() {
   const { connection } = useConnection();
-  const { sendTransaction, publicKey } = useWallet();
+  const { sendTransaction, signTransaction, publicKey } = useWallet();
   const [status, setStatus] = useState<TxStatus>({ state: "idle" });
   const run = useCallback(
     async (
@@ -93,10 +104,25 @@ export function useTx() {
         const latest = await connection.getLatestBlockhash("confirmed");
         tx.recentBlockhash = latest.blockhash;
         tx.lastValidBlockHeight = latest.lastValidBlockHeight;
-        signature = await sendTransaction(tx, connection, {
-          signers,
-          skipPreflight: false,
-        });
+        const size = tx.serialize({ requireAllSignatures: false, verifySignatures: false }).length;
+        if (size > MAX_TRANSACTION_BYTES) throw new DesignedError(failures.txTooLarge);
+        // dry run without any signature (web3.js sets sigVerify only when signers are passed)
+        const dry = await connection.simulateTransaction(tx);
+        if (dry.value.err) {
+          const detail = (dry.value.logs ?? []).filter((l) => /Error|failed/.test(l)).slice(-2).join(" | ");
+          throw new DesignedError(detail ? `${failures.simulationFailed} ${detail}` : failures.simulationFailed);
+        }
+        if (signers.length > 0) {
+          if (!signTransaction) throw new DesignedError(failures.walletCannotSign);
+          const signed = await signTransaction(tx);
+          signed.partialSign(...signers);
+          signature = await connection.sendRawTransaction(signed.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: "confirmed",
+          });
+        } else {
+          signature = await sendTransaction(tx, connection, { skipPreflight: false });
+        }
         const result = await connection.confirmTransaction(
           {
             signature,
@@ -120,7 +146,7 @@ export function useTx() {
         return null;
       }
     },
-    [connection, sendTransaction, publicKey],
+    [connection, sendTransaction, signTransaction, publicKey],
   );
   return { run, status, connected: !!publicKey, publicKey };
 }

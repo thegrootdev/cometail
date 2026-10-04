@@ -41,6 +41,9 @@ export const failures = {
   unwindGraduated: "The curve reached its threshold, so this vault graduates instead of unwinding. Nothing was sent.",
   registerPositionFirst: "This stream's pool has migrated, and its creator position must be registered on the stream before it can leave. Use \"Register the migrated position\" first, then withdraw. Nothing was sent.",
   txFailed: "The transaction didn’t go through. Nothing was charged beyond network fees. Try again, and tell us on X if it keeps failing.",
+  txTooLarge: "This action does not fit in one transaction, so nothing was sent to your wallet. Tell us on X.",
+  simulationFailed: "A dry run of this action failed, so nothing was sent to your wallet.",
+  walletCannotSign: "This wallet cannot sign without sending. Use Phantom or another wallet that supports signing.",
   actionFailed: "That didn’t work. Try again in a moment.",
 } as const;
 
