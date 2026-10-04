@@ -134,6 +134,22 @@ Check: `/api/health` ok; `/api/tokens?limit=1` and `/api/feed?limit=1` answer
 `cluster: "mainnet-beta"` with empty lists at first; the keeper log shows one pass with no
 error; `solana genesis-hash -u <keyed mainnet rpc>` is `5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`.
 
+## 6b. Accepted risks on the box until the post-deadline lockdown (owner decision 2026-10-04)
+The box audit (team notes, spikes 65 and 69/70) ranked the host's weaknesses. Before the deadline
+only the low-risk part is applied: an sshd drop-in (MaxAuthTries 3, LoginGraceTime 20, X11 and agent
+forwarding off, password logins off, root stays key-only), a fail2ban sshd jail, unattended security
+updates. The owner accepts, knowingly and for now:
+- The worker runs as the `dev` user from dev's checkout. The keeper keypair file and the keyed RPC URL
+  in `/etc/cometail/worker.env` are readable by `dev`, so by both agent sessions running as dev.
+  Mitigation: the mainnet keeper holds a small operating balance only (top it up as it spends; never
+  park funds there), the admin key never touches the box, and `update_protocol` lets ADMIN replace the
+  keeper if the key is ever suspected.
+- Root logs in over SSH with a key; no separate admin account yet.
+- Pending kernel reboot and non-security package upgrades wait for a maintenance window.
+Deferred, in this order, after the deadline: a dedicated service user with the keys and the database
+under it; a root-owned release tree so the service never executes dev-writable code; an admin user
+with sudo, then root login off. The reviewed scripts for both stages sit in the team notes.
+
 ## 7. Site (Vercel, owner)
 Production variables, every one:
 ```
