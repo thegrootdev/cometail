@@ -228,8 +228,12 @@ export default function LaunchPage() {
           <Card title={c.review}>
             <p className="caption">{plainLaunch.presets.selected}: <strong>{plainLaunch.presets[presetId].name}</strong></p>
             <p className="creation-fee">{plainLaunch.creationFee}</p>
-            <p className="disclosure-copy">{plainLaunch.intro}</p>
-            <p className="disclosure-copy">{plainLaunch.lock}</p>
+            <p className="fees-line">{plainLaunch.feesLine}</p>
+            <details className="fees-details">
+              <summary>{plainLaunch.feesToggle}</summary>
+              <p className="disclosure-copy">{plainLaunch.intro}</p>
+              <p className="disclosure-copy">{plainLaunch.lock}</p>
+            </details>
           </Card>
         </aside>
       </div>

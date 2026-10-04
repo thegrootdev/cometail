@@ -15,7 +15,11 @@ export default function PresetsPage() {
   return (
     <Shell>
       <PageHeader art="launch" eyebrow={c.kicker} title={c.title} body={c.body} />
-      <p className="form-notice presets-common">{c.common}</p>
+      <p className="form-notice presets-common">{c.commonLine}</p>
+      <details className="fees-details presets-fees">
+        <summary>{c.feesToggle}</summary>
+        <p className="disclosure-copy">{c.common}</p>
+      </details>
       {CLUSTER !== "mainnet-beta" && <p className="caption presets-devnet">{c.devnetNote}</p>}
       <div className="presets-grid">
         {presets.map((p) => (

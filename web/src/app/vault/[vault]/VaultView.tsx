@@ -97,11 +97,11 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
         {v?.stMint && <TokenHeading token={data?.stToken} mint={String(v.stMint)} large />}
         {v ? (
           <Link href={`/token/${String(v.stMint)}`} className="button button-primary">
-            Trade the stream token ↗
+            Trade the fee token ↗
           </Link>
         ) : (
           <button className="button button-primary" type="button" disabled>
-            Trade the stream token ↗
+            Trade the fee token ↗
           </button>
         )}
       </PageHeader>
@@ -138,13 +138,13 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
             <Card title={vaultPage.income}>
               <div className="grid grid-cols-2 gap-4">
                 <Stat
-                  label="harvested, gross"
+                  label="collected, gross"
                   value={<Money lamports={str(acc.harvestedGross)} />}
                   tone="dust"
                 />
                 <Stat label={STATUS(v) === "unwound" ? "allocated to buybacks before the unwind" : "kept for buybacks"} value={<Money lamports={str(acc.income)} />} />
                 <Stat
-                  label="to the seller (harvest shares)"
+                  label="to the seller (share of collected fees)"
                   value={<Money lamports={str(acc.toDepositor)} />}
                   tone="plain"
                 />
@@ -269,7 +269,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                         {s.live.lockedSharePct}% {vaultPage.lockedShare} ·{" "}
                       </>
                     )}
-                    harvested <Money lamports={str(s.harvested)} />
+                    collected <Money lamports={str(s.harvested)} />
                   </span>
                 </li>
               ))}

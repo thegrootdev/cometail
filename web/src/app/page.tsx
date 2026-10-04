@@ -13,19 +13,19 @@ export default function Home() {
             {copy.eyebrow}
           </div>
           <h1>
-            {hero.title.split(". ")[0]}.
+            {hero.titleLine1}
             <br />
-            <em>{hero.title.split(". ")[1]}</em>
+            <em>{hero.titleLine2}</em>
           </h1>
-          <p>{copy.homeBody}</p>
+          <p>{hero.body}</p>
           <div className="hero-actions">
-            <Link className="button button-primary" href="/launch">
-              {hero.launch}
-              <span>↗</span>
-            </Link>
-            <Link className="button button-secondary" href="/sell">
+            <Link className="button button-primary" href="/sell">
               {hero.sell}
               <span>→</span>
+            </Link>
+            <Link className="button button-secondary" href="/launch">
+              {hero.launch}
+              <span>↗</span>
             </Link>
           </div>
           <div className="hero-footnote">{plainLaunch.creationFee}</div>

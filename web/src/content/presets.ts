@@ -19,7 +19,9 @@ export const presets: PresetInfo[] = [
 export const presetsPage = {
   kicker: "Pick a curve",
   title: "Launch presets",
-  body: "Every preset is a Meteora bonding-curve config owned by the protocol. Pick one on the launch page; the curve, the fees and the graduation are fixed by the config, and the pool is yours from the first trade.",
+  body: "Every preset is a fixed Meteora price-curve setting owned by the protocol. Pick one on the launch page; the curve, the fees and the completion point cannot change, and the pool is yours from the first trade.",
+  commonLine: "Same for all: a 1% trade fee with 60% to you while the coin is on its curve, 0.01 SOL to launch, a fixed supply of 1,000,000,000, and liquidity locked for good when the curve completes.",
+  feesToggle: "How fees work",
   common: "Common to all: fees in the quote token, a 1% curve fee with 75% of the fee after Meteora’s cut going to the creator, graduation into a compounding pool, 80% of the liquidity permanently locked in your position, immutable metadata, a fixed supply of 1,000,000,000, a 0.01 SOL creation fee.",
   devnetNote: "On devnet the Standard curve the site launches with is 1/80 of these sizes, so a test curve fills with half a SOL.",
   raise: "Raise to graduate", start: "Starting market cap", graduation: "Graduation market cap", quoteIs: "Quote", config: "Config",

@@ -26,7 +26,7 @@ import { api } from "@/lib/api";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
 import { CopyAddress } from "@/components/CopyAddress";
-import { identity } from "@/content/cometail";
+import { identity, sellExample } from "@/content/cometail";
 import { wizard, splits, product, experience as c } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
@@ -346,7 +346,7 @@ function Wizard() {
         },
       });
       await step(
-        "launch the stream token",
+        "launch the fee token",
         async () => new Transaction().add(L.ix),
         [stMint],
         CU.launch,
@@ -366,18 +366,32 @@ function Wizard() {
     <>
       {!publicKey && (
         <div className="launch-layout">
-          <DataState kind="wallet" title={c.connectTitle} body={wizard.connect}>
-            <ConnectWallet />
-          </DataState>
-          <Card title={wizard.moneyTitle}>
-            <ul className="disclosure-list">
-              <li>{splits.curve}</li>
-              <li>{splits.pool}</li>
-              <li>{splits.external}</li>
-              <li>{splits.cashout}</li>
-              <li>{splits.orderFees}</li>
-            </ul>
-          </Card>
+          <div className="space-y-6">
+            <Card title={sellExample.title} icon="coin">
+              <ol className="example-list">
+                {sellExample.lines.map((line) => (<li key={line}>{line}</li>))}
+              </ol>
+              <p className="caption">{sellExample.note}</p>
+            </Card>
+            <DataState kind="wallet" title={c.connectTitle} body={wizard.connect}>
+              <ConnectWallet />
+            </DataState>
+          </div>
+          <aside className="preview-column">
+            <Card title={wizard.moneyTitle}>
+              <p className="fees-line">{splits.summary}</p>
+              <details className="fees-details">
+                <summary>{wizard.feesToggle}</summary>
+                <ul className="disclosure-list">
+                  <li>{splits.curve}</li>
+                  <li>{splits.pool}</li>
+                  <li>{splits.external}</li>
+                  <li>{splits.cashout}</li>
+                  <li>{splits.orderFees}</li>
+                </ul>
+              </details>
+            </Card>
+          </aside>
         </div>
       )}
       {publicKey && (
@@ -575,13 +589,17 @@ function Wizard() {
               links={links}
             />
             <Card title={wizard.moneyTitle}>
-              <ul className="space-y-3 text-sm text-starlight/80">
-                <li>{splits.curve}</li>
-                <li>{splits.pool}</li>
-                <li>{splits.external}</li>
-                <li>{splits.cashout}</li>
-                <li>{splits.orderFees}</li>
-              </ul>
+              <p className="fees-line">{splits.summary}</p>
+              <details className="fees-details">
+                <summary>{wizard.feesToggle}</summary>
+                <ul className="disclosure-list">
+                  <li>{splits.curve}</li>
+                  <li>{splits.pool}</li>
+                  <li>{splits.external}</li>
+                  <li>{splits.cashout}</li>
+                  <li>{splits.orderFees}</li>
+                </ul>
+              </details>
             </Card>
           </aside>
         </div>

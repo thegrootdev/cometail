@@ -1835,3 +1835,24 @@ small, .caption {
   font-size: 14px;
   text-decoration-thickness: 2px;
 }
+
+/* First-time-user review (2026-10-04): the homepage promise is a sentence, not a two-word headline,
+   so it sizes to fit with the two buttons inside the first phone screen; fee explanations are one
+   line with the full breakdown behind a native disclosure. */
+.hero h1 { font-size: clamp(34px, 3.6vw, 56px) !important; line-height: 1.08; letter-spacing: -0.01em; }
+@media (max-width: 760px) {
+  .hero h1 { font-size: 30px !important; margin: 14px 0 12px; }
+  .hero-copy > p { font-size: 14px; }
+  .hero-actions { margin: 16px 0 12px; }
+}
+@media (max-width: 380px) { .hero h1 { font-size: 27px !important; } }
+.fees-line { font-size: 14px; line-height: 1.5; margin: 0 0 10px; }
+.fees-details { margin-top: 4px; }
+.fees-details summary { cursor: pointer; font-weight: 700; font-size: 13px; padding: 8px 0; list-style: none; display: inline-flex; align-items: center; gap: 8px; }
+.fees-details summary::-webkit-details-marker { display: none; }
+.fees-details summary::before { content: "+"; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 999px; border: 1.5px solid currentColor; font-size: 14px; line-height: 1; }
+.fees-details[open] summary::before { content: "–"; }
+.fees-details > *:not(summary) { margin-top: 8px; }
+.example-list { margin: 0; padding-left: 20px; display: grid; gap: 10px; font-size: 14px; line-height: 1.5; }
+.example-list li::marker { font-weight: 700; }
+.presets-fees { margin: 0 0 18px; }
