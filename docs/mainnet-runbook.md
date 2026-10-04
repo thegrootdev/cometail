@@ -146,9 +146,11 @@ updates. The owner accepts, knowingly and for now:
   keeper if the key is ever suspected.
 - Root logs in over SSH with a key; no separate admin account yet.
 - Pending kernel reboot and non-security package upgrades wait for a maintenance window.
-Deferred, in this order, after the deadline: a dedicated service user with the keys and the database
-under it; a root-owned release tree so the service never executes dev-writable code; an admin user
-with sudo, then root login off. The reviewed scripts for both stages sit in the team notes.
+Deferred until after the deadline: a dedicated service user holding the keys and the database
+together with a root-owned release tree, because moving the secrets alone isolates nothing while the
+service still executes dev-writable code (the two are one change); and an admin user with sudo, then
+root login off. The minimal script above was reviewed; the larger deferred script still has open
+review findings and is not approved.
 
 ## 7. Site (Vercel, owner)
 Production variables, every one:
