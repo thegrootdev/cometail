@@ -107,8 +107,18 @@ export function useTx() {
         tx.lastValidBlockHeight = latest.lastValidBlockHeight;
         // wire size = compact signature count (1 byte here) + 64 bytes per signer + the message;
         // measured on the message because serialize() itself refuses an oversized transaction
-        const signerCount = tx.compileMessage().header.numRequiredSignatures;
-        const size = 1 + 64 * signerCount + tx.serializeMessage().length;
+        let size: number;
+        try {
+          const signerCount = tx.compileMessage().header.numRequiredSignatures;
+          size = 1 + 64 * signerCount + tx.serializeMessage().length;
+        } catch (e) {
+          // the message serializer writes into a packet-sized buffer and overruns it on a message
+          // far above the limit ("encoding overruns" from the shim, "offset is out of range" from
+          // node's Buffer); that overrun is the same answer as the size check, nothing else is
+          const err = e as { name?: string; message?: string } | null;
+          if (err?.name === "RangeError" && /overrun|out of range/i.test(err.message ?? "")) throw new DesignedError(failures.txTooLarge);
+          throw e;
+        }
         if (size > MAX_TRANSACTION_BYTES) throw new DesignedError(failures.txTooLarge);
         // dry run without any signature (web3.js sets sigVerify only when signers are passed); a
         // failure observed now stops before the wallet, mapped to the same plain copy as a live failure
