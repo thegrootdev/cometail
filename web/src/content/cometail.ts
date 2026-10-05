@@ -498,6 +498,8 @@ export const identity = {
   creatorFees: "Creator fees", positionFees: "Locked-liquidity fees",
   sellable: "Fees can be sold", inVault: "In a vault · not for sale",
   programHeld: "Program-held · not available to sell", unknownOwner: "Owner unconfirmed · selling unavailable",
+  treasuryHeld: "Protocol treasury · locked liquidity", vaultHeld: "In a vault · locked liquidity",
+  lockedShare: (pct: string) => `Locked liquidity · ${pct}% of the pool`, sourcesOf: (n: number) => `${n} fee sources`,
   migrating: "Moving to its pool · not ready to sell", notSellable: "These fees cannot be sold here",
   unchecked: "Selling eligibility not checked", heldHere: "In this vault · not available to sell",
   search: "Search by name, ticker or address", linksLabel: "Token links", newTab: "(opens a new tab)",

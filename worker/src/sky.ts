@@ -5,7 +5,7 @@
 // DAMM v2 position is a row of its own: its NFT holder, custody, pending quote fees and whether
 // the size rule would admit it (PLAN 8.1: creators and position-NFT owners ranked by claimable
 // backlog). The scan is the lead list.
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, unpackMint, getExtensionTypes, ExtensionType } from "@solana/spl-token";
 import { AccountLayout } from "@solana/spl-token";
 import { derivePositionNftAccount, getUnClaimLpFee } from "@meteora-ag/cp-amm-sdk";
@@ -70,6 +70,14 @@ async function positionsOf(chain: Chain, pool: PublicKey): Promise<{ position: P
 
 /** One scan. `configs` empty means every pool the program owns. With a store, realized income
  *  comes from the indexed harvest events of the vaults that hold the streams. */
+/** Who holds an account: a system-owned account is a wallet; an address with no account yet is a
+ *  wallet too when it is on the curve (a keypair address, such as a wallet that only ever held token
+ *  accounts), and unknown when it is off the curve; anything else is a program's. */
+export function custodyOf(holder: PublicKey, info: { owner: PublicKey } | null | undefined): SkyRow["custody"] {
+  if (!info) return PublicKey.isOnCurve(holder.toBytes()) ? "wallet" : "unknown";
+  return info.owner.equals(SystemProgram.programId) ? "wallet" : "program";
+}
+
 export async function scanSky(chain: Chain, configs: PublicKey[], store: Store | null = null): Promise<SkyRow[]> {
   const conn = chain.connection;
   const disc = chain.dbc.coder.accounts.memcmp("virtualPool") as { offset: number; bytes: string };
@@ -91,6 +99,9 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
   const vaultOfPool = new Map<string, string>();
   // a vault's stream record per registered position: realized income and custody for position rows
   const streamOfPosition = new Map<string, { stream: string; vault: string }>();
+  // the vault behind a creator position that a rights stream registered after its curve migrated
+  // (streams.rs register_stream_position): the row links to the vault, the income stays on the curve row
+  const vaultOfRegisteredPosition = new Map<string, string>();
   // one display owner per stream: a rights stream keeps the DBC pool as its key even after it
   // registers its migrated position (streams.rs register_stream_position; deposit.rs bundled
   // migrated deposits), so it stays on the curve row; only a deposited DAMM v2 position
@@ -99,6 +110,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
     vaultOfPool.set(String(s.data.pool), s.vault);
     const kind = s.data.kind && typeof s.data.kind === "object" ? Object.keys(s.data.kind)[0] : String(s.data.kind ?? "");
     if (s.data.position && kind === "dammV2Position") streamOfPosition.set(String(s.data.position), { stream: s.stream, vault: s.vault });
+    else if (s.data.position && String(s.data.position) !== PublicKey.default.toBase58()) vaultOfRegisteredPosition.set(String(s.data.position), s.vault);
   }
   const rows: SkyRow[] = [];
   const positionWork: { curve: { pubkey: PublicKey; state: any }; cfg: any; quoteMint: PublicKey; dammPool: string; configReasons: string[] }[] = [];
@@ -109,7 +121,7 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
     if (!cfg) throw new Error(`Sky scan incomplete: config ${s.config.toBase58()} missing`);
     const quoteMint: PublicKey = cfg ? cfg.quoteMint : PublicKey.default;
     const creatorInfo = creatorInfos.get(s.creator.toBase58());
-    const custody: SkyRow["custody"] = !creatorInfo ? "unknown" : creatorInfo.owner.equals(new PublicKey("11111111111111111111111111111111")) ? "wallet" : "program";
+    const custody = custodyOf(s.creator, creatorInfo);
     const progress = Number(s.migrationProgress);
     if (cfg) {
       if (!quoteMint.equals(NATIVE_MINT)) reasons.push("quote is not WSOL");
@@ -191,7 +203,9 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
       for (const x of found) {
         const holder = holders.get(x.position.toBase58());
         const holderInfo = holder ? holderInfos.get(holder.toBase58()) : undefined;
-        const custody: SkyRow["custody"] = !holder || !holderInfo ? "unknown" : holderInfo.owner.equals(new PublicKey("11111111111111111111111111111111")) ? "wallet" : "program";
+        const custody: SkyRow["custody"] = holder ? custodyOf(holder, holderInfo) : "unknown";
+        const feeClaimer: PublicKey | undefined = w.cfg.feeClaimer;
+        const ownerRole: SkyRow["ownerRole"] = holder && feeClaimer && holder.equals(feeClaimer) ? "treasury" : holder && holder.toBase58() === (streamOfPosition.get(x.position.toBase58())?.vault ?? vaultOfRegisteredPosition.get(x.position.toBase58())) ? "vault" : undefined;
         const a = BigInt(x.state.permanentLockedLiquidity.toString());
         const reasons = [...w.configReasons];
         if (!sidesOk) reasons.push("pool sides are not base/quote");
@@ -211,9 +225,9 @@ export async function scanSky(chain: Chain, configs: PublicKey[], store: Store |
           creator: holder ? holder.toBase58() : "", owner: holder ? holder.toBase58() : "", custody, progress: 3, eligible: reasons.length === 0, reasons,
           creatorPct: Number(c), partnerPct: Number(pp), creatorFeePct: Number(w.cfg.creatorTradingFeePercentage),
           claimableLamports: pending.toString(), realizedEstimateLamports: claimedQuote.toString(),
-          realized7dLamports: rec ? (s7.get(rec.stream) ?? 0n).toString() : null, realized30dLamports: rec ? (s30.get(rec.stream) ?? 0n).toString() : null, vault: rec ? rec.vault : null,
+          realized7dLamports: rec ? (s7.get(rec.stream) ?? 0n).toString() : null, realized30dLamports: rec ? (s30.get(rec.stream) ?? 0n).toString() : null, vault: rec ? rec.vault : vaultOfRegisteredPosition.get(x.position.toBase58()) ?? null,
           tradingFeeLamports: "0", dammPool: w.dammPool, updatedAt: now,
-          kind: "position", position: x.position.toBase58(), lockedSharePct: total > 0n ? Number((a * 10_000n) / total) / 100 : 0,
+          kind: "position", position: x.position.toBase58(), lockedSharePct: total > 0n ? Number((a * 10_000n) / total) / 100 : 0, ownerRole,
         });
         positions++;
       }

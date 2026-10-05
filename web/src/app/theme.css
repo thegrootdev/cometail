@@ -1890,3 +1890,9 @@ small, .caption {
   font-size: 12px;
   line-height: 1.6;
 }
+
+/* Explore (2026-10-05): one entry per coin; its fee sources (creator fees, each locked-liquidity
+   position) are listed in the eligibility cell, each with its own status. */
+.source-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.source-list li { display: flex; flex-direction: column; gap: 2px; }
+.source-list .source-kind { margin: 0; }

@@ -83,7 +83,13 @@ Fee-token buyers come from the trade index: every swap on a vault's pool (cp-amm
 with its `swap`/`swap2` instruction) is stored with the swap's own signer, or with the fee payer
 marked as such when the pairing is not possible (never counted as an independent buyer). Each pool
 catches up backward in bounded pages with a persisted frontier, so no interval is skipped, and a
-pool still catching up marks the metrics incomplete.
+pool still catching up marks the metrics incomplete. Transactions are read through web3.js, and
+through the raw RPC when the node reports a transaction version web3.js does not accept yet
+(mainnet carries version 1 since 2026; the raw JSON is shaped into what the decoders read).
+A locked-liquidity row says who holds the position when that matters to the protocol
+(`ownerRole`: the launch treasury, the config's fee claimer, or a vault), and a creator position a
+rights stream registered after migration links to that vault; a holder with no account yet counts
+as a wallet when its address is on the curve.
 
 ## Devnet scripts
 

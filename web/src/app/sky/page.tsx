@@ -17,6 +17,7 @@ import {
 } from "@/components/Experience";
 import { experience as copy, sky, wizard } from "@/content/cometail";
 import { useLoad } from "@/lib/hooks";
+import type { SkyStream } from "@/lib/api";
 export default function SkyPage() {
   const { data, loading, error, reload } = useLoad(loadSky, [], 30000);
   const [query, setQuery] = useState(""),
@@ -29,6 +30,17 @@ export default function SkyPage() {
         x.toLowerCase().includes(query.trim().toLowerCase()),
       ),
   );
+  // one entry per coin: its curve row leads, its locked-liquidity positions follow as fee sources
+  const coins = useMemo(() => {
+    const byMint = new Map<string, SkyStream[]>();
+    for (const s of shown) byMint.set(s.baseMint, [...(byMint.get(s.baseMint) ?? []), s]);
+    return [...byMint.values()].map((rows) => {
+      const sorted = rows.slice().sort((a, b) => Number(a.kind === "position") - Number(b.kind === "position") || (b.lockedSharePct ?? 0) - (a.lockedSharePct ?? 0));
+      const lead = sorted[0];
+      const sum = (pick: (s: SkyStream) => string | null) => { let any = false, t = 0n; for (const s of sorted) { const v = pick(s); if (v === null) continue; any = true; t += BigInt(v); } return any ? t.toString() : null; };
+      return { lead, sources: sorted, claimable: sum((s) => s.claimableLamports) ?? "0", realized30d: sum((s) => s.realized30dLamports) };
+    });
+  }, [shown]);
   return (
     <Shell wide>
       <PageHeader
@@ -39,7 +51,7 @@ export default function SkyPage() {
         <Badge tone="ion">SOLANA / METEORA</Badge>
       </PageHeader>
       <StarAtlas
-        streams={shown}
+        streams={coins.map((c) => c.lead)}
         loading={loading}
         error={!!error}
         onRetry={reload}
@@ -48,7 +60,7 @@ export default function SkyPage() {
       <div className="catalogue-header">
         <h2>{copy.list}</h2>
         <span className="micro">
-          {shown.length} / {streams.length}
+          {coins.length} / {new Set(streams.map((s) => s.baseMint)).size}
         </span>
       </div>
       <div className="atlas-search">
@@ -68,7 +80,7 @@ export default function SkyPage() {
           {copy.eligible}
         </label>
       </div>
-      {shown.length > 0 ? (
+      {coins.length > 0 ? (
         <div className="table-scroll">
           <table className="stream-table">
             <thead>
@@ -82,13 +94,13 @@ export default function SkyPage() {
               </tr>
             </thead>
             <tbody>
-              {shown.map((s) => (
-                <tr key={s.pool}>
+              {coins.map(({ lead: s, sources, claimable, realized30d }) => (
+                <tr key={s.baseMint}>
                   <td data-label={copy.source}>
                     <Link className="token-cell" href={`/token/${s.baseMint}`}>
                       <TokenHeading token={s.token} mint={s.baseMint} />
                     </Link>
-                    <p className="source-kind">{s.kind === "position" ? identity.positionFees : identity.creatorFees}</p>
+                    <p className="source-kind">{sources.length > 1 ? identity.sourcesOf(sources.length) : s.kind === "position" ? identity.positionFees : identity.creatorFees}</p>
                     <CopyAddress address={s.baseMint} />
                     <SocialLinks links={s.token?.links} tokenName={s.token?.name} />
                   </td>
@@ -97,14 +109,21 @@ export default function SkyPage() {
                       {wizard.stages[s.progress] ?? s.progress}
                     </Badge>
                   </td>
-                  <td className="money" data-label={copy.accrued}><Money quote={quoteAsset(s.quoteMint)} lamports={s.claimableLamports} /></td>
+                  <td className="money" data-label={copy.accrued}><Money quote={quoteAsset(s.quoteMint)} lamports={claimable} /></td>
                   <td data-label={copy.harvested}>
-                    {s.realized30dLamports === null
+                    {realized30d === null
                       ? "—"
-                      : <Money quote={quoteAsset(s.quoteMint)} lamports={s.realized30dLamports} />}
+                      : <Money quote={quoteAsset(s.quoteMint)} lamports={realized30d} />}
                   </td>
                   <td data-label={copy.eligibility}>
-                    <SourceStatus stream={s} />
+                    <ul className="source-list">
+                      {sources.map((row) => (
+                        <li key={row.pool}>
+                          <span className="source-kind">{row.kind === "position" ? identity.lockedShare(String(row.lockedSharePct ?? 0)) : identity.creatorFees}</span>
+                          <SourceStatus stream={row} />
+                        </li>
+                      ))}
+                    </ul>
                   </td>
                   <td>
                     <Link

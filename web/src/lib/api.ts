@@ -29,6 +29,7 @@ export interface SkyStream {
   position?: string | null;
   owner?: string;
   lockedSharePct?: number;
+  ownerRole?: "treasury" | "vault";
 }
 export interface VaultRow {
   stToken?: TokenIdentity | null;

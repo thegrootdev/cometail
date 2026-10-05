@@ -22,6 +22,62 @@ async function retry<T>(what: string, fn: () => Promise<T>, attempts = 8): Promi
   throw new Error(`${what}: ${String((last as Error)?.message ?? last)}`);
 }
 
+/** What the trade and event decoders read from a transaction. web3.js's getTransaction result
+ *  satisfies it, and so does the shape readRawTx builds for a transaction version this web3.js does
+ *  not accept yet. */
+export type IndexedTx = {
+  slot: number;
+  blockTime?: number | null;
+  version?: "legacy" | number;
+  meta: {
+    err: unknown;
+    logMessages?: string[] | null;
+    innerInstructions?: { index: number; instructions: { programIdIndex: number; accounts: number[]; data: string }[] }[] | null;
+    loadedAddresses?: { writable: PublicKey[]; readonly: PublicKey[] };
+  } | null;
+  transaction: {
+    message: {
+      getAccountKeys(args?: { accountKeysFromLookups?: { writable: PublicKey[]; readonly: PublicKey[] } }): { get(index: number): PublicKey | undefined; length: number };
+      compiledInstructions: { programIdIndex: number; accountKeyIndexes: number[]; data: Uint8Array }[];
+    };
+  };
+};
+
+/** One transaction at confirmed commitment: through web3.js, and through the raw RPC when the node
+ *  reports a transaction version web3.js does not know (its response validator accepts legacy and 0
+ *  only; mainnet carries version 1 since 2026). Null means the node does not have it yet. */
+export async function readTx(conn: Connection, signature: string): Promise<IndexedTx | null> {
+  try {
+    return await conn.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+  } catch (e) {
+    const m = /[Tt]ransaction version \((\d+)\) is not supported/.exec(String((e as Error)?.message ?? e));
+    const version = m ? Number(m[1]) : NaN;
+    if (!(version > 0)) throw e;
+    return readRawTx(conn, signature, version);
+  }
+}
+
+/** The raw getTransaction JSON (encoding json) shaped into IndexedTx: static account keys followed by
+ *  the writable then readonly loaded addresses, as web3.js orders them; instruction data decoded
+ *  from base58. */
+export async function readRawTx(conn: Connection, signature: string, maxVersion: number): Promise<IndexedTx | null> {
+  const res = await fetch(conn.rpcEndpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTransaction", params: [signature, { commitment: "confirmed", encoding: "json", maxSupportedTransactionVersion: maxVersion }] }) });
+  if (!res.ok) throw new Error(`failed to get transaction: HTTP ${res.status}`);
+  const body: any = await res.json();
+  if (body.error) throw new Error(`failed to get transaction: ${body.error.message ?? JSON.stringify(body.error)}`);
+  const r = body.result;
+  if (!r) return null;
+  const toKeys = (xs: unknown) => (Array.isArray(xs) ? xs.map((k) => new PublicKey(String(k))) : []);
+  const loaded = { writable: toKeys(r.meta?.loadedAddresses?.writable), readonly: toKeys(r.meta?.loadedAddresses?.readonly) };
+  const all = [...toKeys(r.transaction?.message?.accountKeys), ...loaded.writable, ...loaded.readonly];
+  const keys = { get: (i: number) => all[i], length: all.length };
+  return {
+    slot: Number(r.slot), blockTime: r.blockTime ?? null, version: r.version,
+    meta: r.meta ? { ...r.meta, loadedAddresses: loaded } : null,
+    transaction: { message: { getAccountKeys: () => keys, compiledInstructions: (r.transaction?.message?.instructions ?? []).map((ix: any) => ({ programIdIndex: Number(ix.programIdIndex), accountKeyIndexes: (ix.accounts ?? []).map(Number), data: Uint8Array.from(utils.bytes.bs58.decode(String(ix.data ?? ""))) })) } },
+  };
+}
+
 /** Anchor's event-instruction tag (EVENT_IX_TAG = 0x1d9acb512ea545e4) serialized little-endian: the first eight bytes of the self-CPI that carries an event. */
 const EVENT_IX_DISCRIMINATOR = Buffer.from("e445a52e51cb9a1d", "hex");
 
@@ -85,10 +141,10 @@ export class Indexer {
     const conn: Connection = this.chain.connection;
     const SIGNATURES_PER_PASS = 40, FETCH_BATCH = 4;
     const fetchTx = async (signature: string) => {
-      let tx = null as Awaited<ReturnType<Connection["getTransaction"]>>;
+      let tx: IndexedTx | null = null;
       for (let i = 0; i < 5 && !tx; i++) {
         if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
-        tx = await retry(`transaction ${signature}`, () => conn.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
+        tx = await retry(`transaction ${signature}`, () => readTx(conn, signature));
       }
       return tx;
     };
@@ -159,10 +215,10 @@ export class Indexer {
     sigs.reverse();
     for (const s of sigs) {
       // a null read is the RPC not having the transaction yet (lag, throttling): never skip it
-      let tx = null as Awaited<ReturnType<Connection["getTransaction"]>>;
+      let tx: IndexedTx | null = null;
       for (let i = 0; i < 5 && !tx; i++) {
         if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
-        tx = await retry(`transaction ${s.signature}`, () => conn.getTransaction(s.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
+        tx = await retry(`transaction ${s.signature}`, () => readTx(conn, s.signature));
       }
       if (!tx) { log("transaction not available yet; the pass stops here and resumes next time", { signature: s.signature }); return added; }
       if (tx.meta?.err) { await this.store.setCursor(s.signature); continue; } // failed transactions carry no events
@@ -293,7 +349,7 @@ export function binPriceSolPerSt(binId: number, binStep: number, stIsX: boolean,
  *  stable across pools. DBC: swap / swap2 / swap2_with_transfer_hook with the pool at account 2 and
  *  the signer at 9, events EvtSwap (actual input) and EvtSwap2 (included-fee input). cp-amm: swap /
  *  swap2 with the pool at 1 and the signer at 8, EvtSwap2. Direction 1 is quote in, token out. */
-export function decodeTrades(chain: Chain, tx: NonNullable<Awaited<ReturnType<Connection["getTransaction"]>>>, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string; venue: "curve" | "damm"; baseDecimals: number; quoteMint?: string; quoteDecimals?: number }): TradeRow[] {
+export function decodeTrades(chain: Chain, tx: IndexedTx, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string; venue: "curve" | "damm"; baseDecimals: number; quoteMint?: string; quoteDecimals?: number }): TradeRow[] {
   const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined });
   const feePayer = keys.get(0)?.toBase58() ?? "";
   const inner = new Map<number, { programIdIndex: number; accounts: number[]; data: Buffer }[]>();

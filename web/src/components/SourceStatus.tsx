@@ -6,11 +6,15 @@ export function SourceStatus({
   stream?: Pick<
     SkyStream,
     "custody" | "eligible" | "vault" | "progress"
-  > | null;
+  > & Partial<Pick<SkyStream, "kind" | "ownerRole">> | null;
 }) {
   const label = !stream
     ? copy.unchecked
-    : stream.vault
+    : stream.kind === "position" && stream.ownerRole === "treasury"
+      ? copy.treasuryHeld
+      : stream.kind === "position" && (stream.ownerRole === "vault" || stream.vault)
+        ? copy.vaultHeld
+      : stream.vault
       ? copy.inVault
       : stream.custody === "program"
         ? copy.programHeld

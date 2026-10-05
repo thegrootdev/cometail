@@ -48,6 +48,8 @@ export interface SkyRow {
   kind?: "curve" | "position"; position?: string | null; owner?: string;
   /** Position rows: the position's permanent liquidity as a percentage of the pool's permanent total. */
   lockedSharePct?: number;
+  /** Who the position's holder is to the protocol: the launch treasury (the config's fee claimer) or a vault. */
+  ownerRole?: "treasury" | "vault";
 }
 
 export interface Store {
