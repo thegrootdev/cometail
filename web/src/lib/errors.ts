@@ -21,7 +21,21 @@ export function friendlyError(e: unknown, fallback: string = failures.actionFail
   if (/notunwindable|graduates instead/.test(m)) return failures.unwindGraduated;
   if (/registerpositionfirst|register its creator position/.test(m)) return failures.registerPositionFirst;
   if (/insufficient liquidity|slippage|exceeds desired|price impact/.test(m)) return failures.quoteFailed;
+  if (/name too long|symbol too long|uri too long/.test(m)) return failures.identityTooLong;
   return fallback;
+}
+
+/** The plainest line a failed simulation offers: an Anchor error message, a program's own log line
+ *  that names the problem, or the error code; empty when nothing readable is there. */
+export function simulationReason(err: unknown, logs: string[] = []): string {
+  const anchor = logs.map((l) => /Error Message: (.+?)\.?$/.exec(l)?.[1]).find(Boolean);
+  if (anchor) return anchor;
+  const named = logs.map((l) => /^Program log: (.*(?:too long|not allowed|invalid|insufficient|mismatch|not initialized|expired|exceed|overflow|unauthorized|ineligible|wrong|missing).*)$/i.exec(l)?.[1]).find(Boolean);
+  if (named) return named.slice(0, 160);
+  const custom = logs.map((l) => /custom program error: (0x[0-9a-f]+)/i.exec(l)?.[1]).find(Boolean);
+  if (custom) return `program error ${custom}`;
+  const text = typeof err === "string" ? err : err ? JSON.stringify(err) : "";
+  return text.slice(0, 160);
 }
 
 /** Creation fee, mint and metadata rent and network fees of a plain launch, beyond the first buy. */

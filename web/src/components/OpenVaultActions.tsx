@@ -70,6 +70,10 @@ export function OpenVaultActions({
   const client = useMemo(() => new VaultClientStep6(connection), [connection]);
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
+  // the chain's metadata limits in bytes, name and prefixed symbol (a character can be several bytes)
+  const nameBytes = new TextEncoder().encode(name.trim()).length;
+  const symbolBytes = new TextEncoder().encode(`${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`).length;
+  const identityFits = nameBytes > 0 && nameBytes <= 32 && symbolBytes > 1 && symbolBytes <= 10;
   const [image, setImage] = useState<TokenImage | null>(null);
   const [description, setDescription] = useState("");
   const [preparing, setPreparing] = useState(false);
@@ -274,6 +278,7 @@ export function OpenVaultActions({
               maxLength={9}
             />
           </label>
+          {!identityFits && (name.trim() || symbol.trim()) && <p className="form-notice" role="alert">{c.identityLimit}</p>}
         </div>
         <div className="form-row">
           <LogoUpload onChange={setImage} />
@@ -315,6 +320,7 @@ export function OpenVaultActions({
             preparing ||
             !name.trim() ||
             !symbol.trim() ||
+            !identityFits ||
             streams.length === 0 ||
             status.state === "sending"
           }

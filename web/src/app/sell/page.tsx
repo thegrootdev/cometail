@@ -199,11 +199,16 @@ function Wizard() {
   const eligible = (streams ?? []).filter((s) => s.reasons.length === 0);
   const chosen = eligible.filter((s) => picked.has(key(s)));
   const capQ64 = capToQ64(capSol, 6);
+  // the chain's metadata limits in bytes, name and prefixed symbol (a character can be several bytes)
+  const nameBytes = new TextEncoder().encode(name.trim()).length;
+  const symbolBytes = new TextEncoder().encode(`${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`).length;
+  const identityFits = nameBytes > 0 && nameBytes <= 32 && symbolBytes > 1 && symbolBytes <= 10;
   const ready =
     linksValid(links) &&
     chosen.length > 0 &&
     image &&
     !preparing &&
+    identityFits &&
     name.trim() &&
     symbol.trim() &&
     publicKey &&
@@ -500,6 +505,7 @@ function Wizard() {
                     className="mt-1 w-full rounded-lg border border-starlight/15 bg-night px-3 py-2"
                   />
                 </label>
+                {(nameBytes > 32 || symbolBytes > 10) && <p className="form-notice mt-2" role="alert">{c.identityLimit}</p>}
                 <div className="mt-5">
                   <LogoUpload onChange={setImage} />
                 </div>

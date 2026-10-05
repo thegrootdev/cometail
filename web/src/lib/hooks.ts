@@ -1,5 +1,5 @@
 "use client";
-import { DesignedError, friendlyError } from "./errors";
+import { DesignedError, friendlyError, simulationReason } from "./errors";
 import { failures } from "@/content/cometail";
 import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -124,8 +124,13 @@ export function useTx() {
         // failure observed now stops before the wallet, mapped to the same plain copy as a live failure
         const dry = await connection.simulateTransaction(tx);
         if (dry.value.err) {
-          const detail = [JSON.stringify(dry.value.err), ...(dry.value.logs ?? [])].join(" | ");
-          throw new DesignedError(friendlyError(new Error(detail), failures.simulationFailed));
+          // a mapped failure gets its plain copy; anything else gets the generic line plus the
+          // plainest reason the simulation offered, so the user sees why, not only that it failed
+          const logs = dry.value.logs ?? [];
+          const detail = [JSON.stringify(dry.value.err), ...logs].join(" | ");
+          const mapped = friendlyError(new Error(detail), failures.simulationFailed);
+          const reason = mapped === failures.simulationFailed ? simulationReason(dry.value.err, logs) : "";
+          throw new DesignedError(reason ? `${mapped} ${failures.simulationReason} ${reason}` : mapped);
         }
         if (signers.length > 0) {
           if (!signTransaction) throw new DesignedError(failures.walletCannotSign);

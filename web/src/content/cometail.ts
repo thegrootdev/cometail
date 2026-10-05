@@ -43,6 +43,8 @@ export const failures = {
   txFailed: "The transaction didn’t go through. Nothing was charged beyond network fees. Try again, and tell us on X if it keeps failing.",
   txTooLarge: "This action does not fit in one transaction, so nothing was sent to your wallet. Tell us on X.",
   simulationFailed: "A dry run of this action failed, so nothing was sent to your wallet.",
+  simulationReason: "Reason:",
+  identityTooLong: "The name or symbol is too long for the chain: up to 32 bytes for the name and 10 for the symbol, including the fee-token prefix. Nothing was sent.",
   walletCannotSign: "This wallet cannot sign without sending. Use Phantom or another wallet that supports signing.",
   actionFailed: "That didn’t work. Try again in a moment.",
 } as const;
