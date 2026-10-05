@@ -3,7 +3,7 @@ import { DesignedError, friendlyError, simulationReason } from "./errors";
 import { failures } from "@/content/cometail";
 import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { ComputeBudgetProgram, Keypair, Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, type Connection, Keypair, Transaction } from "@solana/web3.js";
 
 /** Load something async; `deps` re-run it; `everyMs` keeps it fresh while the page is open. */
 export function useLoad<T>(
@@ -69,9 +69,19 @@ const MAX_TRANSACTION_BYTES = 1232;
 
 /** A simulation failure that a node lagging behind the previous confirmation, or a busy node,
  *  produces; worth a short wait and another look before it is reported. */
-function looksTransient(err: unknown, logs: string[]): boolean {
-  const text = `${JSON.stringify(err)} ${logs.join(" ")}`.toLowerCase();
-  return /accountnotinitialized|not initialized|wrongstatus|accountmismatch|could not find account|blockhashnotfound|minimum context slot|too many requests|429|node is behind|rate limit/.test(text);
+function looksTransient(text: string, logs: string[]): boolean {
+  const all = `${text} ${logs.join(" ")}`.toLowerCase();
+  return /accountnotinitialized|not initialized|wrongstatus|accountmismatch|could not find account|blockhashnotfound|minimum context slot|too many requests|429|node is behind|rate limit/.test(all);
+}
+
+/** One simulation attempt, with a returned program error and a thrown RPC error reported the same way. */
+async function simulateOnce(connection: Connection, tx: Transaction): Promise<{ err: unknown; logs: string[]; thrown: Error | null }> {
+  try {
+    const r = await connection.simulateTransaction(tx);
+    return { err: r.value.err, logs: r.value.logs ?? [], thrown: null };
+  } catch (e) {
+    return { err: null, logs: [], thrown: e instanceof Error ? e : new Error(String(e)) };
+  }
 }
 
 /** Send a transaction with the connected wallet and wait for it. A transaction that lands with
@@ -133,18 +143,22 @@ export function useTx() {
         // load-balanced RPC node that has not seen that confirmation yet answers as if the earlier
         // step never happened (an account "not initialized", a status "wrong"), and a busy node
         // answers 429. Those are retried a few times with a pause before they count as a failure.
-        let dry = await connection.simulateTransaction(tx);
-        for (let attempt = 1; attempt <= 3 && dry.value.err && looksTransient(dry.value.err, dry.value.logs ?? []); attempt++) {
+        // one budget for the initial attempt and three retries, whether the failure came back as a
+        // program error or was thrown by the RPC client (a 429 and a lagging node both throw)
+        let dry = await simulateOnce(connection, tx);
+        const failureText = (d: typeof dry) => (d.thrown ? d.thrown.message : d.err ? JSON.stringify(d.err) : "");
+        for (let attempt = 1; attempt <= 3 && (dry.thrown || dry.err) && looksTransient(failureText(dry), dry.logs); attempt++) {
           await new Promise((r) => setTimeout(r, 1500 * attempt));
-          dry = await connection.simulateTransaction(tx);
+          dry = await simulateOnce(connection, tx);
         }
-        if (dry.value.err) {
+        if (dry.thrown) throw dry.thrown; // mapped below like any other failure (busy, expired, ...)
+        if (dry.err) {
           // a mapped failure gets its plain copy; anything else gets the generic line plus the
           // plainest reason the simulation offered, so the user sees why, not only that it failed
-          const logs = dry.value.logs ?? [];
-          const detail = [JSON.stringify(dry.value.err), ...logs].join(" | ");
+          const logs = dry.logs;
+          const detail = [JSON.stringify(dry.err), ...logs].join(" | ");
           const mapped = friendlyError(new Error(detail), failures.simulationFailed);
-          const reason = mapped === failures.simulationFailed ? simulationReason(dry.value.err, logs) : "";
+          const reason = mapped === failures.simulationFailed ? simulationReason(dry.err, logs) : "";
           throw new DesignedError(reason ? `${mapped} ${failures.simulationReason} ${reason}` : mapped);
         }
         if (signers.length > 0) {
