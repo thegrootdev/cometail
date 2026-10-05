@@ -1,5 +1,5 @@
 "use client";
-import { friendlyError } from "@/lib/errors";
+import { friendlyError, DesignedError } from "@/lib/errors";
 import { cleanSymbolInput } from "@/lib/token-display";
 import { StorageNotice } from "./Experience";
 // An Open vault seen by its depositor: withdraw any stream, or finish the launch. This is the
@@ -26,6 +26,7 @@ import {
   vaultPage,
   wizard,
   experience as c,
+  failures,
 } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import { loadPool, MigrationProgress } from "@/lib/dbc";
@@ -35,22 +36,28 @@ import { short } from "@/lib/format";
 
 const KIND = (s: any) => (s?.kind ? Object.keys(s.kind)[0] : "");
 
-/** The wizard stores the stream token mint key for the session, keyed by its public key. */
+/** The wizard stores the fee token's mint key in this browser, keyed by its public key: in local
+ *  storage, so another tab or a reload of the same browser still finds it, and in session storage
+ *  for the tab that created it. The key only matters until the fee token launches. */
 export function storeMintKey(kp: Keypair) {
-  try {
-    sessionStorage.setItem(
-      `cometail:mint:${kp.publicKey.toBase58()}`,
-      JSON.stringify(Array.from(kp.secretKey)),
-    );
-  } catch {}
+  const key = `cometail:mint:${kp.publicKey.toBase58()}`, value = JSON.stringify(Array.from(kp.secretKey));
+  try { localStorage.setItem(key, value); } catch {}
+  try { sessionStorage.setItem(key, value); } catch {}
 }
 export function loadMintKey(pubkey: string): Keypair | null {
-  try {
-    const raw = sessionStorage.getItem(`cometail:mint:${pubkey}`);
-    return raw ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw))) : null;
-  } catch {
-    return null;
+  const key = `cometail:mint:${pubkey}`;
+  for (const store of [() => sessionStorage, () => localStorage]) {
+    try {
+      const raw = store().getItem(key);
+      if (raw) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
+    } catch {}
   }
+  return null;
+}
+export function forgetMintKey(pubkey: string) {
+  const key = `cometail:mint:${pubkey}`;
+  try { localStorage.removeItem(key); } catch {}
+  try { sessionStorage.removeItem(key); } catch {}
 }
 
 export function OpenVaultActions({
@@ -70,6 +77,8 @@ export function OpenVaultActions({
   const client = useMemo(() => new VaultClientStep6(connection), [connection]);
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
+  const [hasMintKey, setHasMintKey] = useState<boolean | null>(null);
+  useEffect(() => { setHasMintKey(!!loadMintKey(String(v?.stMint ?? ""))); }, [v?.stMint]);
   // the chain's metadata limits in bytes, name and prefixed symbol (a character can be several bytes)
   const nameBytes = new TextEncoder().encode(name.trim()).length;
   const symbolBytes = new TextEncoder().encode(`${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`).length;
@@ -183,7 +192,7 @@ export function OpenVaultActions({
     try {
       // the wizard keeps the stream token's mint key in this browser session; without it the vault can only be unwound
       const stMint = loadMintKey(String(v.stMint));
-      if (!stMint) throw new Error(openVault.needsMintKey);
+      if (!stMint) throw new DesignedError(openVault.needsMintKey);
       const { uri } = await uploadIdentity({
         name,
         symbol: `${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`,
@@ -205,10 +214,14 @@ export function OpenVaultActions({
           uri: uri.trim(),
         },
       });
-      await run(async () => new Transaction().add(L.ix), [stMint], 400_000);
+      const sig = await run(async () => new Transaction().add(L.ix), [stMint], 400_000);
+      if (sig) forgetMintKey(String(v.stMint));
       onChange();
     } catch (e) {
-      setError(friendlyError(e, c.launchFailure));
+      // the plain copy, and the step's own reason when the copy is only the generic line
+      const plain = friendlyError(e, c.launchFailure);
+      const raw = e instanceof Error ? e.message : String(e ?? "");
+      setError(plain === c.launchFailure && raw ? `${plain} ${failures.simulationReason} ${raw.slice(0, 160)}` : plain);
     } finally {
       setPreparing(false);
     }
@@ -257,6 +270,7 @@ export function OpenVaultActions({
       </ul>
       {!unwound && (<>
       <p className="mt-4 text-xs text-starlight/50">{openVault.mintKeyNote}</p>
+      {hasMintKey === false && <p className="form-notice mt-3" role="alert">{openVault.needsMintKey}</p>}
       <fieldset
         disabled={preparing || status.state === "sending"}
         className="mt-5 identity-fields"
@@ -318,6 +332,7 @@ export function OpenVaultActions({
             !image ||
             blocked ||
             preparing ||
+            hasMintKey === false ||
             !name.trim() ||
             !symbol.trim() ||
             !identityFits ||

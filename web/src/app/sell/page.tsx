@@ -3,7 +3,7 @@ import { friendlyError } from "@/lib/errors";
 // "Sell your tail": scan the wallet for streams it owns, pick, choose a preset, launch.
 // One transaction per step so a wallet shows exactly what each signature does; the vault
 // link appears as soon as the vault exists, and the vault page can withdraw or finish later.
-import { Suspense, useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { Money } from "@/components/Money";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -26,7 +26,7 @@ import { api } from "@/lib/api";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
 import { CopyAddress } from "@/components/CopyAddress";
-import { identity, sellExample } from "@/content/cometail";
+import { identity, sellExample, failures } from "@/content/cometail";
 import { wizard, splits, product, experience as c } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
@@ -186,6 +186,19 @@ function Wizard() {
   const [preset, setPreset] = useState(1);
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
+  // an open vault of this wallet: the page says so and links to it instead of an empty scan
+  const [openVaults, setOpenVaults] = useState<string[]>([]);
+  const me = publicKey?.toBase58() ?? null;
+  useEffect(() => {
+    let live = true;
+    if (!me) { setOpenVaults([]); return; }
+    api.vaults().then((r) => {
+      if (!live) return;
+      const mine = (r?.vaults ?? []).filter((row) => String(row.data?.depositor) === me && Object.keys(row.data?.status ?? {})[0] === "open");
+      setOpenVaults(mine.map((row) => row.vault));
+    }).catch(() => { if (live) setOpenVaults([]); });
+    return () => { live = false; };
+  }, [me]);
   const [image, setImage] = useState<TokenImage | null>(null);
   const [description, setDescription] = useState("");
   const [links, setLinks] = useState<TokenLinks>({});
@@ -358,9 +371,11 @@ function Wizard() {
       );
       setLaunched(true);
     } catch (e) {
+      const plain = friendlyError(e, c.launchFailure);
+      const raw = e instanceof Error ? e.message : String(e ?? "");
       setLog((l) => [
         ...l,
-        `${wizard.stopped} ${friendlyError(e, c.launchFailure)}`,
+        `${wizard.stopped} ${plain === c.launchFailure && raw ? `${plain} ${failures.simulationReason} ${raw.slice(0, 160)}` : plain}`,
       ]);
     } finally {
       setPreparing(false);
@@ -402,6 +417,14 @@ function Wizard() {
       {publicKey && (
         <div className="launch-layout">
           <div className="space-y-6">
+            {openVaults.length > 0 && !vaultKey && (
+              <Card title={c.vaultWaiting} icon="coin">
+                <p className="text-sm">{c.vaultWaitingBody}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {openVaults.map((a) => (<Link key={a} className="button button-primary" href={`/vault/${a}`}>{c.vaultWaitingAction} · {short(a)} →</Link>))}
+                </div>
+              </Card>
+            )}
             <Card title={wizard.step1}>
               {loading && (
                 <DataState kind="loading" compact title={wizard.scanning} />
@@ -462,9 +485,7 @@ function Wizard() {
                   );
                 })}
               </ul>
-              <p className="mt-3 text-xs text-starlight/50">
-                {wizard.withdrawLock}
-              </p>
+              <p className="sell-note">{wizard.withdrawLock}</p>
             </Card>
             <Card title={wizard.step2}>
               <div className="grid gap-3 sm:grid-cols-3">
@@ -474,7 +495,7 @@ function Wizard() {
                     onClick={() => setPreset(i)}
                     disabled={!!vaultKey || preparing || blocked}
                     aria-pressed={preset === i}
-                    className={`rounded-xl border p-3 text-left ${preset === i ? "border-dust" : "border-starlight/15"}`}
+                    className="preset-card"
                   >
                     <div className="font-semibold text-dust">{p.label}</div>
                     <div className="mt-1 text-xs text-starlight/70">

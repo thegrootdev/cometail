@@ -1863,3 +1863,30 @@ small, .caption {
   .mobile-nav a { font-size: 10px; letter-spacing: 0; white-space: normal; text-align: center; line-height: 1.15; min-width: 0; padding-left: 2px; padding-right: 2px; overflow-wrap: anywhere; }
 }
 @media (max-width: 380px) { .mobile-nav a { font-size: 9.5px; } }
+
+/* Sell page (2026-10-05): the share cards are small sticker cards, never badges (the picked one used
+   to inherit the badge pill through its gold border class), and the notes under a box clear the
+   box's hard shadow, since the global paragraph reset beats the spacing utilities. */
+.preset-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 2px solid var(--ink);
+  background: var(--panel-deep);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.preset-card[aria-pressed="true"] {
+  border-color: var(--dust);
+  box-shadow: 3px 3px 0 var(--dust);
+}
+.preset-card:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+}
+.sell-note,
+.sell-window-note {
+  margin-top: 18px !important;
+  font-size: 12px;
+  line-height: 1.6;
+}

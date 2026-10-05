@@ -218,7 +218,7 @@ export const openVault = {
   mintKeyNote:
     "Launching needs the fee token key this browser generated; a vault created in another session can still withdraw its fee rights here.",
   needsMintKey:
-    "This browser does not hold the fee token key for this vault. Withdraw the fee rights and start again from Sell your fees.",
+    "This browser does not hold the fee token key for this vault. Open the vault in the browser that created it, or withdraw the fee rights and start again from Sell your fees.",
 } as const;
 
 export const splits = {
@@ -398,6 +398,9 @@ export const experience = {
     "Pick the coin whose future fees you sell, choose how much SOL you take when the new token's curve completes, and name that token. Nothing moves until you sign.",
   selectStreams: "Pick the fees to sell",
   createIdentity: "Name the fee token",
+  vaultWaiting: "You have a vault waiting",
+  vaultWaitingBody: "Your fee rights are already in an open vault. Finish the fee-token launch there, or withdraw them.",
+  vaultWaitingAction: "Open the vault",
   noStreams: "No sellable fees in view yet.",
   noStreamsBody:
     "Launch a coin to start earning fees, or connect a wallet that owns an eligible Meteora position.",
