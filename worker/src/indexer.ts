@@ -69,16 +69,29 @@ export class Indexer {
   }
 
   /** Swaps on every followed pool (DBC EvtSwap* on curves, cp-amm EvtSwap2 on DAMM v2). Per pool, a bounded
-   *  catch-up: the walk goes backward from the newest signature toward the last fully indexed one in
-   *  at most three pages per pass and persists its frontier (store.PoolCursor); the head moves only
-   *  when the walk reaches its target, so no interval is ever skipped, and a pool with a frontier is
-   *  reported as still catching up. Trades are keyed by (signature, event ordinal, pool), so any order
+   *  catch-up: the walk goes backward from the newest signature toward the last fully indexed one,
+   *  one page of at most SIGNATURES_PER_PASS signatures per pass, and persists its frontier
+   *  (store.PoolCursor); the head moves only when the walk reaches its target, so no interval is ever
+   *  skipped, and a pool with a frontier is reported as still catching up. The page bounds the number
+   *  of transaction fetches per pool per pass (not the pass duration: a fetch that needs its retries
+   *  still waits for them), so a busy pool shares the pass with every other pool instead of holding
+   *  it for its whole history. Failed signatures are skipped without a fetch; fetches run four at a
+   *  time and are processed in order. Trades are keyed by (signature, event ordinal, pool), so any order
    *  and any repeat is safe. The trader is the swap instruction's own signer (cp-amm SwapCtx.payer,
    *  account 8 of swap / swap2) when the event can be paired with its swap in execution order;
    *  otherwise the fee payer, marked as such, which the metrics never count as an independent buyer. */
   private async indexTrades(pools: TradePool[]): Promise<number> {
     let added = 0;
     const conn: Connection = this.chain.connection;
+    const SIGNATURES_PER_PASS = 40, FETCH_BATCH = 4;
+    const fetchTx = async (signature: string) => {
+      let tx = null as Awaited<ReturnType<Connection["getTransaction"]>>;
+      for (let i = 0; i < 5 && !tx; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
+        tx = await retry(`transaction ${signature}`, () => conn.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
+      }
+      return tx;
+    };
     for (const tp of pools) {
       const pool = tp.pool;
       const poolKey = pool.toBase58(), vaultKey = tp.vault ?? "";
@@ -93,29 +106,30 @@ export class Indexer {
         let target = catchingUp ? cur.target : cur.head;
         let newHead = catchingUp ? cur.newHead : null;
         let before: string | undefined = catchingUp ? cur.tail! : undefined;
-        const sigs: { signature: string; slot: number; blockTime: number | null }[] = [];
+        const sigs: { signature: string; slot: number; blockTime: number | null; failed: boolean }[] = [];
         let reachedTarget = false;
-        for (let page = 0; page < 3; page++) {
-          const got = await retry("pool signatures", () => conn.getSignaturesForAddress(pool, { before, until: target ?? undefined, limit: 1000 }, "confirmed"));
-          if (!catchingUp && page === 0 && got.length) newHead = got[0].signature;
-          sigs.push(...got.map((s) => ({ signature: s.signature, slot: s.slot, blockTime: s.blockTime ?? null })));
-          if (got.length < 1000) { reachedTarget = true; break; }
-          before = got[got.length - 1].signature;
+        {
+          const got = await retry("pool signatures", () => conn.getSignaturesForAddress(pool, { before, until: target ?? undefined, limit: SIGNATURES_PER_PASS }, "confirmed"));
+          if (!catchingUp && got.length) newHead = got[0].signature;
+          sigs.push(...got.map((s) => ({ signature: s.signature, slot: s.slot, blockTime: s.blockTime ?? null, failed: s.err !== null && s.err !== undefined })));
+          if (got.length < SIGNATURES_PER_PASS) reachedTarget = true;
+          else before = got[got.length - 1].signature;
         }
         let stopped = false;
-        for (const s of sigs.slice().reverse()) {
-          let tx = null as Awaited<ReturnType<Connection["getTransaction"]>>;
-          for (let i = 0; i < 5 && !tx; i++) {
-            if (i > 0) await new Promise((r) => setTimeout(r, 1500 * i));
-            tx = await retry(`transaction ${s.signature}`, () => conn.getTransaction(s.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }));
+        const work = sigs.slice().reverse().filter((s) => !s.failed); // oldest first within the page; failed signatures carry no trade
+        for (let i = 0; i < work.length && !stopped; i += FETCH_BATCH) {
+          const batch = work.slice(i, i + FETCH_BATCH);
+          const txs = await Promise.all(batch.map((s) => fetchTx(s.signature)));
+          for (let j = 0; j < batch.length; j++) {
+            const s = batch[j], tx = txs[j];
+            if (!tx) { log("pool transaction not available yet; this pool resumes next pass", { pool: poolKey, signature: s.signature }); stopped = true; break; }
+            if (tx.meta?.err) continue;
+            const rows = decodeTrades(this.chain, tx, pool, { signature: s.signature, slot: s.slot, blockTime: s.blockTime, vault: vaultKey, venue: tp.venue, baseDecimals: tp.baseDecimals, quoteMint: tp.quoteMint, quoteDecimals: tp.quoteDecimals });
+            await this.store.insertTrades(rows);
+            await publish(this.store, feedFromTrades(rows, (p) => this.mintOfPool.get(p) ?? null));
+            added += rows.length;
+            if (rows.length) log("indexed trades", { pool: poolKey, signature: s.signature, trades: rows.length });
           }
-          if (!tx) { log("pool transaction not available yet; this pool resumes next pass", { pool: poolKey, signature: s.signature }); stopped = true; break; }
-          if (tx.meta?.err) continue;
-          const rows = decodeTrades(this.chain, tx, pool, { signature: s.signature, slot: s.slot, blockTime: s.blockTime, vault: vaultKey, venue: tp.venue, baseDecimals: tp.baseDecimals, quoteMint: tp.quoteMint, quoteDecimals: tp.quoteDecimals });
-          await this.store.insertTrades(rows);
-          await publish(this.store, feedFromTrades(rows, (p) => this.mintOfPool.get(p) ?? null));
-          added += rows.length;
-          if (rows.length) log("indexed trades", { pool: poolKey, signature: s.signature, trades: rows.length });
         }
         // the frontier moves only over what was fully processed; a stopped pass keeps it where it was
         if (stopped) { await this.store.setPoolCursor(poolKey, { ...cur, status: "pending" }); continue; }
