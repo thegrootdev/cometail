@@ -45,6 +45,7 @@ export const failures = {
   simulationFailed: "A dry run of this action failed, so nothing was sent to your wallet.",
   simulationReason: "Reason:",
   identityTooLong: "The name or symbol is too long for the chain: up to 32 bytes for the name and 10 for the symbol, including the fee-token prefix. Nothing was sent.",
+  uriTooLong: "The metadata link produced for this token is too long for the chain (200 characters). Nothing was sent. Tell us on X.",
   walletCannotSign: "This wallet cannot sign without sending. Use Phantom or another wallet that supports signing.",
   actionFailed: "That didn’t work. Try again in a moment.",
 } as const;

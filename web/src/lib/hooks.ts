@@ -67,6 +67,13 @@ export type TxStatus = {
 /** The largest transaction the network accepts, in bytes (packet size). */
 const MAX_TRANSACTION_BYTES = 1232;
 
+/** A simulation failure that a node lagging behind the previous confirmation, or a busy node,
+ *  produces; worth a short wait and another look before it is reported. */
+function looksTransient(err: unknown, logs: string[]): boolean {
+  const text = `${JSON.stringify(err)} ${logs.join(" ")}`.toLowerCase();
+  return /accountnotinitialized|not initialized|wrongstatus|accountmismatch|could not find account|blockhashnotfound|minimum context slot|too many requests|429|node is behind|rate limit/.test(text);
+}
+
 /** Send a transaction with the connected wallet and wait for it. A transaction that lands with
  *  an error is a failure (the signature is kept for the explorer link); the confirmation waits on
  *  the blockhash the transaction was signed with, so expiry is reported, not hidden.
@@ -122,7 +129,15 @@ export function useTx() {
         if (size > MAX_TRANSACTION_BYTES) throw new DesignedError(failures.txTooLarge);
         // dry run without any signature (web3.js sets sigVerify only when signers are passed); a
         // failure observed now stops before the wallet, mapped to the same plain copy as a live failure
-        const dry = await connection.simulateTransaction(tx);
+        // The dry run runs right after the previous step's confirmation in a multi-step flow; a
+        // load-balanced RPC node that has not seen that confirmation yet answers as if the earlier
+        // step never happened (an account "not initialized", a status "wrong"), and a busy node
+        // answers 429. Those are retried a few times with a pause before they count as a failure.
+        let dry = await connection.simulateTransaction(tx);
+        for (let attempt = 1; attempt <= 3 && dry.value.err && looksTransient(dry.value.err, dry.value.logs ?? []); attempt++) {
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
+          dry = await connection.simulateTransaction(tx);
+        }
         if (dry.value.err) {
           // a mapped failure gets its plain copy; anything else gets the generic line plus the
           // plainest reason the simulation offered, so the user sees why, not only that it failed

@@ -21,7 +21,8 @@ export function friendlyError(e: unknown, fallback: string = failures.actionFail
   if (/notunwindable|graduates instead/.test(m)) return failures.unwindGraduated;
   if (/registerpositionfirst|register its creator position/.test(m)) return failures.registerPositionFirst;
   if (/insufficient liquidity|slippage|exceeds desired|price impact/.test(m)) return failures.quoteFailed;
-  if (/name too long|symbol too long|uri too long/.test(m)) return failures.identityTooLong;
+  if (/uri too long/.test(m)) return failures.uriTooLong;
+  if (/name too long|symbol too long/.test(m)) return failures.identityTooLong;
   return fallback;
 }
 
