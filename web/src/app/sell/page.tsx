@@ -12,7 +12,7 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
 import { VaultClientStep6, handPositionNftToVaultIx } from "@cometail/client";
 import { Shell, Card, ConnectWallet } from "@/components/Shell";
-import { storeMintKey } from "@/components/OpenVaultActions";
+import { storeMintKey, forgetMintKey } from "@/components/OpenVaultActions";
 import {
   LogoUpload,
   IdentityPreview,
@@ -369,6 +369,8 @@ function Wizard() {
         [stMint],
         CU.launch,
       );
+      // the fee token exists now; its key has no further use in this browser
+      forgetMintKey(stMint.publicKey.toBase58());
       setLaunched(true);
     } catch (e) {
       const plain = friendlyError(e, c.launchFailure);

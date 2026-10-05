@@ -49,7 +49,11 @@ export function loadMintKey(pubkey: string): Keypair | null {
   for (const store of [() => sessionStorage, () => localStorage]) {
     try {
       const raw = store().getItem(key);
-      if (raw) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
+      if (!raw) continue;
+      const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));
+      // a key stored before local storage was used is promoted, so the browser's other tabs find it
+      try { if (!localStorage.getItem(key)) localStorage.setItem(key, raw); } catch {}
+      return kp;
     } catch {}
   }
   return null;
