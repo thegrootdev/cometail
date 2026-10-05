@@ -67,6 +67,7 @@ export default function AdminFeesPage() {
 
   const claimNow = async (claim: ProtocolClaim) => {
     setActive(claim.id); setLastSent(claim.id);
+    setSent((s) => { const { [claim.id]: _old, ...rest } = s; return rest; }); // a new attempt replaces the row's earlier receipt
     try {
       const sig = await run(async () => (await build(claim)).tx, [], 300_000);
       if (sig) { setSent((s) => ({ ...s, [claim.id]: sig })); await refresh(); }
@@ -134,7 +135,7 @@ export default function AdminFeesPage() {
               {simulations[claim.id] && <p className="mt-2 text-sm">{simulations[claim.id]}</p>}
               {lastSent === claim.id && status.state === "sending" && <p className="mt-2 text-sm">Waiting for the wallet and the confirmation.</p>}
               {lastSent === claim.id && status.state === "error" && <p className="mt-2 text-sm" role="alert">Failed: {status.message}</p>}
-              {lastSent === claim.id && status.state === "error" && status.signature && !sent[claim.id] && (
+              {lastSent === claim.id && status.state === "error" && status.signature && sent[claim.id] !== status.signature && (
                 <p className="mt-1 text-sm">The transaction was sent but its confirmation did not come back: check <a href={EXPLORER("tx", status.signature)} target="_blank" rel="noreferrer">{status.signature}</a> before trying again.</p>
               )}
               {sent[claim.id] && <p className="mt-2 text-sm">Sent: <a href={EXPLORER("tx", sent[claim.id])} target="_blank" rel="noreferrer">{sent[claim.id]}</a></p>}
