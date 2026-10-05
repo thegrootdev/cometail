@@ -77,7 +77,7 @@ export function tokenForMint(
 
 /** A stored symbol without the dollar sign some creators type in front of it, for display. */
 export function bareSymbol(raw: string | null | undefined): string {
-  return (raw ?? "").trim().replace(/^\$+\s*/, "").trim();
+  return (raw ?? "").replace(/^[\s$]+/, "").trim();
 }
 /** The ticker as pages show it: exactly one dollar sign, or empty when there is no symbol. */
 export function tickerText(raw: string | null | undefined): string {
