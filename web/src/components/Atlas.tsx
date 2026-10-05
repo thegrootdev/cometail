@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { bareSymbol } from "@/lib/token-display";
 import Link from "next/link";
 import { experience as copy } from "@/content/cometail";
 import { SkyStream, api } from "@/lib/api";
@@ -197,7 +198,7 @@ export function StarAtlas({
     return placed
       .sort((a, b) => a.y - b.y || a.x - b.x)
       .map((c) => {
-        const chars = Math.max((c.s.token?.symbol || "PENDING").length, feeLabel(c.s).length);
+        const chars = Math.max((bareSymbol(c.s.token?.symbol) || "PENDING").length, feeLabel(c.s).length);
         const left = c.x + 12, right = left + chars * glyph;
         let top = c.y + 8;
         for (const box of boxes) {
@@ -329,7 +330,7 @@ export function StarAtlas({
               fontSize={compact ? 16 : 11}
               fill="#92a7be"
             >
-              {s.token?.symbol || identity.pendingTicker}
+              {bareSymbol(s.token?.symbol) || identity.pendingTicker}
             </text>
             <text
               x={x + 12}

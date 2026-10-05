@@ -74,3 +74,17 @@ export function tokenForMint(
 ): TokenIdentity | null {
   return token?.mint === mint ? token : null;
 }
+
+/** A stored symbol without the dollar sign some creators type in front of it, for display. */
+export function bareSymbol(raw: string | null | undefined): string {
+  return (raw ?? "").trim().replace(/^\$+\s*/, "").trim();
+}
+/** The ticker as pages show it: exactly one dollar sign, or empty when there is no symbol. */
+export function tickerText(raw: string | null | undefined): string {
+  const s = bareSymbol(raw);
+  return s ? `$${s}` : "";
+}
+/** A typed symbol as it will be stored: no leading dollar signs, no whitespace, upper case. */
+export function cleanSymbolInput(raw: string): string {
+  return raw.replace(/^[\s$]+/, "").replace(/\s+/g, "").toUpperCase();
+}

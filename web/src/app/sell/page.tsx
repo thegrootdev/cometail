@@ -21,7 +21,7 @@ import {
 import { DataState, PageHeader , StorageNotice } from "@/components/Experience";
 import { uploadIdentity } from "@/lib/upload";
 import { SocialFields } from "@/components/SocialLinks";
-import { cleanLinks, linksValid, type TokenLinks } from "@/lib/token-display";
+import { cleanLinks, linksValid, type TokenLinks, cleanSymbolInput } from "@/lib/token-display";
 import { api } from "@/lib/api";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
@@ -218,7 +218,7 @@ function Wizard() {
       const client = new VaultClientStep6(connection);
       const { uri } = await uploadIdentity({
         name,
-        symbol: `${product.streamTickerPrefix}${symbol.trim().toUpperCase()}`,
+        symbol: `${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`,
         description,
         links: cleanLinks(links),
         image: image.file,
@@ -341,7 +341,7 @@ function Wizard() {
         streamIndex: index,
         metadata: {
           name: name.trim(),
-          symbol: `${product.streamTickerPrefix}${symbol.trim().toUpperCase()}`,
+          symbol: `${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`,
           uri: uri.trim(),
         },
       });
@@ -495,7 +495,7 @@ function Wizard() {
                   {wizard.symbol(product.streamTickerPrefix)}
                   <input
                     value={symbol}
-                    onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                    onChange={(e) => setSymbol(cleanSymbolInput(e.target.value))}
                     maxLength={9}
                     className="mt-1 w-full rounded-lg border border-starlight/15 bg-night px-3 py-2"
                   />
@@ -584,7 +584,7 @@ function Wizard() {
           <aside className="preview-column">
             <IdentityPreview
               name={name}
-              symbol={symbol ? `${product.streamTickerPrefix}${symbol}` : ""}
+              symbol={cleanSymbolInput(symbol) ? `${product.streamTickerPrefix}${cleanSymbolInput(symbol)}` : ""}
               image={image?.preview}
               links={links}
             />

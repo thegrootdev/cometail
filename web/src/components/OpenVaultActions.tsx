@@ -1,5 +1,6 @@
 "use client";
 import { friendlyError } from "@/lib/errors";
+import { cleanSymbolInput } from "@/lib/token-display";
 import { StorageNotice } from "./Experience";
 // An Open vault seen by its depositor: withdraw any stream, or finish the launch. This is the
 // resume path for a wizard that stopped between transactions.
@@ -181,7 +182,7 @@ export function OpenVaultActions({
       if (!stMint) throw new Error(openVault.needsMintKey);
       const { uri } = await uploadIdentity({
         name,
-        symbol: `${product.streamTickerPrefix}${symbol.trim().toUpperCase()}`,
+        symbol: `${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`,
         description,
         image: image.file,
         owner: publicKey,
@@ -196,7 +197,7 @@ export function OpenVaultActions({
         streamIndex: Number(v.streamCount),
         metadata: {
           name: name.trim(),
-          symbol: `${product.streamTickerPrefix}${symbol.trim().toUpperCase()}`,
+          symbol: `${product.streamTickerPrefix}${cleanSymbolInput(symbol)}`,
           uri: uri.trim(),
         },
       });
@@ -269,7 +270,7 @@ export function OpenVaultActions({
             {wizard.symbol(product.streamTickerPrefix)}
             <input
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              onChange={(e) => setSymbol(cleanSymbolInput(e.target.value))}
               maxLength={9}
             />
           </label>
@@ -278,7 +279,7 @@ export function OpenVaultActions({
           <LogoUpload onChange={setImage} />
           <IdentityPreview
             name={name}
-            symbol={symbol ? `${product.streamTickerPrefix}${symbol}` : ""}
+            symbol={cleanSymbolInput(symbol) ? `${product.streamTickerPrefix}${cleanSymbolInput(symbol)}` : ""}
             image={image?.preview}
           />
         </div>

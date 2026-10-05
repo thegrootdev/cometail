@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
+import { tickerText } from "@/lib/token-display";
 import { experience as copy } from "@/content/cometail";
 import { TokenAvatar, Badge } from "./Experience";
 import { SocialLinks } from "./SocialLinks";
@@ -236,7 +237,7 @@ export function IdentityPreview({
         <TokenAvatar seed={symbol || "comet"} image={image} size="large" />
         <div>
           <h3>{name || copy.tokenPlaceholder}</h3>
-          <small>{symbol ? `$${symbol}` : copy.symbolPreview}</small>
+          <small>{tickerText(symbol) || copy.symbolPreview}</small>
         </div>
       </div>
       <SocialLinks links={links} tokenName={name} />

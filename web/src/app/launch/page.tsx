@@ -23,7 +23,7 @@ import { SocialFields } from "@/components/SocialLinks";
 import { AmountInput } from "@/components/AmountInput";
 import { readTokenBalance, useTokenBalance, useSolBalance } from "@/lib/balances";
 import { formatAmount, inputValue, parseAmount, spendable } from "@/lib/amounts";
-import { cleanLinks, linksValid, type TokenLinks } from "@/lib/token-display";
+import { cleanLinks, linksValid, type TokenLinks, cleanSymbolInput } from "@/lib/token-display";
 import { useTx , useStorageReady } from "@/lib/hooks";
 import { CLUSTER, EXPLORER } from "@/lib/addresses";
 
@@ -69,8 +69,8 @@ export default function LaunchPage() {
     !!image &&
     new TextEncoder().encode(name.trim()).length > 0 &&
     new TextEncoder().encode(name.trim()).length <= 32 &&
-    new TextEncoder().encode(symbol.trim().toUpperCase()).length > 0 &&
-    new TextEncoder().encode(symbol.trim().toUpperCase()).length <= 10;
+    new TextEncoder().encode(cleanSymbolInput(symbol)).length > 0 &&
+    new TextEncoder().encode(cleanSymbolInput(symbol)).length <= 10;
   const busy = preparing || status.state === "sending";
   const submit = async () => {
     if (!valid || !image || !publicKey || !preset.config || busy || blocked) return;
@@ -91,7 +91,7 @@ export default function LaunchPage() {
       }
       const { uri } = await uploadIdentity({
         name,
-        symbol: symbol.toUpperCase(),
+        symbol: cleanSymbolInput(symbol),
         description,
         links: cleanLinks(links),
         image: image.file,
@@ -106,7 +106,7 @@ export default function LaunchPage() {
             payer: publicKey,
             baseMint: kp.publicKey,
             name: name.trim(),
-            symbol: symbol.trim().toUpperCase(),
+            symbol: cleanSymbolInput(symbol),
             uri,
             firstBuyRaw: lamports,
             quoteMint: preset.quoteMint!,
@@ -153,7 +153,7 @@ export default function LaunchPage() {
                 {c.symbol}
                 <input
                   value={symbol}
-                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                  onChange={(e) => setSymbol(cleanSymbolInput(e.target.value))}
                   maxLength={10}
                   placeholder={c.symbolPlaceholder}
                   autoComplete="off"

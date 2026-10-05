@@ -9,7 +9,7 @@ import { formatUsd, usdValue } from "@/lib/usd";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
 import { SocialLinks } from "@/components/SocialLinks";
-import { metadataLinks } from "@/lib/token-display";
+import { metadataLinks, tickerText } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
@@ -254,7 +254,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       <PageHeader
         eyebrow={c.tokenKicker}
         title={meta?.name || short(mintStr)}
-        body={meta?.symbol ? `$${meta.symbol}` : undefined}
+        body={tickerText(meta?.symbol) || undefined}
       >
         <div className="token-header-identity"><TokenAvatar seed={mintStr} image={artwork?.image} size="large" /><span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span></div>
       </PageHeader>
