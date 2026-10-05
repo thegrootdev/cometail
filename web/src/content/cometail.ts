@@ -461,6 +461,7 @@ export const walletAccessibility = { close: "Close wallet selection" } as const;
 
 export const market = {
   kicker: "The launchpad", title: "Find your next comet.",
+  official: "Official token", officialNote: "The protocol's own token.",
   body: "New coins on the curve. Completed coins trading on Meteora. Follow what is trading, then look at the fees.",
   trending: "Trending", newest: "New launches", all: "All stages", bonding: "Bonding", graduated: "Graduated",
   search: "Search tokens", searchHint: "Name, symbol or mint address", clear: "Clear filters",

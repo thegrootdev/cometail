@@ -1896,3 +1896,8 @@ small, .caption {
 .source-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .source-list li { display: flex; flex-direction: column; gap: 2px; }
 .source-list .source-kind { margin: 0; }
+
+/* The official token (2026-10-05): pinned above the directory and first on Explore, with a gold badge. */
+.official-badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; border: 2px solid var(--ink); background: var(--dust); color: var(--ink); font-weight: 800; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 2px 2px 0 var(--ink); margin-bottom: 8px; }
+.market-pinned { margin-bottom: 18px; }
+.official-card { border-color: var(--dust); box-shadow: var(--shadow-dust); }

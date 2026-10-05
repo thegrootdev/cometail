@@ -1,4 +1,5 @@
 "use client";
+import { OFFICIAL_MINT, isListed, isOfficial } from "@/lib/addresses";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Money } from "./Money";
@@ -89,10 +90,14 @@ function DirectoryResults({ path, cursor, onCursor, clear, onRankingReady }: { p
   if (!view) return <DataState kind={error ? "error" : "loading"} title={error ? copy.failed : copy.loading} body={error ? copy.failedBody : copy.loadingBody} onRetry={error ? reload : undefined} />;
   // On worker rollback, discard an incompatible ranking response before rendering it.
   if (path.includes("sort=volume24h") && view.data.volumeRanking?.basis !== "quote-usd-v1") return <DataState compact kind="loading" title={copy.loading} />;
-  const tokens = Array.isArray(view.data?.tokens) ? view.data.tokens : [];
+  // the official token is pinned above the list on the plain first page (no search, every stage); hidden mints never list
+  const noSearch = /[?&]q=(&|$)/.test(path);
+  const pinned = !!OFFICIAL_MINT && !cursor && /[?&]stage=all(&|$)/.test(path) && noSearch;
+  const tokens = (Array.isArray(view.data?.tokens) ? view.data.tokens : []).filter((t) => isListed(t.mint) && !(pinned && isOfficial(t.mint)));
   return <><Snapshot data={view} error={error} onRetry={reload} />
     {pending && <button className="market-update" type="button" onClick={() => setShown(data)}>{copy.dataUpdated} <strong>{copy.refresh} ↻</strong></button>}
     {view.coverage.status !== "complete" && <p className="market-warning">{copy.historyPending}</p>}
+    {pinned && OFFICIAL_MINT && <OfficialTokenCard mint={OFFICIAL_MINT.toBase58()} />}
     {tokens.length ? <div className="market-grid" aria-busy={loading}>{tokens.map(t => <article className="market-card" key={t.mint}>
       <Link className="market-card-link" href={`/token/${t.mint}`} aria-label={`${copy.view} ${t.name || short(t.mint)}`}>
       <div className="market-identity"><TokenHeading token={t} mint={t.mint} large /><span className="market-arrow" aria-hidden="true">↗</span></div><span className="token-kind-note">{t.tokenKind === "stream" ? copy.stream : copy.plain}</span>
@@ -102,6 +107,19 @@ function DirectoryResults({ path, cursor, onCursor, clear, onRankingReady }: { p
     <div className="market-pagination">{cursor && <button type="button" className="button button-secondary" onClick={() => onCursor(null)}>← {copy.first}</button>}{view.data?.nextCursor && <button type="button" className="button button-secondary" onClick={() => onCursor(view.data.nextCursor)}>{copy.more} →</button>}</div>
     <Valuation />
   </>;
+}
+/** The protocol's own token, pinned above the directory: its card with the official badge, read on its own. */
+function OfficialTokenCard({ mint }: { mint: string }) {
+  const { data, error } = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mint)}`);
+  if (!data) return null; // not indexed yet, or unreadable: the list stands on its own
+  const t = data.data;
+  return <div className="market-grid market-pinned" aria-label={copy.official}><article className="market-card official-card">
+    <span className="official-badge">{copy.official}</span>
+    <Link className="market-card-link" href={`/token/${t.mint}`} aria-label={`${copy.view} ${t.name || short(t.mint)}`}>
+    <div className="market-identity"><TokenHeading token={t} mint={t.mint} large /><span className="market-arrow" aria-hidden="true">↗</span></div><span className="token-kind-note">{copy.officialNote}</span>
+    </Link><CopyAddress address={t.mint} /><SocialLinks links={t.links} tokenName={t.name} />
+    <TokenStats token={t} observedAt={error ? 0 : data.generatedAtMs} /><Stage token={t} />
+  </article></div>;
 }
 export function TokenMarket({ mint, onChain = false }: { mint: string; onChain?: boolean }) {
   const { data, error, notIndexed, reload } = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mint)}`);

@@ -15,14 +15,15 @@ import {
   DataState,
   Badge,
 } from "@/components/Experience";
-import { experience as copy, sky, wizard } from "@/content/cometail";
+import { experience as copy, sky, wizard, market } from "@/content/cometail";
+import { isListed, isOfficial } from "@/lib/addresses";
 import { useLoad } from "@/lib/hooks";
 import type { SkyStream } from "@/lib/api";
 export default function SkyPage() {
   const { data, loading, error, reload } = useLoad(loadSky, [], 30000);
   const [query, setQuery] = useState(""),
     [eligible, setEligible] = useState(false);
-  const streams = useMemo(() => data?.streams ?? [], [data]);
+  const streams = useMemo(() => (data?.streams ?? []).filter((s) => isListed(s.baseMint)), [data]);
   const shown = streams.filter(
     (s) =>
       (!eligible || s.eligible) &&
@@ -34,7 +35,8 @@ export default function SkyPage() {
   const coins = useMemo(() => {
     const byMint = new Map<string, SkyStream[]>();
     for (const s of shown) byMint.set(s.baseMint, [...(byMint.get(s.baseMint) ?? []), s]);
-    return [...byMint.values()].map((rows) => {
+    const official = (rows: SkyStream[]) => rows.some((r) => isOfficial(r.baseMint));
+    return [...byMint.values()].sort((a, b) => Number(official(b)) - Number(official(a))).map((rows) => {
       const sorted = rows.slice().sort((a, b) => Number(a.kind === "position") - Number(b.kind === "position") || (b.lockedSharePct ?? 0) - (a.lockedSharePct ?? 0));
       const lead = sorted[0];
       const sum = (pick: (s: SkyStream) => string | null) => { let any = false, t = 0n; for (const s of sorted) { const v = pick(s); if (v === null) continue; any = true; t += BigInt(v); } return any ? t.toString() : null; };
@@ -100,6 +102,7 @@ export default function SkyPage() {
                     <Link className="token-cell" href={`/token/${s.baseMint}`}>
                       <TokenHeading token={s.token} mint={s.baseMint} />
                     </Link>
+                    {isOfficial(s.baseMint) && <span className="official-badge">{market.official}</span>}
                     <p className="source-kind">{sources.length > 1 ? identity.sourcesOf(sources.length) : s.kind === "position" ? identity.positionFees : identity.creatorFees}</p>
                     <CopyAddress address={s.baseMint} />
                     <SocialLinks links={s.token?.links} tokenName={s.token?.name} />

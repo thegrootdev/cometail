@@ -1,4 +1,5 @@
 "use client";
+import { isListed } from "@/lib/addresses";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { bareSymbol } from "@/lib/token-display";
 import Link from "next/link";
@@ -406,6 +407,7 @@ export function AtlasStats({ streams }: { streams: SkyStream[] }) {
 }
 export function HomeAtlas() {
   const { data, loading, error, reload } = useLoad(loadSky, [], 30000);
+  const listed = useMemo(() => (data?.streams ?? []).filter((s) => isListed(s.baseMint)), [data]);
   return (
     <>
       <div className="atlas-divider">
@@ -415,12 +417,12 @@ export function HomeAtlas() {
         </Link>
       </div>
       <StarAtlas
-        streams={data?.streams ?? []}
+        streams={listed}
         loading={loading}
         error={!!error}
         onRetry={reload}
       />
-      {data && <AtlasStats streams={data.streams} />}
+      {data && <AtlasStats streams={listed} />}
     </>
   );
 }
