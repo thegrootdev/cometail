@@ -390,7 +390,7 @@ export function AtlasStats({ streams }: { streams: SkyStream[] }) {
       <Stat label={copy.known} value={String(streams.length)} tone="plain" />
       <Stat
         label={copy.accrued}
-        value={totals("claimableLamports")}
+        value={streams.length ? totals("claimableLamports") : "—"}
         tone="dust"
       />
       <Stat
@@ -422,7 +422,7 @@ export function HomeAtlas() {
         error={!!error}
         onRetry={reload}
       />
-      {data && <AtlasStats streams={data.streams} />}
+      {data && <AtlasStats streams={listed} />}
     </>
   );
 }

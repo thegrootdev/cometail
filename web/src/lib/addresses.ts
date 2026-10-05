@@ -43,8 +43,9 @@ export const ADDRESSES = {
 };
 /** The protocol's own token, pinned at the top of Explore and the home page once it is live (empty until then). */
 export const OFFICIAL_MINT = presetKey(process.env.NEXT_PUBLIC_OFFICIAL_MINT, "");
-/** Mints kept out of the Explore list and the home page: their token and vault pages stay reachable by
- *  link, and the indexer and metrics are untouched; a comma-separated list. */
+/** Mints kept out of the Explore list and the home page, and out of every count and total those pages
+ *  show, so nothing there refers to a coin that is not shown: their token and vault pages stay reachable
+ *  by link, and the indexer, the API and /api/metrics are untouched; a comma-separated list. */
 export const HIDDEN_MINTS = new Set((process.env.NEXT_PUBLIC_HIDDEN_MINTS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 export const isListed = (mint: string) => !HIDDEN_MINTS.has(mint);
 /** Hidden wins over official: a mint in both lists is hidden everywhere. */
