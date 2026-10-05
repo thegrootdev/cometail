@@ -97,9 +97,15 @@ function DirectoryResults({ path, cursor, onCursor, clear, onRankingReady }: { p
   // On worker rollback, discard an incompatible ranking response before rendering it.
   if (path.includes("sort=volume24h") && view.data.volumeRanking?.basis !== "quote-usd-v1") return <DataState compact kind="loading" title={copy.loading} />;
   const listed = (Array.isArray(view.data?.tokens) ? view.data.tokens : []).filter((t) => isListed(t.mint));
+  // one source for the pinned card and its freshness: the healthy detail read, else the healthy
+  // list's own row, else the cached detail marked stale (observedAt 0); payload and timestamp never mix
   const listRow = pinned ? listed.find((t) => t.mint === officialMint) ?? null : null;
-  const pinToken = pinned ? (official.data?.data ?? listRow) : null;
-  const pinObservedAt = official.data && !official.error ? official.data.generatedAtMs : listRow && !error ? view.generatedAtMs : 0;
+  const pin = !pinned ? null
+    : official.data && !official.error ? { token: official.data.data, observedAt: official.data.generatedAtMs }
+    : listRow ? { token: listRow, observedAt: error ? 0 : view.generatedAtMs }
+    : official.data ? { token: official.data.data, observedAt: 0 }
+    : null;
+  const pinToken = pin?.token ?? null, pinObservedAt = pin?.observedAt ?? 0;
   const tokens = pinToken ? listed.filter((t) => t.mint !== officialMint) : listed;
   return <><Snapshot data={view} error={error} onRetry={reload} />
     {pending && <button className="market-update" type="button" onClick={() => setShown(data)}>{copy.dataUpdated} <strong>{copy.refresh} ↻</strong></button>}
@@ -110,7 +116,7 @@ function DirectoryResults({ path, cursor, onCursor, clear, onRankingReady }: { p
       <div className="market-identity"><TokenHeading token={t} mint={t.mint} large /><span className="market-arrow" aria-hidden="true">↗</span></div><span className="token-kind-note">{t.tokenKind === "stream" ? copy.stream : copy.plain}</span>
       </Link><CopyAddress address={t.mint} /><SocialLinks links={t.links} tokenName={t.name} />
       <TokenStats token={t} observedAt={error ? 0 : view.generatedAtMs} /><Stage token={t} />
-    </article>)}</div> : pinToken ? null : <DataState title={copy.empty} body={copy.emptyBody}><button type="button" className="button button-secondary" onClick={clear}>{copy.clear}</button></DataState>}
+    </article>)}</div> : pinned ? null : <DataState title={copy.empty} body={copy.emptyBody}><button type="button" className="button button-secondary" onClick={clear}>{copy.clear}</button></DataState>}
     <div className="market-pagination">{cursor && <button type="button" className="button button-secondary" onClick={() => onCursor(null)}>← {copy.first}</button>}{view.data?.nextCursor && <button type="button" className="button button-secondary" onClick={() => onCursor(view.data.nextCursor)}>{copy.more} →</button>}</div>
     <Valuation />
   </>;

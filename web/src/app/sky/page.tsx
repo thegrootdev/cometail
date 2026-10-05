@@ -58,7 +58,7 @@ export default function SkyPage() {
         error={!!error}
         onRetry={reload}
       />
-      {data && <AtlasStats streams={streams} />}
+      {data && <AtlasStats streams={data.streams} />}
       <div className="catalogue-header">
         <h2>{copy.list}</h2>
         <span className="micro">
