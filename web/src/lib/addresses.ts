@@ -47,7 +47,8 @@ export const OFFICIAL_MINT = presetKey(process.env.NEXT_PUBLIC_OFFICIAL_MINT, ""
  *  link, and the indexer and metrics are untouched; a comma-separated list. */
 export const HIDDEN_MINTS = new Set((process.env.NEXT_PUBLIC_HIDDEN_MINTS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 export const isListed = (mint: string) => !HIDDEN_MINTS.has(mint);
-export const isOfficial = (mint: string) => !!OFFICIAL_MINT && OFFICIAL_MINT.toBase58() === mint;
+/** Hidden wins over official: a mint in both lists is hidden everywhere. */
+export const isOfficial = (mint: string) => !!OFFICIAL_MINT && OFFICIAL_MINT.toBase58() === mint && isListed(mint);
 /** Meteora's DAMM v2 configs for DBC migrations, by the config's migration fee option (0-5 fixed fees, 6 customizable). */
 export const DAMM_V2_MIGRATION_CONFIGS = [
   "7F6dnUcRuyM2TwR8myT1dYypFXpPSxqwKNSFNkxyNESd", "2nHK1kju6XjphBLbNxpM5XRGFj7p9U8vvNzyZiha1z6k", "Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp",

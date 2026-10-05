@@ -422,7 +422,7 @@ export function HomeAtlas() {
         error={!!error}
         onRetry={reload}
       />
-      {data && <AtlasStats streams={listed} />}
+      {data && <AtlasStats streams={data.streams} />}
     </>
   );
 }
