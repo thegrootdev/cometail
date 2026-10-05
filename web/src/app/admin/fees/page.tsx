@@ -18,7 +18,7 @@ import { buildProtocolClaim, formatQuote, scanProtocolClaims, type ProtocolClaim
 const KIND_LABEL: Record<ProtocolClaim["kind"], string> = {
   "dbc-partner-fee": "Partner trading fees on the curve",
   "dbc-partner-surplus": "Partner share of the curve's surplus",
-  "damm-position-fee": "Fees on the locked liquidity position",
+  "damm-position-fee": "Fees on the liquidity position",
 };
 const symbolOf = (mint: PublicKey) => (mint.toBase58() === "So11111111111111111111111111111111111111112" ? "SOL" : mint.toBase58().slice(0, 4) + "…");
 
@@ -32,6 +32,8 @@ export default function AdminFeesPage() {
   const [simulations, setSimulations] = useState<Record<string, string>>({});
   const [sent, setSent] = useState<Record<string, string>>({});
   const [active, setActive] = useState<string | null>(null);
+  // the row of the last send attempt: its outcome (error or receipt) stays visible after the busy marker clears
+  const [lastSent, setLastSent] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setScanning(true); setScanError("");
@@ -64,10 +66,11 @@ export default function AdminFeesPage() {
   };
 
   const claimNow = async (claim: ProtocolClaim) => {
-    setActive(claim.id);
+    setActive(claim.id); setLastSent(claim.id);
     try {
       const sig = await run(async () => (await build(claim)).tx, [], 300_000);
       if (sig) { setSent((s) => ({ ...s, [claim.id]: sig })); await refresh(); }
+      else setSimulations((s) => ({ ...s, [claim.id]: "" })); // a failed send needs a fresh simulation before the next try
     } finally { setActive(null); }
   };
 
@@ -87,7 +90,7 @@ export default function AdminFeesPage() {
         {scan && scan.claimers.length > 0 && (
           <ul className="mt-2 text-sm space-y-1">
             {scan.claimers.map((c) => { const bal = scan.claimerLamports[c.toBase58()] ?? 0n; return (
-              <li key={c.toBase58()}>claimer {c.toBase58()}{ADMIN && c.equals(ADMIN) ? " (admin)" : " (launch treasury)"} · holds {formatQuote(bal, 9, "SOL")}{bal < MIN_LAMPORTS ? " · needs about 0.01 SOL before it can sign a claim (fee plus the rent of a new token account)" : ""}</li>
+              <li key={c.toBase58()}>claimer {c.toBase58()}{ADMIN && c.equals(ADMIN) ? " (admin)" : " (launch treasury)"} · holds {formatQuote(bal, 9, "SOL")}{bal < MIN_LAMPORTS ? ` · ${bal === 0n ? "holds no SOL" : "too little SOL"} to sign a claim; send it about 0.01 SOL first (fee plus the rent of a new token account)` : ""}</li>
             ); })}
           </ul>
         )}
@@ -127,10 +130,10 @@ export default function AdminFeesPage() {
                 <button className="pill" onClick={() => claimNow(claim)} disabled={!mine(claim) || active !== null || status.state === "sending" || !(simulations[claim.id] ?? "").startsWith("simulation OK")}>Claim with the wallet</button>
               </div>
               {!mine(claim) && <p className="mt-1 text-xs opacity-70">Connect {claim.claimer.toBase58()} to claim this.</p>}
-              {mine(claim) && !funded(claim) && <p className="mt-1 text-xs opacity-70">This wallet holds no SOL for the fee; send it about 0.01 SOL first, then rescan.</p>}
+              {mine(claim) && !funded(claim) && <p className="mt-1 text-xs opacity-70">This wallet has too little SOL for the fee; send it about 0.01 SOL first, then rescan.</p>}
               {simulations[claim.id] && <p className="mt-2 text-sm">{simulations[claim.id]}</p>}
-              {active === claim.id && status.state === "sending" && <p className="mt-2 text-sm">Waiting for the wallet and the confirmation.</p>}
-              {active === claim.id && status.state === "error" && <p className="mt-2 text-sm">Failed: {status.message}</p>}
+              {lastSent === claim.id && status.state === "sending" && <p className="mt-2 text-sm">Waiting for the wallet and the confirmation.</p>}
+              {lastSent === claim.id && status.state === "error" && <p className="mt-2 text-sm" role="alert">Failed: {status.message}</p>}
               {sent[claim.id] && <p className="mt-2 text-sm">Sent: <a href={EXPLORER("tx", sent[claim.id])} target="_blank" rel="noreferrer">{sent[claim.id]}</a></p>}
             </li>
           ))}

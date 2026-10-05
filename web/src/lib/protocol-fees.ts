@@ -1,6 +1,6 @@
 // Protocol fee claims for the owner's wallets, read from the chain and built for the wallet to sign:
 // partner trading fees on our configs' DBC pools (the config's fee claimer signs), the partner's share
-// of a finished curve's surplus, and the fees on the fee claimers' locked DAMM v2 positions (the
+// of a finished curve's surplus, and the fees on the fee claimers' DAMM v2 positions (the
 // position's holder signs). Every claim lands in the claimer's token account for the quote (the
 // wrapped-SOL account for SOL quotes); nothing here ever closes a token account: the SDKs' builders
 // append an unwrap (a close of the wrapped-SOL account) and that instruction is removed, since the
@@ -129,7 +129,7 @@ export async function scanProtocolClaims(connection: Connection): Promise<Protoc
       const destination = getAssociatedTokenAddressSync(quoteMint, claimer, false, quoteProgram);
       const destinationExists = !!(await connection.getAccountInfo(destination));
       claims.push({
-        id: `position:${pos.position.toBase58()}`, kind: "damm-position-fee", configLabel: `locked position · ${baseMint.toBase58().slice(0, 4)}…${baseMint.toBase58().slice(-4)}`,
+        id: `position:${pos.position.toBase58()}`, kind: "damm-position-fee", configLabel: `position · ${baseMint.toBase58().slice(0, 4)}…${baseMint.toBase58().slice(-4)}`,
         pool: pos.positionState.pool, baseMint, position: pos.position, positionNftAccount: pos.positionNftAccount, claimer,
         quoteMint, quoteDecimals: await decimalsOf(quoteMint), amountQuote: quoteIsA ? feeA : feeB, amountBase: quoteIsA ? feeB : feeA, destination, destinationExists,
       });
@@ -161,7 +161,7 @@ export async function buildProtocolClaim(connection: Connection, claim: Protocol
     const tx = await dbcClient(connection).partner.claimPartnerTradingFee({
       feeClaimer: claim.claimer, payer: claim.claimer, pool: claim.pool,
       maxBaseAmount: claim.amountBase > 0n ? new BN(claim.amountBase.toString()) : new BN(0),
-      maxQuoteAmount: claim.amountQuote !== null && claim.amountQuote > 0n ? new BN(claim.amountQuote.toString()) : U64_MAX,
+      maxQuoteAmount: claim.amountQuote !== null ? new BN(claim.amountQuote.toString()) : U64_MAX,
     });
     instructions = tx.instructions;
   } else if (claim.kind === "dbc-partner-surplus") {
