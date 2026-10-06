@@ -149,6 +149,26 @@ class IndexDb {
 
 export { ESTIMATE_BASIS } from "./fee-basis";
 
+/** The file behind COMETAIL_FEE_INDEX_DB: `sqlite:/path/file.sqlite`, the form DATABASE_URL uses, or a plain path. */
+export function feeIndexPath(value: string): string {
+  const v = value.trim();
+  if (v.startsWith("sqlite:")) return v.slice("sqlite:".length);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) throw new Error(`COMETAIL_FEE_INDEX_DB must be sqlite:/path or a file path (got ${v.split(":")[0]}:)`);
+  return v;
+}
+
+/** Opens the index, or returns null and logs why: one feature never takes the indexer and its API down. */
+export async function openFeeIndexSoft(chain: Chain, store: Store, value: string, opts: FeeIndexOptions, report: (msg: string, extra: Record<string, unknown>) => void = log): Promise<FeeIndex | null> {
+  try {
+    const fi = new FeeIndex(chain, store, feeIndexPath(value), opts);
+    await fi.open();
+    return fi;
+  } catch (e) {
+    report("fee index disabled: its database could not be opened; the indexer and the API run without it", { value, error: String((e as Error).message ?? e) });
+    return null;
+  }
+}
+
 export class FeeIndex {
   readonly db: IndexDb;
   private configs = new Map<string, IndexConfig | null>();

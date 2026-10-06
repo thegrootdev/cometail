@@ -32,7 +32,7 @@ COMETAIL_SKY_EVERY_PASSES=4           # scan the pool map every N indexer passes
 COMETAIL_MIGRATE_CONFIGS=             # keeper mode: DBC configs whose completed curves the keeper migrates (the launch presets)
 COMETAIL_USDC_MINTS=                  # mints treated as dollar quotes
 COMETAIL_DEMO_ACTORS=                 # indexer mode: team and demo wallets, reported apart from independent actors by /api/metrics
-COMETAIL_FEE_INDEX_DB=                # indexer mode: the Fee Index's own SQLite file (empty = off); needs an RPC with getProgramAccountsV2
+COMETAIL_FEE_INDEX_DB=                # indexer mode: the Fee Index's own SQLite file, sqlite:/path like DATABASE_URL or a plain path (empty = off); needs an RPC with getProgramAccountsV2. If it cannot be opened the worker logs "fee index disabled" and runs without it
 COMETAIL_FEE_INDEX_FULL_HOURS=24      # a full walk of every SOL-quoted DBC config and pool this often
 COMETAIL_FEE_INDEX_DELTA_MINUTES=5    # changed pools only, in between
 ```

@@ -272,3 +272,28 @@ describe("ladder read: an unreadable order makes resting principal unknown (rech
     await store.close();
   });
 });
+
+// ---- the index never takes the indexer down (2026-10-06 crash loop) ----
+import { feeIndexPath, openFeeIndexSoft } from "../../worker/src/feeindex";
+import os from "os";
+import fsx from "fs";
+import pathx from "path";
+
+describe("fee index: database setting and fail-soft open", () => {
+  it("reads sqlite:/path like DATABASE_URL, or a plain path, and refuses other schemes", () => {
+    expect(feeIndexPath("sqlite:/opt/cometail/repo/.local/feeindex.sqlite")).eq("/opt/cometail/repo/.local/feeindex.sqlite");
+    expect(feeIndexPath(" /var/lib/x.sqlite ")).eq("/var/lib/x.sqlite");
+    expect(() => feeIndexPath("postgres://host/db")).throw(/sqlite:\/path or a file path/);
+  });
+  it("an unopenable database returns null and reports it; a good one opens", async () => {
+    const store = openStore("sqlite::memory:"); await store.init();
+    const opts = { fullEveryHours: 24, deltaEveryMinutes: 5, pageDelayMs: 0, claimLookupsPerPass: 1, namesPerPass: 0, ourConfigs: [] };
+    const reports: string[] = [];
+    const bad = await openFeeIndexSoft({ connection: {} } as any, store, "sqlite:/nonexistent-dir-for-test/feeindex.sqlite", opts, (m) => reports.push(m));
+    expect(bad).eq(null); expect(reports[0]).match(/fee index disabled/);
+    const dir = fsx.mkdtempSync(pathx.join(os.tmpdir(), "fi-"));
+    const good = await openFeeIndexSoft({ connection: {} } as any, store, `sqlite:${pathx.join(dir, "feeindex.sqlite")}`, opts, (m) => reports.push(m));
+    expect(good).not.eq(null); expect(reports.length).eq(1);
+    good!.close(); fsx.rmSync(dir, { recursive: true, force: true }); await store.close();
+  });
+});
