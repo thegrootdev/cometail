@@ -26,18 +26,20 @@ function warp(svm: any, seconds: number) {
   svm.setClock(clock);
 }
 
-/** Protocol with the presets, a creator's external plain launch, a vault created by the creator. */
+/** Protocol with the presets, a creator's external plain launch on ANOTHER launchpad's config (its own
+ *  partner as fee claimer and leftover receiver), a vault created by the creator. */
 async function world() {
   const owner = Keypair.generate();
   const svm = startSvm({ upgradeAuthority: owner.publicKey });
   svm.airdrop(owner.publicKey, BigInt(100_000_000_000));
   const client = new VaultClientStep6();
-  const keeper = fund(svm), creator = fund(svm), buyer = fund(svm), stranger = fund(svm), anyone = fund(svm);
+  const keeper = fund(svm), creator = fund(svm), buyer = fund(svm), stranger = fund(svm), anyone = fund(svm), otherPartner = fund(svm);
   const treasury = ensureAta(svm, owner, NATIVE_MINT, owner.publicKey);
   const cfgs = [] as any[];
   for (const n of ["stream-25", "stream-50", "stream-75"] as const) cfgs.push(await dbc.createConfig(svm, { payer: owner, feeClaimer: owner.publicKey, leftoverReceiver: owner.publicKey, quoteMint: NATIVE_MINT, params: dbc.configParams(n) }));
   send(svm, [await client.initProtocol({ admin: owner.publicKey, keeper: keeper.publicKey, payer: owner.publicKey, streamConfigs: cfgs as any })], [owner]);
-  const plain = await dbc.createConfig(svm, { payer: owner, feeClaimer: owner.publicKey, leftoverReceiver: owner.publicKey, quoteMint: NATIVE_MINT, params: dbc.configParams("plain") });
+  const plain = await dbc.createConfig(svm, { payer: otherPartner, feeClaimer: otherPartner.publicKey, leftoverReceiver: otherPartner.publicKey, quoteMint: NATIVE_MINT, params: dbc.configParams("plain") });
+  expect(dbc.getConfig(svm, plain).feeClaimer.equals(otherPartner.publicKey)).true;
   const mint = Keypair.generate();
   const ext = await dbc.createPoolIx({ config: plain, baseMint: mint.publicKey, quoteMint: NATIVE_MINT, creator: creator.publicKey, payer: creator.publicKey });
   send(svm, [ext.ix], [creator, mint], { cu: 600_000 });
@@ -47,7 +49,7 @@ async function world() {
   const stMint = Keypair.generate();
   const cv = await client.createVault({ depositor: creator.publicKey, stMint: stMint.publicKey, policy });
   send(svm, [cv.ix], [creator, cv.placeholder, stMint]);
-  return { svm, client, owner, keeper, creator, buyer, stranger, anyone, treasury, cfgs, plain, ext, mint, R, buyerQuote, buyerBase, stMint, cv };
+  return { svm, client, owner, keeper, creator, buyer, stranger, anyone, otherPartner, treasury, cfgs, plain, ext, mint, R, buyerQuote, buyerBase, stMint, cv };
 }
 
 /** The external pool filled and migrated, its creator position deposited, the vault launched on preset 0. */
@@ -115,6 +117,11 @@ describe("unwind: a launched vault whose curve never graduates goes back to the 
     send(svm, [back.ix, await client.withdrawStream({ vault: cv.vault, depositor: creator.publicKey, stream: deriveStream(cv.vault, 0), kind: "position", indexKey: deposited.position, nftAccount: h.vaultNft, nftMint: h.nftMint, depositorNftAccount: back.address })], [creator]);
     expect(balance(svm, back.address).toString()).eq("1");
     expect(client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data)).activeStreams).eq(0);
+    // the other launchpad's partner fee on the source coin was never the vault's to take: it is still
+    // there for that partner, on a config the vault never touched
+    const source = dbc.getPool(svm, h.ext.pool);
+    expect(dbc.getConfig(svm, h.plain).feeClaimer.equals(h.otherPartner.publicKey)).true;
+    expect(source.partnerQuoteFee.gtn(0)).true;
     // the curve keeps trading: a holder sells back, then buyers complete it and it migrates
     const sellIx = await dbc.swap2Ix(svm, { pool: L.pool, payer: buyer.publicKey, inputMint: stMint.publicKey, outputMint: NATIVE_MINT, inputAccount: buyerSt, outputAccount: h.buyerQuote, amount0: balance(svm, buyerSt).divn(2), amount1: new BN(0), mode: dbc.SwapMode.ExactIn });
     send(svm, [sellIx], [buyer], { label: "dbc.sell after unwind" });
