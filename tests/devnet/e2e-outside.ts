@@ -15,6 +15,7 @@ import fs from "fs";
 import path from "path";
 import { VaultClientStep6, deriveStream, handPositionNftToVaultIx } from "@cometail/client";
 import { createPoolIx } from "../harness/dbc";
+import { partnerFeeCheckpoints } from "./outside-checks";
 import * as dlmm from "../harness/dlmm";
 import { Chain } from "../../worker/src/chain";
 import { keeperPass } from "../../worker/src/keeper";
@@ -83,13 +84,9 @@ async function finish(a: { connection: Connection; chain: Chain; client: VaultCl
   expect(names).include.members(["launched", "live", "cashedOut", "harvested", "routed", "settled"]);
   // 9. the other partner's fee: checkpoint 1 (deposits, launch, tail migration, first harvests) must be
   // recorded equal, and checkpoint 2 (second and third keeper passes, ladder, settle) must hold now
-  const steps = a.record.steps as any[];
-  const cp1 = steps.find((x) => x.name === "partner fee checkpoint 1 after");
-  expect(cp1?.equal, "partner fee checkpoint 1 recorded equal").eq(true);
-  const cp2 = steps.find((x) => x.name === "partner fee checkpoint 2 before");
-  expect(cp2, "partner fee checkpoint 2 recorded").not.undefined;
+  const { cp2 } = partnerFeeCheckpoints(a.record.steps);
   const cp2After = await partnerFees(connection, new PublicKey(cp2.poolA), new PublicKey(cp2.poolB));
-  expect(cp2After).deep.eq({ poolA: cp2.poolA, poolB: cp2.poolB, A: cp2.A, B: cp2.B, feeClaimer: cp2.feeClaimer, leftoverReceiver: cp2.leftoverReceiver });
+  expect(cp2After).deep.eq(cp2);
   // 10. per-source splits from every indexed harvest, regular and one-time (harvest.rs split_and_pay):
   // own curve rights pay the seller 8/15; the own graduated position pays the seller 1/2; a deposited
   // external stream pays the protocol 1/5; nothing else goes to the seller or the protocol
