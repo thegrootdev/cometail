@@ -32,7 +32,20 @@ COMETAIL_SKY_EVERY_PASSES=4           # scan the pool map every N indexer passes
 COMETAIL_MIGRATE_CONFIGS=             # keeper mode: DBC configs whose completed curves the keeper migrates (the launch presets)
 COMETAIL_USDC_MINTS=                  # mints treated as dollar quotes
 COMETAIL_DEMO_ACTORS=                 # indexer mode: team and demo wallets, reported apart from independent actors by /api/metrics
+COMETAIL_FEE_INDEX_DB=                # indexer mode: the Fee Index's own SQLite file (empty = off); needs an RPC with getProgramAccountsV2
+COMETAIL_FEE_INDEX_FULL_HOURS=24      # a full walk of every SOL-quoted DBC config and pool this often
+COMETAIL_FEE_INDEX_DELTA_MINUTES=5    # changed pools only, in between
 ```
+
+The Fee Index (`src/feeindex.ts`) runs on its own loop beside the indexer, so a full walk (about
+five minutes and, measured on mainnet, 1.75 million pools and 0.48 million SOL-quoted configs read
+in 1,000-account pages of a 296-byte or 360-byte slice) never holds up the trade index. Between
+full walks, a `changedSinceSlot` walk reads only the pools written since the last one. It keeps
+SOL-paired pools that have paid their creator (about 420,000), in its own SQLite file with hourly
+counter snapshots for 48 hours. Claims are noticed as a claimable fee falling between walks and
+confirmed from the pool's recent transactions; they are published on the feed as `claim` rows. It
+reads OUR configs (`COMETAIL_SKY_CONFIGS`) to mark them in the launchpad ranking. Routes and field
+meanings: docs/api.md, "The Fee Index".
 
 ## The keeper
 

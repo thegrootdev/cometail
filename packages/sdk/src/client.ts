@@ -1,4 +1,4 @@
-import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade } from "./types.js";
+import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade, FeedType, FeeCoin, FeeEnvelope, Launchpad, OurConfig } from "./types.js";
 import { array, compareCursors, decodeEnvelope, decodeFrame, isFeedEvent, evidence, number, object, parseCursor, ProtocolError, text, tradeQuote } from "./protocol.js";
 import { FeedSubscription } from "./feed.js";
 import type { FeedOptions } from "./feed.js";
@@ -104,9 +104,12 @@ export class CometailClient {
     const r = object(await this.get("/api/prices", options)); number(r.solUsd); text(r.source); number(r.at); return row<Prices>(r);
   }
   async health(options?: RequestOptions): Promise<Health> { const r = object(await this.get("/api/health", options)); return row<Health>(r); }
-  async replay(q: { since?: string; limit?: number } = {}, options?: RequestOptions): Promise<FeedReplay> {
+  /** With `types`, the server scans `limit` rows and returns the matching ones; `nextCursor` may then name a
+   *  scanned row past the last returned event (a filtered page can be empty and still continue). */
+  async replay(q: { since?: string; limit?: number; types?: readonly FeedType[] } = {}, options?: RequestOptions): Promise<FeedReplay> {
     if (q.since !== undefined) parseCursor(q.since);
-    const r = object(await this.get("/api/feed" + query(q, 500), options));
+    const filtered = !!q.types?.length;
+    const r = object(await this.get("/api/feed" + query({ since: q.since, limit: q.limit, types: filtered ? q.types!.join(",") : undefined }, 500), options));
     if (r.schemaVersion !== 1 || r.type !== "replay") throw new ProtocolError("Unsupported replay envelope");
     text(r.cluster); number(r.generatedAtMs);
     let previous = q.since;
@@ -117,13 +120,27 @@ export class CometailClient {
       previous = frame.cursor; return frame;
     });
     const next = r.nextCursor === null ? null : text(r.nextCursor);
-    if (next !== null && (events.length === 0 || compareCursors(next, events[events.length - 1]!.cursor) !== 0)) throw new ProtocolError("nextCursor must acknowledge the last event in this replay page");
-    return { schemaVersion: 1, type: "replay", cluster: text(r.cluster), generatedAtMs: number(r.generatedAtMs), events, nextCursor: next };
+    if (next !== null && !filtered && (events.length === 0 || compareCursors(next, events[events.length - 1]!.cursor) !== 0)) throw new ProtocolError("nextCursor must acknowledge the last event in this replay page");
+    if (next !== null && filtered && events.length && compareCursors(next, events[events.length - 1]!.cursor) < 0) throw new ProtocolError("nextCursor must not precede the last event in this replay page");
+    if (filtered) for (const e of events) if (!q.types!.includes(e.type)) throw new ProtocolError("Replay returned a type that was not asked for");
+    return { schemaVersion: 1, type: "replay", cluster: text(r.cluster), generatedAtMs: number(r.generatedAtMs), events, nextCursor: next, ...(filtered ? { types: [...q.types!] } : {}) };
   }
   /** One page at a time; abort cancels an active request. Does not claim retention is complete. */
-  async *replayAll(since?: string, options?: RequestOptions): AsyncGenerator<FeedEvent> {
+  async *replayAll(since?: string, options?: RequestOptions, types?: readonly FeedType[]): AsyncGenerator<FeedEvent> {
     let cursor = since;
-    do { const page = await this.replay({ since: cursor, limit: 500 }, options); for (const event of page.events) yield event; if (page.nextCursor === null) return; cursor = page.nextCursor; } while (true);
+    do { const page = await this.replay({ since: cursor, limit: 500, types }, options); for (const event of page.events) yield event; if (page.nextCursor === null) return; cursor = page.nextCursor; } while (true);
+  }
+  /** The Fee Index: SOL-paired DBC coins of every launchpad, ranked by creator income. */
+  async feeCoins(q: { sort?: "day" | "claimable" | "lifetime" | "avg"; stage?: "all" | "bonding" | "graduated"; eligible?: boolean; creator?: Address; q?: string; limit?: number; offset?: number } = {}, options?: RequestOptions): Promise<FeeEnvelope & { coins: FeeCoin[]; offset: number; limit: number }> {
+    const r = object(await this.get("/api/fees/coins" + query({ sort: q.sort, stage: q.stage, eligible: q.eligible ? 1 : undefined, creator: q.creator, q: q.q, limit: q.limit, offset: q.offset }, 200), options));
+    array(r.coins); object(r.coverage); return r as unknown as FeeEnvelope & { coins: FeeCoin[]; offset: number; limit: number };
+  }
+  async feeCoin(mint: Address, options?: RequestOptions): Promise<FeeEnvelope & { coin: FeeCoin }> {
+    const r = object(await this.get(`/api/fees/coins/${address(mint)}`, options)); object(r.coin); return r as unknown as FeeEnvelope & { coin: FeeCoin };
+  }
+  /** Launchpads (fee claimers) ranked by what their creators earn, and the protocol's own configs. */
+  async launchpads(options?: RequestOptions): Promise<FeeEnvelope & { launchpads: Launchpad[]; ourConfigs: OurConfig[] }> {
+    const r = object(await this.get("/api/fees/launchpads", options)); array(r.launchpads); return r as unknown as FeeEnvelope & { launchpads: Launchpad[]; ourConfigs: OurConfig[] };
   }
   feed(options: FeedOptions): FeedSubscription { return new FeedSubscription(this.baseUrl, options); }
 }

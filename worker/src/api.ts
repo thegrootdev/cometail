@@ -13,14 +13,15 @@
 // It binds to the loopback interface and expects a reverse proxy in front for TLS. CORS is
 // limited to the configured origins, and each client address gets a token bucket; the
 // client address is taken from X-Forwarded-For only when the connection comes from loopback.
+import type { FeeIndex } from "./feeindex";
 import http from "http";
 import net from "net";
 import { Store, TokenRow, TradeRow } from "./store";
-import { attachFeed, parseCursor, replay } from "./feed";
+import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed";
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -306,6 +307,31 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
   return send(404, { error: "not found" });
 }
 
+/** The Fee Index routes: public and read-only, any origin, rate-limited like everything else. */
+function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: number, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
+  const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=30" };
+  if (!fi) return send(503, { error: "fee index not enabled on this server" }, any);
+  const status = fi.status();
+  const head = { schemaVersion: 1, cluster, generatedAtMs: Date.now(), coverage: status };
+  if (url.pathname === "/api/fees/status") return send(200, head, any);
+  if (url.pathname === "/api/fees/launchpads") { const s = fi.db.meta("summary"); return send(200, { ...head, ...(s ? JSON.parse(s) : { launchpads: [], ourConfigs: [] }) }, any); }
+  if (url.pathname === "/api/fees/coins") {
+    const sort = url.searchParams.get("sort") ?? "day";
+    if (!["day", "claimable", "lifetime", "avg"].includes(sort)) return send(400, { error: "sort must be day, claimable, lifetime or avg" }, any);
+    const stage = url.searchParams.get("stage") ?? "all";
+    if (!["all", "bonding", "graduated"].includes(stage)) return send(400, { error: "stage must be all, bonding or graduated" }, any);
+    const creator = url.searchParams.get("creator");
+    if (creator && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(creator)) return send(400, { error: "bad creator" }, any);
+    const offset = Math.max(0, Math.min(100_000, Number(url.searchParams.get("offset") ?? 0) || 0));
+    const search = (url.searchParams.get("q") ?? "").trim().slice(0, 64) || null;
+    const n = Math.min(200, limit);
+    return send(200, { ...head, coins: fi.coins({ sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset }, status.deltaSlot), offset, limit: n }, any);
+  }
+  const m = url.pathname.match(/^\/api\/fees\/coins\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
+  if (m) { const c = fi.coin(m[1], status.deltaSlot); return c ? send(200, { ...head, coin: c }, any) : send(404, { ...head, error: "not in the fee index (not SOL-paired, or no creator fee yet)" }, any); }
+  return send(404, { error: "not found" }, any);
+}
+
 export async function startApi(store: Store, opts: ApiOptions): Promise<http.Server> {
   await refuseIfTaken(opts.host, opts.port);
   const buckets = new Buckets(opts.ratePerMinute, Math.max(10, Math.ceil(opts.ratePerMinute / 2)));
@@ -326,7 +352,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       res.end(JSON.stringify(body));
     };
     try {
-      if (req.method === "OPTIONS") { res.writeHead(204, url.pathname === "/api/feed" ? { "access-control-allow-origin": "*", "access-control-allow-methods": "GET", "access-control-max-age": "600" } : cors); return res.end(); }
+      if (req.method === "OPTIONS") { res.writeHead(204, url.pathname === "/api/feed" || url.pathname.startsWith("/api/fees") ? { "access-control-allow-origin": "*", "access-control-allow-methods": "GET", "access-control-max-age": "600" } : cors); return res.end(); }
       if (req.method !== "GET") return send(405, { error: "method not allowed" }, { allow: "GET" });
       const remote = req.socket.remoteAddress ?? "";
       const fromProxy = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
@@ -356,10 +382,13 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         const since = url.searchParams.get("since");
         const cursor = since ? parseCursor(since) : null;
         if (since && !cursor) return send(400, { error: "bad cursor" }, { "access-control-allow-origin": "*" });
-        const r = await replay(store, opts.cluster ?? "devnet", cursor, Math.min(500, limit));
+        const types = parseTypes(url.searchParams.get("types"));
+        if (types === "invalid") return send(400, { error: "unknown type", types: [...FEED_TYPES, "fees"] }, { "access-control-allow-origin": "*" });
+        const r = await replay(store, opts.cluster ?? "devnet", cursor, Math.min(500, limit), types);
         return send(r.status, r.body, { "access-control-allow-origin": "*", "cache-control": "no-store" });
       }
       if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return await tokenRoutes(store, opts, url, send);
+      if (url.pathname.startsWith("/api/fees")) return feeRoutes(opts.feeIndex ?? null, opts.cluster ?? "devnet", url, limit, send);
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {
         // the whole store is read for this document: computed at most once per 30 s, shared by every caller

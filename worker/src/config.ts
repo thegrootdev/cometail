@@ -46,6 +46,11 @@ export interface Config {
   cluster: string;
   dryRun: boolean;
   cuPriceMicroLamports: number;
+  /** The Fee Index's own SQLite file (indexer mode); empty disables it. Needs an RPC with getProgramAccountsV2. */
+  feeIndexDb: string | null;
+  /** A full walk of every SOL-quoted DBC config and pool this often; changed pools only in between. */
+  feeIndexFullHours: number;
+  feeIndexDeltaMinutes: number;
 }
 
 function env(name: string, fallback?: string): string {
@@ -96,5 +101,8 @@ export function loadConfig(): Config {
     cluster: env("COMETAIL_CLUSTER", "devnet"),
     dryRun: env("COMETAIL_DRY_RUN", "0") === "1",
     cuPriceMicroLamports: num("COMETAIL_CU_PRICE", 0),
+    feeIndexDb: process.env.COMETAIL_FEE_INDEX_DB || null,
+    feeIndexFullHours: Math.max(1, num("COMETAIL_FEE_INDEX_FULL_HOURS", 24)),
+    feeIndexDeltaMinutes: Math.max(1, num("COMETAIL_FEE_INDEX_DELTA_MINUTES", 5)),
   };
 }

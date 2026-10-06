@@ -37,9 +37,44 @@ whole-token supply and a rate rounded to cents, and printed with 2 places.
 Every number comes from the chain or from the indexer's own observation of it; a value the
 worker estimates says so in its field name or a `basis`/`status` sibling.
 
+## The Fee Index
+Every SOL-paired Meteora DBC coin from any launchpad that has paid its creator, with what the
+creator earns on the curve. Public and read-only: any origin, the same per-client rate limit
+as every route (120 requests a minute, burst 60), `cache-control: public, max-age=30`. Every
+answer carries `{ schemaVersion: 1, cluster, generatedAtMs, coverage }`, where `coverage` is
+`{ mode: "all-dbc", pools, configs, fullSlot, deltaSlot, fullAtMs, deltaAtMs, fullEveryHours, deltaEveryMinutes }`.
+
+| Route | Answer |
+|---|---|
+| `/api/fees/status` | the envelope alone |
+| `/api/fees/coins?sort=day\|claimable\|lifetime\|avg&stage=all\|bonding\|graduated&eligible=1&creator=&q=&limit=&offset=` (limit max 200) | `{ coins, offset, limit }`, each coin `{ mint, pool, config, creator, launchpad, ours, name, symbol, stage, creatorFeePct, creatorLifetimeLamports, creatorLast24hLamports, last24hWindowHours, creatorAvgPerDayLamports, claimableLamports, launchedAtMs, tailEligible, reasons, changedAtMs }` |
+| `/api/fees/coins/<mint>` | `{ coin }`, or 404 when the coin is not SOL-paired or has not paid its creator |
+| `/api/fees/launchpads` | `{ launchpads, ourConfigs }`: fee claimers ranked by creator income in the last 24 hours, then lifetime (top 200), each `{ launchpad, ours, coins, configs, graduated, tailEligibleCoins, creatorLifetimeLamports, creatorLast24hLamports, claimableLamports, creatorFeePct }` (`creatorFeePct` null when its configs differ); `ourConfigs` the protocol's own configs with the same totals |
+
+How the numbers are made:
+- `creatorLifetimeLamports`: the pool's lifetime trading-fee counter (`metrics.totalTradingQuoteFee`, after Meteora's protocol share) times the config's creator trading-fee percentage. Curve fees only.
+- `claimableLamports`: the pool's unclaimed creator fee (`creatorQuoteFee`), now.
+- `creatorLast24hLamports`: the counter's growth since the newest hourly snapshot at least 24 hours old, times the creator share; `last24hWindowHours` is the actual window (shorter while the index has less history).
+- `creatorAvgPerDayLamports`: lifetime over days since activation (at least one day).
+- `tailEligible` and `reasons`: the program's own deposit rules for creator rights (SOL quote, fees in SOL, DAMM v2 migration, creator liquidity permanently locked and nothing unlocked or vesting) and a stage the vault accepts (bonding or graduated). The deposit itself checks the rest (mint extensions, freeze authority).
+- Not included: fees on the creator's locked DAMM v2 position after graduation, which are not in the DBC pool.
+
+Coverage: a full walk of every SOL-quoted DBC config and every DBC pool once a day (paginated,
+sliced `getProgramAccountsV2`: about one minute for the configs and four for the pools), and a
+walk of only the pools changed since the last one every few minutes (`changedSinceSlot`; fifteen
+minutes of changes is about a hundred pools in ten seconds). Configs are immutable and read once.
+Names come from Metaplex metadata for the top earners first; a coin without one shows its mint.
+
 ## The feed
 `wss://api.cometail.fun/api/feed` (one JSON text frame per event) and `GET /api/feed?since=<cursor>&limit=`
-(replay, max 500; any origin may read it).
+(replay, max 500; any origin may read it). Both take `types=<comma list>` to receive only some
+event types; `types=fees` is the fee stream (`claim`, `harvest`, `bid`, `fill`, whose `burnedStRaw`
+is the burn). Control frames always arrive. A filtered replay scans `limit` rows and returns the
+matching ones: its `nextCursor` then names the last scanned row and may lie past the last returned
+event, so an empty filtered page can still continue. An unknown type answers 400.
+The SDK (`packages/sdk`) wraps both: `client.feed({ types: FEE_TYPES, onEvent })` and
+`client.replayAll(since, undefined, FEE_TYPES)`; `packages/sdk/examples/fee-events.mjs` prints the
+fee stream in a terminal and resumes from a cursor.
 
 Frame: `{ schemaVersion: 1, cluster, type, cursor, observedSlot, generatedAtMs, provenance, data }`.
 Replay is its own shape, not the token envelope: `{ schemaVersion, cluster, type: "replay",
@@ -57,6 +92,7 @@ Types and `data`:
 - `fill` { vault, order, burnedStRaw, unfilledLamports, signature }
 - `cashout` { vault, depositorLamports, signature }
 - `unwind` { vault, stMint, dbcPool, incomeReturned, launchedAt, unwoundAt, signature }
+- `claim` { mint, pool, role (`creator` or `partner`), quoteAmountLamports, baseAmountRaw, signature }: a fee claimed on a DBC pool of any launchpad the Fee Index covers, from the claim event in the transaction (the index notices the claimable fee fall between walks, then reads the pool's recent transactions)
 - `vault` { vault, event, ...the event's fields, signature }: every other program event (vaultCreated, streamDeposited, streamPositionRegistered, streamWithdrawn, launched, pairRegistered, live), so a consumer that ignores unknown types loses nothing it asked for.
 
 Token rows (`launch`, `graduation`) carry no transaction: their cursor's third part is the mint and the slot is the scan's observed slot (their identity is the type and the mint); `provenance.source` is `indexer`. Harvest rows carry `grossLamports`, `toDepositorLamports`, `toProtocolLamports` and `oneTime` next to `incomeLamports`.

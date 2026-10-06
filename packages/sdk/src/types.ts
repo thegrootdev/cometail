@@ -107,14 +107,29 @@ export interface FeedData {
   cashout: { vault: Address; depositorLamports: RawAmount | null; signature: string };
   unwind: { vault: Address; stMint: Address | null; dbcPool: Address | null; incomeReturned: RawAmount | null; launchedAt?: string | null; unwoundAt?: string | null; signature: string };
   vault: { vault: Address; event: string; signature: string; [key: string]: Json };
+  /** A creator or partner fee claimed on a DBC pool of any launchpad, from the claim event itself. */
+  claim: { mint: Address | null; pool: Address; role: "creator" | "partner"; quoteAmountLamports: RawAmount; baseAmountRaw: RawAmount; signature: string };
 }
 export type FeedType = keyof FeedData;
+/** The fee events: claims, vault harvests, buyback bids, and fills (whose burnedStRaw is the burn). */
+export const FEE_TYPES = ["claim", "harvest", "bid", "fill"] as const satisfies readonly FeedType[];
 type Origin<T> = { provenance: Provenance & { source: "chain" | "indexer" }; data: T & { basis?: string } } | { provenance: Provenance & { source: "estimate" }; data: T & { basis: string } };
 export type FeedEvent = { [K in FeedType]: { schemaVersion: 1; cluster: string; type: K; cursor: Cursor; observedSlot: number | null; generatedAtMs: number } & Origin<FeedData[K]> }[FeedType];
 /** `oldest` is null when the feed is empty; `resume` is then the reset cursor "0:0:~", accepted before and after the first event. */
 export interface GapFrame { type: "gap"; oldest: Cursor | null; resume: Cursor }
 export type ControlFrame = GapFrame | { type: "hello"; cursor: Cursor | null; retentionSlots: number } | { type: "ping"; generatedAtMs: number } | ({ type: "coverage" } & Coverage);
 export type FeedFrame = FeedEvent | ControlFrame;
-export interface FeedReplay { schemaVersion: 1; cluster: string; type: "replay"; generatedAtMs: number; events: FeedEvent[]; nextCursor: Cursor | null }
+export interface FeedReplay { schemaVersion: 1; cluster: string; type: "replay"; generatedAtMs: number; events: FeedEvent[]; nextCursor: Cursor | null; types?: FeedType[] }
+/** One coin in the Fee Index: a SOL-paired DBC coin of any launchpad and what its creator earns on the curve. */
+export interface FeeCoin {
+  mint: Address; pool: Address; config: Address; creator: Address; launchpad: Address | null; ours: boolean; name: string | null; symbol: string | null;
+  stage: "bonding" | "migrating" | "graduated"; creatorFeePct: number | null;
+  creatorLifetimeLamports: RawAmount; creatorLast24hLamports: RawAmount; last24hWindowHours: number; creatorAvgPerDayLamports: RawAmount;
+  claimableLamports: RawAmount; launchedAtMs: number; tailEligible: boolean; reasons: string[]; changedAtMs: number;
+}
+export interface FeeCoverage { mode: "all-dbc"; pools: number; configs: number; fullSlot: number; deltaSlot: number; fullAtMs: number; deltaAtMs: number; fullEveryHours: number; deltaEveryMinutes: number }
+export interface FeeEnvelope { schemaVersion: 1; cluster: string; generatedAtMs: number; coverage: FeeCoverage }
+export interface Launchpad { rank: number; launchpad: Address; ours: boolean; coins: number; configs: number; graduated: number; tailEligibleCoins: number; creatorLifetimeLamports: RawAmount; creatorLast24hLamports: RawAmount; claimableLamports: RawAmount; creatorFeePct: number | null }
+export interface OurConfig { config: Address; launchpad: Address | null; creatorFeePct: number | null; tailEligibleConfig: boolean | null; coins: number; graduated: number; creatorLifetimeLamports: RawAmount; creatorLast24hLamports: RawAmount; claimableLamports: RawAmount }
 export interface RequestOptions { signal?: AbortSignal }
 export interface TokenQuery { sort?: "volume24h" | "newest"; stage?: "bonding" | "graduated" | "all"; q?: string; limit?: number; cursor?: string }

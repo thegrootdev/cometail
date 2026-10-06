@@ -8,6 +8,7 @@ import { loadConfig } from "./config";
 import { Indexer } from "./indexer";
 import { startApi } from "./api";
 import { scanSky } from "./sky";
+import { FeeIndex } from "./feeindex";
 import { feedFromTokens, publish, feedBus } from "./feed";
 import { scanTokens } from "./tokens";
 import { openStore } from "./store";
@@ -32,8 +33,21 @@ async function main() {
     const store = openStore(cfg.databaseUrl);
     await store.init();
     const indexer = new Indexer(chain, store);
+    // the Fee Index runs on its own clock beside the indexer: a full walk can take minutes and must never hold up the trade index
+    let feeIndex: FeeIndex | null = null;
+    if (cfg.feeIndexDb) {
+      feeIndex = new FeeIndex(chain, store, cfg.feeIndexDb, { fullEveryHours: cfg.feeIndexFullHours, deltaEveryMinutes: cfg.feeIndexDeltaMinutes, pageDelayMs: 50, claimLookupsPerPass: 20, namesPerPass: 500, ourConfigs: cfg.skyConfigs.map((k) => k.toBase58()) });
+      await feeIndex.open();
+      void (async () => {
+        while (!stopping) {
+          try { await feeIndex!.pass(); } catch (e) { log("fee index pass failed", { error: String((e as Error).message ?? e) }); }
+          if (process.env.COMETAIL_ONCE === "1") break;
+          await sleep(cfg.feeIndexDeltaMinutes * 60_000);
+        }
+      })();
+    }
     // exit status 2 = the API port is taken; the service unit does not restart on it
-    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
+    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster , feeIndex}).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
     let passes = 0;
     while (!stopping) {
       let added = 0;
@@ -58,6 +72,7 @@ async function main() {
       await sleep(cfg.pollMs);
     }
     api?.close();
+    feeIndex?.close();
     await store.close();
     return;
   }

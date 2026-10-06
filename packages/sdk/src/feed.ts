@@ -1,4 +1,4 @@
-import type { ControlFrame, FeedEvent } from "./types.js";
+import type { ControlFrame, FeedEvent, FeedType } from "./types.js";
 import { compareCursors, decodeFrame, isFeedEvent, parseCursor, ProtocolError, FeedGapError } from "./protocol.js";
 /** Browser WebSocket and standards-compatible Node implementations satisfy this interface. */
 export interface SocketLike {
@@ -7,6 +7,8 @@ export interface SocketLike {
 }
 export interface FeedOptions {
   since?: string;
+  /** Only these event types (the server filters; control frames always arrive). `FEE_TYPES` is the fee stream. */
+  types?: readonly FeedType[];
   /** A resolved callback acknowledges delivery. A rejection stops without advancing the cursor. */
   onEvent: (event: FeedEvent) => void | Promise<void>;
   onControl?: (frame: ControlFrame) => void;
@@ -103,6 +105,7 @@ export class FeedSubscription {
     if (this.stopped) return;
     this.state("connecting"); if (this.stopped) return;
     const url = new URL(this.url); if (this.delivered !== undefined) url.searchParams.set("since", this.delivered);
+    if (this.options.types?.length) url.searchParams.set("types", this.options.types.join(","));
     let socket: SocketLike;
     try { socket = this.factory(url.href); } catch (e) { this.report(e); this.retry(); return; }
     this.socket = socket; let received: string | undefined;

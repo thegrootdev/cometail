@@ -62,12 +62,14 @@ const required: Record<string, readonly string[]> = {
   harvest: ["vault", "signature"], bid: ["vault", "signature"],
   fill: ["vault", "signature"], cashout: ["vault", "signature"],
   unwind: ["vault", "signature"], vault: ["vault", "event", "signature"],
+  claim: ["pool", "role", "quoteAmountLamports", "baseAmountRaw", "signature"],
 };
 const nullable: Record<string, readonly string[]> = {
   trade: ["mint", "venue", "baseAmountRaw", "quoteAmountLamports", "executionPriceSol"],
   graduation: ["dammPool"], harvest: ["stream", "incomeLamports"],
   bid: ["order", "grossLamports"], fill: ["order", "burnedStRaw", "unfilledLamports"],
   cashout: ["depositorLamports"], unwind: ["stMint", "dbcPool", "incomeReturned"],
+  claim: ["mint"],
 };
 /** The quote the trade settled in: always present on the wire; the SOL price is null unless the quote is WSOL. */
 export function tradeQuote(d: Record<string, unknown>): void {

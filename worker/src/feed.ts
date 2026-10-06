@@ -100,7 +100,24 @@ export function rowFrame(cluster: string, r: FeedRow) {
 }
 
 /** Replay from an exclusive cursor: { events, nextCursor } or an expiry. */
-export async function replay(store: Store, cluster: string, since: CursorLike | null, limit: number): Promise<{ status: 200 | 410; body: any }> {
+/** Every row type the feed publishes, and `fees`: the fee events (claims, harvests, buyback bids, fills that burn). */
+export const FEED_TYPES = ["launch", "trade", "graduation", "harvest", "bid", "fill", "cashout", "unwind", "vault", "claim"] as const;
+export const FEE_TYPES = ["claim", "harvest", "bid", "fill"] as const;
+/** `types=a,b` from a query: null for every type, a set otherwise; an unknown name is an error. */
+export function parseTypes(raw: string | null): Set<string> | null | "invalid" {
+  if (raw === null || raw.trim() === "") return null;
+  const out = new Set<string>();
+  for (const t of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    if (t === "fees") FEE_TYPES.forEach((x) => out.add(x));
+    else if ((FEED_TYPES as readonly string[]).includes(t)) out.add(t);
+    else return "invalid";
+  }
+  return out.size ? out : null;
+}
+
+/** Replay, optionally of some types only: `limit` rows are scanned; `events` holds the matching ones and
+ *  `nextCursor` names the last scanned row whenever more remain, so a filtered page can be empty yet continue. */
+export async function replay(store: Store, cluster: string, since: CursorLike | null, limit: number, types: Set<string> | null = null): Promise<{ status: 200 | 410; body: any }> {
   const oldest = await store.oldestFeed();
   if (since && !isReset(since)) {
     if (oldest && compareCursor(since, oldest) < 0 && cursorOf(since) !== resumeBefore(oldest)) {
@@ -115,7 +132,7 @@ export async function replay(store: Store, cluster: string, since: CursorLike | 
   }
   const rows = await store.listFeedSince(since ? { seq: since.seq ?? 0 } : null, limit + 1);
   const page = rows.slice(0, limit);
-  return { status: 200, body: { ...frame(cluster, "replay", {}), events: page.map((r) => rowFrame(cluster, r)), nextCursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null } };
+  return { status: 200, body: { ...frame(cluster, "replay", {}), ...(types ? { types: [...types] } : {}), events: page.filter((r) => !types || types.has(r.type)).map((r) => rowFrame(cluster, r)), nextCursor: rows.length > limit && page.length ? cursorOf(page[page.length - 1]) : null } };
 }
 
 // ---- the socket ----
@@ -193,6 +210,9 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
     const since = url.searchParams.get("since");
     const sinceCursor = since ? parseCursor(since) : null;
     if (since && !sinceCursor) return refuse(400, "Bad Cursor");
+    const types = parseTypes(url.searchParams.get("types"));
+    if (types === "invalid") return refuse(400, "Bad Types");
+    const wanted = (r: FeedRow) => !types || types.has(r.type);
     const accept = crypto.createHash("sha1").update(key + GUID).digest("base64");
     socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
     const client = new Client(socket, clientKey);
@@ -210,7 +230,8 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
         if (queued.length >= 1000) { client.close(1013); return; }
         queued.push(r);
       } else if (!delivered || compareCursor(r, delivered) > 0) {
-        client.send(rowFrame(opts.cluster, r)); delivered = r;
+        if (wanted(r)) client.send(rowFrame(opts.cluster, r));
+        delivered = r;
       }
     };
     const detach = () => { feedBus.off("event", live); queued.length = 0; client.closed = true; };
@@ -232,7 +253,8 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
         const rows = await store.listFeedSince({ seq: delivered.seq ?? 0 }, 500);
         for (const r of rows) {
           if (client.closed) break;
-          client.send(rowFrame(opts.cluster, r)); delivered = r;
+          if (wanted(r)) client.send(rowFrame(opts.cluster, r));
+          delivered = r;
         }
         if (rows.length < 500) break;
       }
@@ -241,7 +263,8 @@ export function attachFeed(server: http.Server, store: Store, opts: FeedOptions)
       if (client.closed) return;
       queued.sort(compareCursor);
       for (const r of queued) if (!delivered || compareCursor(r, delivered) > 0) {
-        client.send(rowFrame(opts.cluster, r)); delivered = r;
+        if (wanted(r)) client.send(rowFrame(opts.cluster, r));
+        delivered = r;
       }
       queued.length = 0;
       client.send(frame(opts.cluster, "hello", { cursor: headRow ? cursorOf(headRow) : null, retentionSlots: FEED_RETENTION_SLOTS }));
