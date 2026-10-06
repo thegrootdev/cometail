@@ -46,6 +46,7 @@ export function Shell({
     { href: "/sky", label: nav.sky, icon: "/art/sticker-telescope.webp" },
     { href: "/launch", label: nav.launch, icon: "/art/sticker-planet.webp" },
     { href: "/sell", label: nav.sell, icon: "/art/sticker-coin.webp" },
+    { href: "/fees", label: nav.fees, icon: "/art/sticker-coin.webp" },
     { href: "/portfolio", label: nav.portfolio, icon: "/art/sticker-flame.webp" },
   ];
   return (

@@ -1,4 +1,5 @@
 "use client";
+import { api } from "@/lib/api";
 import { friendlyError, insufficientSol, insufficientTokens } from "@/lib/errors";
 import { AmountInput } from "@/components/AmountInput";
 import { readTokenBalance, useSolBalance, useTokenBalance } from "@/lib/balances";
@@ -26,7 +27,7 @@ import {
   BackToSky,
 } from "@/components/Experience";
 import { Shell, Card, Stat, ConnectWallet } from "@/components/Shell";
-import { tokenPage, amounts, experience as c, failures } from "@/content/cometail";
+import { tokenPage, amounts, experience as c, failures, tailsPage } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
   claimCreatorFeesTx,
@@ -269,6 +270,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           </Link>
         )}
       </div>
+      <TailLink mint={mintStr} />
       <TokenMarket mint={mintStr} onChain={!!view} />
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
@@ -451,5 +453,21 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         </>
       )}
     </Shell>
+  );
+}
+
+/** When this coin's fees are deposited in a vault, the tail they fund: a link to its vault and to the Tails page. */
+function TailLink({ mint }: { mint: string }) {
+  const [vaults, setVaults] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    void api.sky().then((r) => { if (live && r) setVaults([...new Set(r.streams.filter((x) => x.baseMint === mint && x.vault).map((x) => String(x.vault)))]); });
+    return () => { live = false; };
+  }, [mint]);
+  if (!vaults.length) return null;
+  return (
+    <p className="form-notice mt-3">
+      {tailsPage.fromCoin}: {vaults.map((v, i) => <span key={v}>{i ? ", " : ""}<Link className="text-link" href={`/vault/${v}`}>{short(v)} ↗</Link></span>)} · <Link className="text-link" href="/tails">{tailsPage.title} ↗</Link>
+    </p>
   );
 }

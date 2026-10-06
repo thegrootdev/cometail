@@ -35,6 +35,7 @@ import {
   derivedDammPool,
   poolsByCreator,
   MigrationProgress,
+  loadPool,
 } from "@/lib/dbc";
 import { cpAmm } from "@/lib/damm";
 import {
@@ -94,8 +95,18 @@ function Wizard() {
     const out: Stream[] = [];
     const dbc = dbcState(connection);
     const amm = cpAmm(connection);
+    // the creator's pools on any launchpad's config: a program scan by creator, and the Fee Index when
+    // the RPC refuses that scan (busy mainnet nodes deprioritize program-wide reads)
+    const creatorPools = async () => {
+      try { return await poolsByCreator(connection, publicKey); } catch (e) {
+        const r = await api.feeCoins({ sort: "lifetime", stage: "all", eligible: false, creator: publicKey.toBase58(), limit: 200 });
+        if (!r) throw e;
+        const loaded = await Promise.all(r.coins.map(async (c) => { const v = await loadPool(connection, new PublicKey(c.pool)); return v ? { pool: new PublicKey(c.pool), state: v.state } : null; }));
+        return loaded.filter((x): x is { pool: PublicKey; state: any } => !!x);
+      }
+    };
     const [pools, positions] = await Promise.all([
-      poolsByCreator(connection, publicKey),
+      creatorPools(),
       amm.getPositionsByUser(publicKey),
     ]);
     const bundled = new Set<string>();

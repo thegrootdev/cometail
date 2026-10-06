@@ -59,7 +59,23 @@ async function get<T>(path: string): Promise<T | null> {
     return null;
   }
 }
+/** The Fee Index (worker feeindex.ts, docs/api.md "The Fee Index"). */
+export interface FeeCoin {
+  mint: string; pool: string; config: string; creator: string; launchpad: string | null; ours: boolean; name: string | null; symbol: string | null;
+  stage: "bonding" | "migrating" | "graduated"; creatorFeePct: number | null;
+  creatorLifetimeLamports: string; creatorLast24hLamports: string; last24hWindowHours: number; creatorAvgPerDayLamports: string;
+  claimableLamports: string; launchedAtMs: number; tailEligible: boolean; reasons: string[]; changedAtMs: number;
+}
+export interface FeeCoverage { mode: string; pools: number; configs: number; fullAtMs: number; deltaAtMs: number; fullEveryHours: number; deltaEveryMinutes: number }
+export interface Launchpad { rank: number; launchpad: string; ours: boolean; coins: number; configs: number; graduated: number; tailEligibleCoins: number; creatorLifetimeLamports: string; creatorLast24hLamports: string; claimableLamports: string; creatorFeePct: number | null }
+export interface OurConfig { config: string; launchpad: string | null; creatorFeePct: number | null; tailEligibleConfig: boolean | null; coins: number; graduated: number; creatorLifetimeLamports: string; creatorLast24hLamports: string; claimableLamports: string }
 export const api = {
+  feeCoins: (q: { sort: string; stage: string; eligible: boolean; creator?: string | null; q?: string; offset?: number; limit?: number }) => {
+    const p = new URLSearchParams({ sort: q.sort, stage: q.stage, limit: String(q.limit ?? 50), offset: String(q.offset ?? 0) });
+    if (q.eligible) p.set("eligible", "1"); if (q.creator) p.set("creator", q.creator); if (q.q) p.set("q", q.q);
+    return get<{ coverage: FeeCoverage; coins: FeeCoin[]; offset: number; limit: number }>(`/api/fees/coins?${p}`);
+  },
+  feeLaunchpads: () => get<{ coverage: FeeCoverage; launchpads: Launchpad[]; ourConfigs: OurConfig[] }>("/api/fees/launchpads"),
   sky: () => get<{ streams: SkyStream[] }>("/api/sky?limit=500"),
   vaults: () => get<{ vaults: VaultRow[] }>("/api/vaults"),
   vault: (key: string) =>

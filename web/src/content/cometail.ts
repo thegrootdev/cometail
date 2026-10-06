@@ -54,7 +54,40 @@ export const nav = {
   launch: "Launch a token",
   sell: "Sell your fees",
   sky: "Explore tokens",
+  fees: "Fee Index",
   portfolio: "Portfolio",
+} as const;
+
+export const feeIndex = {
+  eyebrow: "Every Meteora launchpad",
+  title: "Fee Index",
+  body: "Every SOL-paired Meteora coin that has paid its creator, from any launchpad: what the creator earns, what is waiting to be claimed, and whether those fees can launch a tail.",
+  coverage: (pools: string, configs: string, at: string) => `${pools} coins on ${configs} configs, updated ${at}.`,
+  coverageNote: "Curve fees only: fees on the creator's locked pool position after graduation are not in this number.",
+  coins: "Coins", launchpads: "Launchpads", tails: "Tails",
+  sort: "Sort", sortDay: "Last 24 hours", sortClaimable: "Claimable now", sortLifetime: "Lifetime", sortAvg: "Average per day",
+  stage: "Stage", all: "All", bonding: "On the curve", graduated: "Graduated", migrating: "Moving to its pool",
+  eligibleOnly: "Can launch a tail", mine: "My coins", search: "Name, symbol or mint",
+  coin: "Coin", launchpad: "Launchpad", last24h: "Creator · 24 h", lifetime: "Creator · lifetime", claimable: "Claimable now", tail: "Tail",
+  ours: "COMETAIL", canTail: "Can launch a tail", cannotTail: "Cannot launch a tail", window: (h: number) => `over ${h} h`,
+  sell: "Sell these fees", empty: "No coins match.", emptyBody: "Clear the filters, or come back after the next update.",
+  unavailable: "The Fee Index is not available on this server yet.", more: "Show more",
+  lpTitle: "Launchpads ranked by what their creators earn",
+  lpBody: "Grouped by each launchpad's fee-claiming wallet. The protocol's own configs are marked.",
+  lpCoins: "Coins", lpEligible: "Tail-ready", lpDay: "Creators · 24 h", lpLife: "Creators · lifetime", lpClaimable: "Unclaimed",
+  oursTitle: "Launch on COMETAIL's configs",
+  oursBody: "The six launch presets, each a Meteora DBC config. Any app can create a coin on them with Meteora's own SDK; the creator keeps 75% of the curve's trading fees and can sell those fees here.",
+  copy: "Copy", copied: "Copied", wallet: "Fee wallet", configLabel: "Config",
+} as const;
+
+export const tailsPage = {
+  eyebrow: "Fee tokens",
+  title: "Tails",
+  body: "Every tail: a token launched on a coin's future fees. Its fees buy the tail back below the market and burn what they buy.",
+  source: "Fees from", raise: "Raise", flowing: "Fees in", buybacks: "SOL spent on buybacks", burned: "Tail tokens burned", unwind: "Unwind opens",
+  live: "Live", launched: "On its curve", open: "Not launched", unwound: "Unwound",
+  empty: "No tails yet.", unwindAvailable: "open now", noUnwind: "not applicable",
+  fromCoin: "This coin's fees fund a tail",
 } as const;
 
 export const hero = {
