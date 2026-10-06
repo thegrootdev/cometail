@@ -37,16 +37,17 @@ const META = (name: string, symbol: string) => ({ name, symbol, uri: "https://co
 const CAP = new BN(1).shln(64).muln(1_000_000);
 const policy = { maxSpendPerPeriod: new BN(5_000_000_000), periodSeconds: new BN(3600), maxOutstandingOrders: 4, maxBinsPerOrder: 20, maxPriceQ64: CAP };
 
-async function finish(a: { connection: Connection; chain: Chain; client: VaultClientStep6; ctx: any; buyer: Keypair; vault: PublicKey; pair: PublicKey; plainCfg: PublicKey; streamCfgs: PublicKey[]; step: (name: string, data: Record<string, unknown>) => void }) {
+async function finish(a: { connection: Connection; chain: Chain; client: VaultClientStep6; ctx: any; buyer: Keypair; vault: PublicKey; pair: PublicKey; plainCfg: PublicKey; streamCfgs: PublicKey[]; record: any; step: (name: string, data: Record<string, unknown>) => void }) {
   const { connection, chain, ctx, buyer, step, plainCfg, streamCfgs } = a;
   const cv = { vault: a.vault };
   const pair = { pair: a.pair };
-  // the order record can lag a few seconds behind the confirmed route on the public RPC
-  let records = await chain.orderRecords(cv.vault);
-  for (let i = 0; i < 10 && records.length === 0; i++) { await new Promise((r) => setTimeout(r, 3000)); records = await chain.orderRecords(cv.vault); }
-  expect(records.length).gte(1);
   let v = await chain.vault(cv.vault);
   const alreadySettled = v.accounting.burnedSt.gtn(0); // a resumed run that already sold and settled goes straight to the indexer
+  // the order record can lag a few seconds behind the confirmed route on the public RPC; only a run
+  // that still has to settle needs one
+  let records = await chain.orderRecords(cv.vault);
+  for (let i = 0; i < 10 && records.length === 0 && !alreadySettled; i++) { await new Promise((r) => setTimeout(r, 3000)); records = await chain.orderRecords(cv.vault); }
+  if (!alreadySettled) expect(records.length).gte(1);
   // 7. the market crosses the bids: the buyer sells stream tokens into the pair; the keeper settles and burns
   if (!alreadySettled) {
   const before = await dlmmPair(connection, pair.pair);
@@ -80,6 +81,31 @@ async function finish(a: { connection: Connection; chain: Chain; client: VaultCl
   const names = [...new Set(events.map((e) => e.name))];
   step("indexer", { events: names, skyStreams: sky.map((s) => `${s.baseMint.slice(0, 6)} ${s.progress} ${s.custody} eligible=${s.eligible}`) });
   expect(names).include.members(["launched", "live", "cashedOut", "harvested", "routed", "settled"]);
+  // 9. the other partner's fee on both source coins is exactly what it was before any vault action,
+  // and the config still names that partner (the vault harvested the creator side only)
+  const baseline = a.record.steps.find((x: any) => x.name === "partner fee baseline");
+  expect(baseline, "partner fee baseline step").not.undefined;
+  for (const [k, poolKey] of [["A", baseline.poolA], ["B", baseline.poolB]] as const) {
+    const ps = await dbcPool(connection, new PublicKey(poolKey));
+    expect(ps.partnerQuoteFee.toString(), `partner fee on ${k}`).eq(baseline[k]);
+    const cfgNow = await dbcConfig(connection, ps.config);
+    expect(cfgNow.feeClaimer.toBase58()).eq(baseline.feeClaimer);
+    expect(cfgNow.leftoverReceiver.toBase58()).eq(baseline.leftoverReceiver);
+  }
+  // 10. per-source splits from the indexed harvest events: external streams pay the protocol one fifth
+  // and the seller nothing; the vault's own curve pays the seller eight fifteenths and the protocol nothing
+  const streams = await chain.streams(cv.vault);
+  const own = new Set(streams.filter((s: any) => s.account.isOwn).map((s: any) => s.pubkey.toBase58()));
+  const harvests = events.filter((e) => e.name === "harvested");
+  expect(harvests.length).gte(2);
+  let checkedOwn = 0, checkedExt = 0;
+  for (const e of harvests) {
+    const d: any = e.data; const gross = BigInt(String(d.gross)), dep = BigInt(String(d.toDepositor)), pro = BigInt(String(d.toProtocol));
+    if (own.has(String(d.stream))) { expect(dep.toString()).eq(((gross * 8n) / 15n).toString()); expect(pro.toString()).eq("0"); checkedOwn++; }
+    else { expect(pro.toString()).eq((gross / 5n).toString()); expect(dep.toString()).eq("0"); checkedExt++; }
+  }
+  step("splits", { ownCurveHarvests: checkedOwn, externalHarvests: checkedExt, partnerFeeUnchanged: true });
+  expect(checkedOwn).gte(1); expect(checkedExt).gte(1);
   await store.close();
 }
 
@@ -124,10 +150,7 @@ async function tradeAndPair(a: { connection: Connection; chain: Chain; client: V
     step("keeper pass 2", { harvestedGross: v.accounting.harvestedGross.toString(), income: v.accounting.income.toString(), toProtocol: v.accounting.toProtocol.toString(), toDepositor: v.accounting.toDepositor.toString(), routedGross: v.accounting.routedGross.toString(), outstanding: v.routing.outstandingOrders, orders: records.map((r) => r.account.limitOrder.toBase58()) });
     expect(v.accounting.harvestedGross.gtn(0)).true;
     expect(v.routing.outstandingOrders).gte(1);
-    // the outside partner's own trading fee stays with that partner: the vault harvests the creator side only
-    const poolA = await dbcPool(connection, A.pool);
-    step("other partner's fee", { partnerQuoteFee: poolA.partnerQuoteFee.toString(), creatorQuoteFeeLeft: poolA.creatorQuoteFee.toString(), feeClaimer: otherPartner.publicKey.toBase58() });
-    expect(poolA.partnerQuoteFee.gtn(0)).true;
+    // the partner-fee preservation check is in finish(), on every successful exit
 
 }
 
@@ -159,7 +182,7 @@ describe("devnet end-to-end: outside coin", () => {
       const held = await tokenBalance(connection, ata(NATIVE_MINT, buyer.publicKey)).catch(() => new BN(0));
       if (held.lt(new BN(600_000_000))) await send(connection, wrapSolIxs(buyer.publicKey, new BN(600_000_000).sub(held)), [buyer], { label: "buyer tops WSOL up (resume)" });
       await tradeAndPair({ connection, chain, client, ctx, buyer, keeper, mintA, mintB, migB, A, stMint, cv, plainCfg, R, otherPartner, step });
-      await finish({ connection, chain, client, ctx, buyer, vault: cv.vault, pair: (record.steps.find((x: any) => x.name === "pair") as any).pair ? new PublicKey((record.steps.find((x: any) => x.name === "pair") as any).pair) : (null as any), plainCfg, streamCfgs, step });
+      await finish({ connection, chain, client, ctx, buyer, vault: cv.vault, pair: (record.steps.find((x: any) => x.name === "pair") as any).pair ? new PublicKey((record.steps.find((x: any) => x.name === "pair") as any).pair) : (null as any), plainCfg, streamCfgs, record, step });
       record.finishedAt = new Date().toISOString(); save(); return;
     }
     if (process.env.RESUME) {
@@ -175,7 +198,7 @@ describe("devnet end-to-end: outside coin", () => {
       await keeperPass(ctx2); // routes idle income into a ladder when the earlier pass stopped short
       const vr = await chain.vault(vault);
       step("keeper pass 2b", { income: vr.accounting.income.toString(), routedGross: vr.accounting.routedGross.toString(), outstanding: vr.routing.outstandingOrders });
-      await finish({ connection, chain, client, ctx: ctx2, buyer, vault, pair, plainCfg, streamCfgs, step });
+      await finish({ connection, chain, client, ctx: ctx2, buyer, vault, pair, plainCfg, streamCfgs, record, step });
       record.finishedAt = new Date().toISOString(); save(); return;
     }
 
@@ -213,7 +236,12 @@ describe("devnet end-to-end: outside coin", () => {
     step("configs", { outsidePlain: plainCfg.toBase58(), otherPartner: otherPartner.publicKey.toBase58(), ourAuthority: authority.publicKey.toBase58(), stream50: streamCfgs[1].toBase58(), thresholdLamports: R.toString(), stThresholdLamports: R50.toString() });
 
     // buyer: WSOL for everything below
-    await send(connection, wrapSolIxs(buyer.publicKey, new BN(1_500_000_000)), [buyer], { label: "buyer wraps 1.5 SOL" });
+    // the buyer's WSOL budget, derived from the thresholds: 0.3R + 1.2R + 0.2R on the curves, 1.2R50 on the
+    // tail, two 0.2 SOL swaps, and a 0.15 SOL margin for fees and the ladder; topped up to what it holds
+    const need = R.muln(17).divn(10).add(R50.muln(12).divn(10)).add(new BN(550_000_000));
+    const held0 = await tokenBalance(connection, ata(NATIVE_MINT, buyer.publicKey)).catch(() => new BN(0));
+    if (held0.lt(need)) await send(connection, wrapSolIxs(buyer.publicKey, need.sub(held0)), [buyer], { label: `buyer wraps ${need.sub(held0).toString()} lamports` });
+    step("budget", { needLamports: need.toString(), heldLamports: held0.toString() });
 
     // 1. plain launch A, bonding
     const mintA = Keypair.generate();
@@ -231,6 +259,10 @@ describe("devnet end-to-end: outside coin", () => {
     const posB = (await positionOwnedBy(connection, migB.positions, depositor.publicKey))!;
     expect(posB).not.null;
     step("launch B", { mint: mintB.publicKey.toBase58(), pool: B.pool.toBase58(), dammPool: migB.pool.toBase58(), creatorPosition: posB.position.toBase58() });
+
+    // the other partner's fee on both source coins, before any vault action: finish() asserts it unchanged
+    const feeBefore = { A: (await dbcPool(connection, A.pool)).partnerQuoteFee.toString(), B: (await dbcPool(connection, B.pool)).partnerQuoteFee.toString() };
+    step("partner fee baseline", { poolA: A.pool.toBase58(), poolB: B.pool.toBase58(), ...feeBefore, feeClaimer: outsideCfg.feeClaimer.toBase58(), leftoverReceiver: outsideCfg.leftoverReceiver.toBase58() });
 
     // 3. the vault: both tails in, the stream token launched on the 50% preset
     const stMint = Keypair.generate();
@@ -255,7 +287,7 @@ describe("devnet end-to-end: outside coin", () => {
 
     await tradeAndPair({ connection, chain, client, ctx, buyer, keeper, mintA, mintB, migB, A, stMint, cv, plainCfg, R, otherPartner, step });
     const pair = { pair: new PublicKey((record.steps.find((x: any) => x.name === "pair") as any).pair) };
-    await finish({ connection, chain, client, ctx, buyer, vault: cv.vault, pair: pair.pair, plainCfg, streamCfgs, step });
+    await finish({ connection, chain, client, ctx, buyer, vault: cv.vault, pair: pair.pair, plainCfg, streamCfgs, record, step });
     record.finishedAt = new Date().toISOString();
     save();
   });

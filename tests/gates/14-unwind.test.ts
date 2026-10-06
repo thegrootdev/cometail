@@ -58,6 +58,8 @@ async function launched() {
   const { svm, client, creator, buyer, cfgs, ext, mint, R, buyerQuote, buyerBase, stMint, cv } = w;
   await dbc.buy(svm, buyer, ext.pool, buyerQuote, buyerBase, R.muln(6).divn(5));
   const mig = await dbc.migrateToDammV2(svm, buyer, ext.pool, DAMM_V2_MIGRATION_CONFIG.customizable);
+  // the other partner's fee after all source trading and before any vault action
+  const partnerFeeBaseline: BN = dbc.getPool(svm, ext.pool).partnerQuoteFee;
   const creatorPos = damm.findPositionOwnedBy(svm, [mig.firstPosition, mig.secondPosition], creator.publicKey)!;
   const nftMint = creatorPos.state.nftMint;
   const vaultNft = ataIx(creator.publicKey, nftMint, cv.vault, TOKEN_2022_PROGRAM_ID);
@@ -67,7 +69,7 @@ async function launched() {
   send(svm, [L.ix], [creator, stMint], { cu: 500_000, label: "launch" });
   const ownStream = deriveStream(cv.vault, 1);
   const unwindIx = (signer = creator.publicKey) => client.unwind({ vault: cv.vault, depositor: signer, ownStream, dbcPool: L.pool, dbcConfig: cfgs[0], incomeWsol: cv.incomeWsol, depositorWsol: cv.depositorWsol });
-  return { ...w, L, ownStream, nftMint, vaultNft: vaultNft.address, creatorPos, mig, unwindIx };
+  return { ...w, L, ownStream, nftMint, vaultNft: vaultNft.address, creatorPos, mig, unwindIx, partnerFeeBaseline };
 }
 
 describe("unwind: a launched vault whose curve never graduates goes back to the depositor", () => {
@@ -117,11 +119,14 @@ describe("unwind: a launched vault whose curve never graduates goes back to the 
     send(svm, [back.ix, await client.withdrawStream({ vault: cv.vault, depositor: creator.publicKey, stream: deriveStream(cv.vault, 0), kind: "position", indexKey: deposited.position, nftAccount: h.vaultNft, nftMint: h.nftMint, depositorNftAccount: back.address })], [creator]);
     expect(balance(svm, back.address).toString()).eq("1");
     expect(client.decodeVault(Buffer.from(svm.getAccount(cv.vault)!.data)).activeStreams).eq(0);
-    // the other launchpad's partner fee on the source coin was never the vault's to take: it is still
-    // there for that partner, on a config the vault never touched
+    // the other launchpad's partner fee on the source coin was never the vault's to take: exactly what
+    // it was after the source trading, before any vault action, on a config that still names that partner
     const source = dbc.getPool(svm, h.ext.pool);
-    expect(dbc.getConfig(svm, h.plain).feeClaimer.equals(h.otherPartner.publicKey)).true;
+    expect(source.partnerQuoteFee.toString()).eq(h.partnerFeeBaseline.toString());
     expect(source.partnerQuoteFee.gtn(0)).true;
+    const cfgNow = dbc.getConfig(svm, h.plain);
+    expect(cfgNow.feeClaimer.equals(h.otherPartner.publicKey)).true;
+    expect(cfgNow.leftoverReceiver.equals(h.otherPartner.publicKey)).true;
     // the curve keeps trading: a holder sells back, then buyers complete it and it migrates
     const sellIx = await dbc.swap2Ix(svm, { pool: L.pool, payer: buyer.publicKey, inputMint: stMint.publicKey, outputMint: NATIVE_MINT, inputAccount: buyerSt, outputAccount: h.buyerQuote, amount0: balance(svm, buyerSt).divn(2), amount1: new BN(0), mode: dbc.SwapMode.ExactIn });
     send(svm, [sellIx], [buyer], { label: "dbc.sell after unwind" });
