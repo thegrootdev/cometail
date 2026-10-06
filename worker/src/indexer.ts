@@ -297,6 +297,23 @@ export class Indexer {
     return out;
   }
 
+  /** The coin behind a stream, on any launchpad's config: the DBC pool's base mint for creator rights, the DAMM v2
+   *  pool's token A for a position; read once per stream (both are fixed). Null when unreadable this pass. */
+  private sourceMints = new Map<string, string>();
+  private async sourceMint(stream: any): Promise<string | null> {
+    const pool = String(stream.pool ?? "");
+    if (!pool || isDefault(stream.pool)) return null;
+    const hit = this.sourceMints.get(pool);
+    if (hit) return hit;
+    try {
+      const kind = stream.kind && typeof stream.kind === "object" ? Object.keys(stream.kind)[0] : "";
+      const mint = kind === "dammV2Position" ? (await this.chain.dammPool(stream.pool))?.tokenAMint : (await this.chain.dbcPool(stream.pool))?.baseMint;
+      if (!mint) return null;
+      this.sourceMints.set(pool, mint.toBase58());
+      return mint.toBase58();
+    } catch { return null; }
+  }
+
   /** The registered position's share of its pool's permanently locked liquidity, read live. */
   private async streamLive(stream: any): Promise<any> {
     try {
@@ -328,7 +345,7 @@ export class Indexer {
       const live = await this.liveView(v.pubkey, v.account);
       await this.store.upsertVault(key, { ...plain(v.account), live, reconciliation: { fromEvents: plain(fromEvents), matches: mismatches.length === 0, mismatches, checkedAt: Date.now() } });
       const streams = await this.chain.streams(v.pubkey);
-      for (const s of streams) await this.store.upsertStream(s.pubkey.toBase58(), key, { ...plain(s.account), live: await this.streamLive(s.account) });
+      for (const s of streams) await this.store.upsertStream(s.pubkey.toBase58(), key, { ...plain(s.account), sourceMint: await this.sourceMint(s.account), live: await this.streamLive(s.account) });
       await this.store.pruneStreams(key, streams.map((s) => s.pubkey.toBase58()));
     }
   }

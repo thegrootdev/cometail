@@ -42,8 +42,11 @@ five minutes and, measured on mainnet, 1.75 million pools and 0.48 million SOL-q
 in 1,000-account pages of a 296-byte or 360-byte slice) never holds up the trade index. Between
 full walks, a `changedSinceSlot` walk reads only the pools written since the last one. It keeps
 SOL-paired pools that have paid their creator (about 420,000), in its own SQLite file with hourly
-counter snapshots for 48 hours. Claims are noticed as a claimable fee falling between walks and
-confirmed from the pool's recent transactions; they are published on the feed as `claim` rows. It
+counter snapshots for about 50 hours. A claim is noticed when a claimable fee grew less than its share
+of the counter between walks, and confirmed from the claim event in the pool's transactions inside
+that walk window; it is published on the feed as a `claim` row. Every stream snapshot carries the
+source coin's mint (`sourceMint`, read once per stream), so `/api/tails?source=` finds vaults holding
+fees from any launchpad's coin. It
 reads OUR configs (`COMETAIL_SKY_CONFIGS`) to mark them in the launchpad ranking. Routes and field
 meanings: docs/api.md, "The Fee Index".
 

@@ -124,12 +124,26 @@ export interface FeedReplay { schemaVersion: 1; cluster: string; type: "replay";
 export interface FeeCoin {
   mint: Address; pool: Address; config: Address; creator: Address; launchpad: Address | null; ours: boolean; name: string | null; symbol: string | null;
   stage: "bonding" | "migrating" | "graduated"; creatorFeePct: number | null;
-  creatorLifetimeLamports: RawAmount; creatorLast24hLamports: RawAmount; last24hWindowHours: number; creatorAvgPerDayLamports: RawAmount;
-  claimableLamports: RawAmount; launchedAtMs: number; tailEligible: boolean; reasons: string[]; changedAtMs: number;
+  /** Estimates (see the answer's `basis`): the counter times the creator percentage; the program floors per swap. */
+  creatorLifetimeEstimateLamports: RawAmount; creatorLast24hEstimateLamports: RawAmount; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: RawAmount;
+  /** Exact: the pool's unclaimed creator fee. */
+  claimableLamports: RawAmount; launchedAtMs: number;
+  /** The config part of the vault's deposit rules and a stage it accepts; the deposit also checks the coin's mint. */
+  configAllowsTail: boolean; reasons: string[]; changedAtMs: number;
 }
-export interface FeeCoverage { mode: "all-dbc"; pools: number; configs: number; fullSlot: number; deltaSlot: number; fullAtMs: number; deltaAtMs: number; fullEveryHours: number; deltaEveryMinutes: number }
+export interface FeeCoverage { mode: "all-dbc"; pools: number; configs: number; fullSlot: number; deltaSlot: number; fullAtMs: number; deltaAtMs: number; fullEveryHours: number; deltaEveryMinutes: number; historySinceMs: number; fullDayOfHistory: boolean; claims: Record<string, number> }
 export interface FeeEnvelope { schemaVersion: 1; cluster: string; generatedAtMs: number; coverage: FeeCoverage }
-export interface Launchpad { rank: number; launchpad: Address; ours: boolean; coins: number; configs: number; graduated: number; tailEligibleCoins: number; creatorLifetimeLamports: RawAmount; creatorLast24hLamports: RawAmount; claimableLamports: RawAmount; creatorFeePct: number | null }
-export interface OurConfig { config: Address; launchpad: Address | null; creatorFeePct: number | null; tailEligibleConfig: boolean | null; coins: number; graduated: number; creatorLifetimeLamports: RawAmount; creatorLast24hLamports: RawAmount; claimableLamports: RawAmount }
+export interface Launchpad { rank: number; launchpad: Address; ours: boolean; coins: number; configs: number; graduated: number; tailEligibleCoins: number; creatorLifetimeEstimateLamports: RawAmount; creatorLast24hEstimateLamports: RawAmount; coinsWithShorterWindow: number; claimableLamports: RawAmount; creatorFeePct: number | null }
+export type OurConfig = { config: Address; covered: false; note: string } | { config: Address; covered: true; launchpad: Address; creatorFeePct: number; tailEligibleConfig: boolean; coins: number; graduated: number; creatorLifetimeEstimateLamports: RawAmount; creatorLast24hEstimateLamports: RawAmount; claimableLamports: RawAmount };
+/** One tail (a vault's fee token). A null field could not be computed; it is never a zero. */
+export interface Tail {
+  vault: Address; status: string; stMint: Address; name: string | null; symbol: string | null; decimals: number | null;
+  sources: { stream: Address; kind: string; pool: Address; mint: Address | null; name: string | null; symbol: string | null }[];
+  raise: { raisedLamports: RawAmount; targetLamports: RawAmount; progressBps: number | null; stage: string | null } | null;
+  feesIn: { lifetimeLamports: RawAmount; last24hLamports: RawAmount };
+  /** placed is cumulative; filled = placed - refunded - resting, null while resting principal is unknown. */
+  bids: { placedLamports: RawAmount; refundedLamports: RawAmount; restingLamports: RawAmount | null; filledLamports: RawAmount | null };
+  burnedStRaw: RawAmount; unwindOpensAtSec: number | null;
+}
 export interface RequestOptions { signal?: AbortSignal }
 export interface TokenQuery { sort?: "volume24h" | "newest"; stage?: "bonding" | "graduated" | "all"; q?: string; limit?: number; cursor?: string }

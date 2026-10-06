@@ -14,6 +14,7 @@
 // limited to the configured origins, and each client address gets a token bucket; the
 // client address is taken from X-Forwarded-For only when the connection comes from loopback.
 import type { FeeIndex } from "./feeindex";
+import { ESTIMATE_BASIS } from "./fee-basis";
 import http from "http";
 import net from "net";
 import { Store, TokenRow, TradeRow } from "./store";
@@ -307,6 +308,49 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
   return send(404, { error: "not found" });
 }
 
+/** Every tail, server-side: the vault's tail token with its source coins (any launchpad's config: each stream
+ *  carries the source mint the indexer resolved), raise, fees in (lifetime from the vault's accounting, the
+ *  last 24 hours as the exact sum of indexed harvest events), bids placed, refunded, resting and filled, tail
+ *  tokens burned, and when the unwind opens. A field that cannot be computed is null, never zero. */
+export async function tailsRollup(store: Store, fi: FeeIndex | null, q: { limit: number; offset: number; source: string | null }, nowMs = Date.now()) {
+  const tokens = await tokenIdentities(store);
+  const streams = await store.listAllStreams();
+  const byVault = new Map<string, typeof streams>();
+  for (const s of streams) byVault.set(s.vault, [...(byVault.get(s.vault) ?? []), s]);
+  let vaults = await store.listVaults();
+  const kind = (d: any) => (d?.kind && typeof d.kind === "object" ? Object.keys(d.kind)[0] : String(d?.kind ?? ""));
+  const sourceMint = (s: { data: any }) => (s.data?.sourceMint ? String(s.data.sourceMint) : tokens.byPool.get(String(s.data?.pool ?? ""))?.mint ?? fi?.lookup(String(s.data?.pool ?? ""))?.mint ?? null);
+  if (q.source) vaults = vaults.filter((v) => (byVault.get(v.vault) ?? []).some((s) => !s.data?.isOwn && sourceMint(s) === q.source));
+  const total = vaults.length;
+  vaults = vaults.sort((a, b) => b.updatedAt - a.updatedAt || a.vault.localeCompare(b.vault)).slice(q.offset, q.offset + q.limit);
+  const since = Math.floor(nowMs / 1000) - 86_400;
+  const harvests = await store.listEventsSince(["harvested", "oneTimeHarvested"], since);
+  const rows = await Promise.all(vaults.map(async (v) => {
+    const d = v.data ?? {}, acc = d.accounting ?? {};
+    const status = Object.keys(d.status ?? {})[0] ?? "open";
+    const mine = byVault.get(v.vault) ?? [];
+    const own = mine.find((s) => s.data?.isOwn && kind(s.data) === "dbcCreatorRights");
+    const st = await store.getToken(String(d.stMint));
+    const stIdentity = tokens.byMint.get(String(d.stMint)) ?? null;
+    const bonding = st ? { quoteRaisedLamports: st.quoteRaisedLamports, targetLamports: st.targetLamports, progressBps: st.progressBps, migrationStage: st.stage } : null;
+    const ladder = d.live?.ladder ?? null;
+    const outstanding = Number(d.routing?.outstandingOrders ?? 0);
+    const resting: string | null = outstanding === 0 ? "0" : ladder?.status === "ok" && Number(ladder.unknownBins ?? 0) === 0 ? String(ladder.restingLamports) : null;
+    const placed = BigInt(String(acc.routedGross ?? 0)), refunded = BigInt(String(acc.refundedPrincipal ?? 0));
+    return {
+      vault: v.vault, status, stMint: String(d.stMint), name: stIdentity?.name ?? null, symbol: stIdentity?.symbol ?? null, decimals: st?.decimals ?? null,
+      sources: mine.filter((s) => !s.data?.isOwn).map((s) => { const mint = sourceMint(s); const t = mint ? tokens.byMint.get(mint) : null; const f = mint && !t && fi ? fi.lookup(mint) : null;
+        return { stream: s.stream, kind: kind(s.data), pool: String(s.data?.pool ?? ""), mint, name: t?.name ?? f?.name ?? null, symbol: t?.symbol ?? f?.symbol ?? null }; }),
+      raise: bonding ? { raisedLamports: String(bonding.quoteRaisedLamports ?? "0"), targetLamports: String(bonding.targetLamports ?? "0"), progressBps: bonding.progressBps === null ? null : Number(bonding.progressBps), stage: bonding.migrationStage ?? null } : null,
+      feesIn: { lifetimeLamports: String(acc.harvestedGross ?? "0"), last24hLamports: harvests.filter((e) => e.vault === v.vault).reduce((n, e) => n + BigInt(String((e.data as any)?.gross ?? 0)), 0n).toString() },
+      bids: { placedLamports: placed.toString(), refundedLamports: refunded.toString(), restingLamports: resting, filledLamports: resting === null ? null : (placed - refunded - BigInt(resting)).toString() },
+      burnedStRaw: String(acc.burnedSt ?? "0"),
+      unwindOpensAtSec: own ? Number(own.data.depositTs) + 30 * 86_400 : null,
+    };
+  }));
+  return { total, offset: q.offset, limit: q.limit, tails: rows };
+}
+
 /** The Fee Index routes: public and read-only, any origin, rate-limited like everything else. */
 function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: number, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
   const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=30" };
@@ -325,10 +369,10 @@ function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: number
     const offset = Math.max(0, Math.min(100_000, Number(url.searchParams.get("offset") ?? 0) || 0));
     const search = (url.searchParams.get("q") ?? "").trim().slice(0, 64) || null;
     const n = Math.min(200, limit);
-    return send(200, { ...head, coins: fi.coins({ sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset }, status.deltaSlot), offset, limit: n }, any);
+    return send(200, { ...head, basis: ESTIMATE_BASIS, coins: fi.coins({ sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset }), offset, limit: n }, any);
   }
   const m = url.pathname.match(/^\/api\/fees\/coins\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
-  if (m) { const c = fi.coin(m[1], status.deltaSlot); return c ? send(200, { ...head, coin: c }, any) : send(404, { ...head, error: "not in the fee index (not SOL-paired, or no creator fee yet)" }, any); }
+  if (m) { const c = fi.coin(m[1]); return c ? send(200, { ...head, basis: ESTIMATE_BASIS, coin: c }, any) : send(404, { ...head, error: "not in the fee index (not SOL-paired, or no creator fee yet)" }, any); }
   return send(404, { error: "not found" }, any);
 }
 
@@ -389,6 +433,12 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       }
       if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return await tokenRoutes(store, opts, url, send);
       if (url.pathname.startsWith("/api/fees")) return feeRoutes(opts.feeIndex ?? null, opts.cluster ?? "devnet", url, limit, send);
+      if (url.pathname === "/api/tails") {
+        const source = url.searchParams.get("source");
+        if (source && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(source)) return send(400, { error: "bad source mint" });
+        const offset = Math.max(0, Math.min(100_000, Number(url.searchParams.get("offset") ?? 0) || 0));
+        return send(200, { schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), ...(await tailsRollup(store, opts.feeIndex ?? null, { limit: Math.min(100, limit), offset, source })) }, { "cache-control": "public, max-age=15" });
+      }
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {
         // the whole store is read for this document: computed at most once per 30 s, shared by every caller

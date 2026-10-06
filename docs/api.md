@@ -42,28 +42,44 @@ Every SOL-paired Meteora DBC coin from any launchpad that has paid its creator, 
 creator earns on the curve. Public and read-only: any origin, the same per-client rate limit
 as every route (120 requests a minute, burst 60), `cache-control: public, max-age=30`. Every
 answer carries `{ schemaVersion: 1, cluster, generatedAtMs, coverage }`, where `coverage` is
-`{ mode: "all-dbc", pools, configs, fullSlot, deltaSlot, fullAtMs, deltaAtMs, fullEveryHours, deltaEveryMinutes }`.
+`{ mode: "all-dbc", pools, configs, fullSlot, deltaSlot, fullAtMs, deltaAtMs, fullEveryHours, deltaEveryMinutes, historySinceMs, fullDayOfHistory, claims }`
+(`claims` counts claim lookups by status: pending, confirmed, unconfirmed). Answers holding an
+estimate carry `basis`: what each `...EstimateLamports` field means.
 
 | Route | Answer |
 |---|---|
 | `/api/fees/status` | the envelope alone |
-| `/api/fees/coins?sort=day\|claimable\|lifetime\|avg&stage=all\|bonding\|graduated&eligible=1&creator=&q=&limit=&offset=` (limit max 200) | `{ coins, offset, limit }`, each coin `{ mint, pool, config, creator, launchpad, ours, name, symbol, stage, creatorFeePct, creatorLifetimeLamports, creatorLast24hLamports, last24hWindowHours, creatorAvgPerDayLamports, claimableLamports, launchedAtMs, tailEligible, reasons, changedAtMs }` |
-| `/api/fees/coins/<mint>` | `{ coin }`, or 404 when the coin is not SOL-paired or has not paid its creator |
-| `/api/fees/launchpads` | `{ launchpads, ourConfigs }`: fee claimers ranked by creator income in the last 24 hours, then lifetime (top 200), each `{ launchpad, ours, coins, configs, graduated, tailEligibleCoins, creatorLifetimeLamports, creatorLast24hLamports, claimableLamports, creatorFeePct }` (`creatorFeePct` null when its configs differ); `ourConfigs` the protocol's own configs with the same totals |
+| `/api/fees/coins?sort=day\|claimable\|lifetime\|avg&stage=all\|bonding\|graduated&eligible=1&creator=&q=&limit=&offset=` (limit max 200) | `{ basis, coins, offset, limit }`, each coin `{ mint, pool, config, creator, launchpad, ours, name, symbol, stage, creatorFeePct, creatorLifetimeEstimateLamports, creatorLast24hEstimateLamports, last24hWindowHours, creatorAvgPerDayEstimateLamports, claimableLamports, launchedAtMs, configAllowsTail, reasons, changedAtMs }`. Every sort is global, before the page, with the pool as tiebreaker. |
+| `/api/fees/coins/<mint>` | `{ basis, coin }`, or 404 when the coin is not SOL-paired or has not paid its creator |
+| `/api/fees/launchpads` | `{ rankedBy, historySinceMs, basis, launchpads, ourConfigs }`: fee claimers, top 200 plus the protocol's own wherever they rank, each `{ rank, launchpad, ours, coins, configs, graduated, tailEligibleCoins, creatorLifetimeEstimateLamports, creatorLast24hEstimateLamports, coinsWithShorterWindow, claimableLamports, creatorFeePct }`. `rankedBy` is `last24h` once the index holds a full day of history, `lifetime` before. `ourConfigs` lists the protocol's configs; a non-SOL one is `{ config, covered: false, note }` |
+| `/api/tails?limit=&offset=&source=<mint>` (limit max 100) | `{ total, offset, limit, tails }`: every vault's tail, newest first, each `{ vault, status, stMint, name, symbol, decimals, sources: [{ stream, kind, pool, mint, name, symbol }], raise: { raisedLamports, targetLamports, progressBps, stage } \| null, feesIn: { lifetimeLamports, last24hLamports }, bids: { placedLamports, refundedLamports, restingLamports, filledLamports }, burnedStRaw, unwindOpensAtSec }`. `source` keeps the vaults holding that coin's fees, on any launchpad's config. A value that could not be read is null, never zero. |
 
 How the numbers are made:
-- `creatorLifetimeLamports`: the pool's lifetime trading-fee counter (`metrics.totalTradingQuoteFee`, after Meteora's protocol share) times the config's creator trading-fee percentage. Curve fees only.
-- `claimableLamports`: the pool's unclaimed creator fee (`creatorQuoteFee`), now.
-- `creatorLast24hLamports`: the counter's growth since the newest hourly snapshot at least 24 hours old, times the creator share; `last24hWindowHours` is the actual window (shorter while the index has less history).
-- `creatorAvgPerDayLamports`: lifetime over days since activation (at least one day).
-- `tailEligible` and `reasons`: the program's own deposit rules for creator rights (SOL quote, fees in SOL, DAMM v2 migration, creator liquidity permanently locked and nothing unlocked or vesting) and a stage the vault accepts (bonding or graduated). The deposit itself checks the rest (mint extensions, freeze authority).
+- `creatorLifetimeEstimateLamports` (an estimate): the pool's lifetime trading-fee counter (`metrics.totalTradingQuoteFee`, after Meteora's protocol share) times the config's creator trading-fee percentage. The program rounds the creator share down on every swap, so the true sum can be a few lamports per swap lower. Curve fees only.
+- `claimableLamports` (exact): the pool's unclaimed creator fee (`creatorQuoteFee`), now.
+- `creatorLast24hEstimateLamports` (an estimate): the counter's growth since the end of the hour 24 hours back, times the creator share. Hourly snapshots hold each hour's last observed value, and a pool absent from every walk in between did not change, so that base is the counter at that time. `last24hWindowHours` is 24, or less while the index holds less history for the coin (0: none yet).
+- `creatorAvgPerDayEstimateLamports` (an estimate): the lifetime estimate over the days since activation (at least one).
+- `configAllowsTail` and `reasons`: the config part of the program's deposit rules for creator rights (SOL quote, fees in SOL, DAMM v2 migration, creator liquidity permanently locked and nothing unlocked or vesting) and a stage the vault accepts (bonding or graduated). The deposit itself also checks the coin's mint (no freeze authority, metadata-only extensions).
+- Tails `feesIn.last24hLamports` is the exact sum of every indexed harvest event of the last 24 hours. `bids.placedLamports` is cumulative SOL placed in buyback bids (re-placed bids count again); `filledLamports` = placed − refunded − still resting, null while the resting principal of open orders is unknown.
 - Not included: fees on the creator's locked DAMM v2 position after graduation, which are not in the DBC pool.
 
 Coverage: a full walk of every SOL-quoted DBC config and every DBC pool once a day (paginated,
 sliced `getProgramAccountsV2`: about one minute for the configs and four for the pools), and a
 walk of only the pools changed since the last one every few minutes (`changedSinceSlot`; fifteen
 minutes of changes is about a hundred pools in ten seconds). Configs are immutable and read once.
-Names come from Metaplex metadata for the top earners first; a coin without one shows its mint.
+Names come from Metaplex metadata, the protocol's own coins first, then the top earners; a coin
+without one shows its mint.
+
+Claims: between two walks a claimable fee should grow by its share of the counter's growth (the
+partner's share is the rest). When it grew by less, beyond rounding (none without trading; with
+trading, 1,000 lamports plus 0.5% of the expected growth), a claim happened, including one masked
+by new trading. The pool's transactions from the previous walk's slot to the slot read after this
+walk ended (up to 300 signatures) are read for the claim events, which become `claim` rows on the
+feed with exact amounts. A lookup whose transactions are not available yet is retried (six times);
+one that reads its window without the event, or a pool busier than 300 signatures in the window,
+is marked unconfirmed and published nowhere. Claims smaller than the rounding tolerance while the
+pool trades, and claims on pools the index does not keep, are not covered; the `claim` stream is
+complete only for what it covers, never presented as every claim on Meteora.
 
 ## The feed
 `wss://api.cometail.fun/api/feed` (one JSON text frame per event) and `GET /api/feed?since=<cursor>&limit=`
@@ -71,7 +87,8 @@ Names come from Metaplex metadata for the top earners first; a coin without one 
 event types; `types=fees` is the fee stream (`claim`, `harvest`, `bid`, `fill`, whose `burnedStRaw`
 is the burn). Control frames always arrive. A filtered replay scans `limit` rows and returns the
 matching ones: its `nextCursor` then names the last scanned row and may lie past the last returned
-event, so an empty filtered page can still continue. An unknown type answers 400.
+event, so an empty filtered page can still continue; it always advances beyond `since`. An unknown
+type answers 400.
 The SDK (`packages/sdk`) wraps both: `client.feed({ types: FEE_TYPES, onEvent })` and
 `client.replayAll(since, undefined, FEE_TYPES)`; `packages/sdk/examples/fee-events.mjs` prints the
 fee stream in a terminal and resumes from a cursor.
@@ -92,7 +109,7 @@ Types and `data`:
 - `fill` { vault, order, burnedStRaw, unfilledLamports, signature }
 - `cashout` { vault, depositorLamports, signature }
 - `unwind` { vault, stMint, dbcPool, incomeReturned, launchedAt, unwoundAt, signature }
-- `claim` { mint, pool, role (`creator` or `partner`), quoteAmountLamports, baseAmountRaw, signature }: a fee claimed on a DBC pool of any launchpad the Fee Index covers, from the claim event in the transaction (the index notices the claimable fee fall between walks, then reads the pool's recent transactions)
+- `claim` { mint, pool, role (`creator` or `partner`), quoteAmountLamports, baseAmountRaw, signature }: a fee claimed on a DBC pool of any launchpad the Fee Index covers, from the claim event in the transaction (see "The Fee Index", Claims, for what is and is not covered)
 - `vault` { vault, event, ...the event's fields, signature }: every other program event (vaultCreated, streamDeposited, streamPositionRegistered, streamWithdrawn, launched, pairRegistered, live), so a consumer that ignores unknown types loses nothing it asked for.
 
 Token rows (`launch`, `graduation`) carry no transaction: their cursor's third part is the mint and the slot is the scan's observed slot (their identity is the type and the mint); `provenance.source` is `indexer`. Harvest rows carry `grossLamports`, `toDepositorLamports`, `toProtocolLamports` and `oneTime` next to `incomeLamports`.

@@ -1,4 +1,4 @@
-import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade, FeedType, FeeCoin, FeeEnvelope, Launchpad, OurConfig } from "./types.js";
+import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade, FeedType, FeeCoin, FeeEnvelope, Launchpad, OurConfig, Tail } from "./types.js";
 import { array, compareCursors, decodeEnvelope, decodeFrame, isFeedEvent, evidence, number, object, parseCursor, ProtocolError, text, tradeQuote } from "./protocol.js";
 import { FeedSubscription } from "./feed.js";
 import type { FeedOptions } from "./feed.js";
@@ -121,26 +121,42 @@ export class CometailClient {
     });
     const next = r.nextCursor === null ? null : text(r.nextCursor);
     if (next !== null && !filtered && (events.length === 0 || compareCursors(next, events[events.length - 1]!.cursor) !== 0)) throw new ProtocolError("nextCursor must acknowledge the last event in this replay page");
-    if (next !== null && filtered && events.length && compareCursors(next, events[events.length - 1]!.cursor) < 0) throw new ProtocolError("nextCursor must not precede the last event in this replay page");
+    if (next !== null && filtered) {
+      // filtered pages may be empty or stop short of the scanned rows: the cursor must still parse and advance
+      parseCursor(next);
+      if (q.since !== undefined && compareCursors(next, q.since) <= 0) throw new ProtocolError("A filtered nextCursor must advance beyond since");
+      if (events.length && compareCursors(next, events[events.length - 1]!.cursor) < 0) throw new ProtocolError("nextCursor must not precede the last event in this replay page");
+    }
     if (filtered) for (const e of events) if (!q.types!.includes(e.type)) throw new ProtocolError("Replay returned a type that was not asked for");
     return { schemaVersion: 1, type: "replay", cluster: text(r.cluster), generatedAtMs: number(r.generatedAtMs), events, nextCursor: next, ...(filtered ? { types: [...q.types!] } : {}) };
   }
   /** One page at a time; abort cancels an active request. Does not claim retention is complete. */
   async *replayAll(since?: string, options?: RequestOptions, types?: readonly FeedType[]): AsyncGenerator<FeedEvent> {
     let cursor = since;
-    do { const page = await this.replay({ since: cursor, limit: 500, types }, options); for (const event of page.events) yield event; if (page.nextCursor === null) return; cursor = page.nextCursor; } while (true);
+    do {
+      const page = await this.replay({ since: cursor, limit: 500, types }, options);
+      for (const event of page.events) yield event;
+      if (page.nextCursor === null) return;
+      if (cursor !== undefined && compareCursors(page.nextCursor, cursor) <= 0) throw new ProtocolError("Replay did not advance");
+      cursor = page.nextCursor;
+    } while (true);
   }
   /** The Fee Index: SOL-paired DBC coins of every launchpad, ranked by creator income. */
-  async feeCoins(q: { sort?: "day" | "claimable" | "lifetime" | "avg"; stage?: "all" | "bonding" | "graduated"; eligible?: boolean; creator?: Address; q?: string; limit?: number; offset?: number } = {}, options?: RequestOptions): Promise<FeeEnvelope & { coins: FeeCoin[]; offset: number; limit: number }> {
+  async feeCoins(q: { sort?: "day" | "claimable" | "lifetime" | "avg"; stage?: "all" | "bonding" | "graduated"; eligible?: boolean; creator?: Address; q?: string; limit?: number; offset?: number } = {}, options?: RequestOptions): Promise<FeeEnvelope & { basis: Record<string, string>; coins: FeeCoin[]; offset: number; limit: number }> {
     const r = object(await this.get("/api/fees/coins" + query({ sort: q.sort, stage: q.stage, eligible: q.eligible ? 1 : undefined, creator: q.creator, q: q.q, limit: q.limit, offset: q.offset }, 200), options));
-    array(r.coins); object(r.coverage); return r as unknown as FeeEnvelope & { coins: FeeCoin[]; offset: number; limit: number };
+    array(r.coins); object(r.coverage); return r as unknown as FeeEnvelope & { basis: Record<string, string>; coins: FeeCoin[]; offset: number; limit: number };
   }
-  async feeCoin(mint: Address, options?: RequestOptions): Promise<FeeEnvelope & { coin: FeeCoin }> {
-    const r = object(await this.get(`/api/fees/coins/${address(mint)}`, options)); object(r.coin); return r as unknown as FeeEnvelope & { coin: FeeCoin };
+  async feeCoin(mint: Address, options?: RequestOptions): Promise<FeeEnvelope & { basis: Record<string, string>; coin: FeeCoin }> {
+    const r = object(await this.get(`/api/fees/coins/${address(mint)}`, options)); object(r.coin); return r as unknown as FeeEnvelope & { basis: Record<string, string>; coin: FeeCoin };
+  }
+  /** Every tail with its source coins, raise, fees in, bids placed/refunded/resting/filled, burns and unwind date; `source` filters by a source coin's mint. */
+  async tails(q: { limit?: number; offset?: number; source?: Address } = {}, options?: RequestOptions): Promise<{ schemaVersion: 1; cluster: string; generatedAtMs: number; total: number; offset: number; limit: number; tails: Tail[] }> {
+    const r = object(await this.get("/api/tails" + query({ limit: q.limit, offset: q.offset, source: q.source }, 100), options)); array(r.tails); number(r.total);
+    return r as unknown as { schemaVersion: 1; cluster: string; generatedAtMs: number; total: number; offset: number; limit: number; tails: Tail[] };
   }
   /** Launchpads (fee claimers) ranked by what their creators earn, and the protocol's own configs. */
-  async launchpads(options?: RequestOptions): Promise<FeeEnvelope & { launchpads: Launchpad[]; ourConfigs: OurConfig[] }> {
-    const r = object(await this.get("/api/fees/launchpads", options)); array(r.launchpads); return r as unknown as FeeEnvelope & { launchpads: Launchpad[]; ourConfigs: OurConfig[] };
+  async launchpads(options?: RequestOptions): Promise<FeeEnvelope & { rankedBy: "last24h" | "lifetime"; historySinceMs: number; basis: Record<string, string>; launchpads: Launchpad[]; ourConfigs: OurConfig[] }> {
+    const r = object(await this.get("/api/fees/launchpads", options)); array(r.launchpads); return r as unknown as FeeEnvelope & { rankedBy: "last24h" | "lifetime"; historySinceMs: number; basis: Record<string, string>; launchpads: Launchpad[]; ourConfigs: OurConfig[] };
   }
   feed(options: FeedOptions): FeedSubscription { return new FeedSubscription(this.baseUrl, options); }
 }

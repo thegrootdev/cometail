@@ -105,3 +105,25 @@ test('unwind feed keeps exact returned balance and rejects a numeric or fraction
  assert.equal(decodeFrame(event).data.incomeReturned,'9007199254740993');
  for(const amount of [1,'1.5','-1'])assert.throws(()=>decodeFrame({...event,data:{...event.data,incomeReturned:amount}}),ProtocolError);
 });
+test('filtered replay: every nextCursor parses and advances beyond since; an empty filtered page may continue; replayAll never repeats a page',async()=>{
+ const replay=(events,nextCursor,types=['claim'])=>json({schemaVersion:1,cluster:'devnet',type:'replay',generatedAtMs:100,types,events,nextCursor});
+ // an empty filtered page that advances is valid
+ let r=await clientWith(async()=>replay([],'20:5:x')).replay({since:'10:0:abc',types:['claim']});assert.equal(r.events.length,0);assert.equal(r.nextCursor,'20:5:x');
+ // a malformed cursor on an empty filtered page is refused
+ await assert.rejects(clientWith(async()=>replay([],'bad-cursor')).replay({since:'10:0:abc',types:['claim']}),ProtocolError);
+ // a cursor that does not advance beyond since is refused
+ await assert.rejects(clientWith(async()=>replay([],'10:0:abc')).replay({since:'10:0:abc',types:['claim']}),ProtocolError);
+ // a type that was not asked for is refused
+ await assert.rejects(clientWith(async()=>replay([frame('11:0:abc')],'12:0:abc')).replay({since:'10:0:abc',types:['claim']}),ProtocolError);
+ // replayAll stops with an error instead of looping on a server that repeats its cursor
+ let calls=0;const looping=clientWith(async()=>{calls++;return replay([],'20:5:x');});
+ await assert.rejects((async()=>{for await (const _ of looping.replayAll('20:5:x',undefined,['claim'])){}})(),ProtocolError);assert.ok(calls<=2);
+});
+test('fee index and tails reads keep labelled estimates and null availability',async()=>{
+ const coin={mint,pool:mint,config:mint,creator:mint,launchpad:mint,ours:false,name:null,symbol:null,stage:'bonding',creatorFeePct:75,creatorLifetimeEstimateLamports:'9007199254740993',creatorLast24hEstimateLamports:'1',last24hWindowHours:6,creatorAvgPerDayEstimateLamports:'2',claimableLamports:'3',launchedAtMs:1,configAllowsTail:true,reasons:[],changedAtMs:2};
+ const cov={mode:'all-dbc',pools:1,configs:1,fullSlot:1,deltaSlot:2,fullAtMs:1,deltaAtMs:2,fullEveryHours:24,deltaEveryMinutes:5,historySinceMs:1,fullDayOfHistory:false,claims:{}};
+ const c=clientWith(async url=>{const u=new URL(url);if(u.pathname==='/api/fees/coins')return json({schemaVersion:1,cluster:'devnet',generatedAtMs:1,coverage:cov,basis:{creatorLifetimeEstimateLamports:'x'},coins:[coin],offset:0,limit:50});
+  if(u.pathname==='/api/tails')return json({schemaVersion:1,cluster:'devnet',generatedAtMs:1,total:1,offset:0,limit:25,tails:[{vault:mint,status:'launched',stMint:mint,name:null,symbol:null,decimals:null,sources:[],raise:null,feesIn:{lifetimeLamports:'1',last24hLamports:'0'},bids:{placedLamports:'100',refundedLamports:'100',restingLamports:null,filledLamports:null},burnedStRaw:'0',unwindOpensAtSec:5}]});throw Error(u.pathname)});
+ const f=await c.feeCoins({sort:'avg',eligible:true});assert.equal(f.coins[0].creatorLifetimeEstimateLamports,'9007199254740993');assert.equal(f.basis.creatorLifetimeEstimateLamports,'x');
+ const t=await c.tails({source:mint});assert.equal(t.tails[0].bids.filledLamports,null);assert.equal(t.tails[0].raise,null);
+});

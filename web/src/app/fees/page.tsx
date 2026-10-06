@@ -3,7 +3,7 @@
 // the creator earns, what waits to be claimed, and whether the fees can launch a tail; the
 // launchpads ranked by what their creators earn, with copy-paste snippets for the protocol's six
 // launch configs. Read-only; the "Sell these fees" path opens the sell wizard on the creator's pool.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Shell, Card } from "@/components/Shell";
@@ -62,14 +62,20 @@ function Coins() {
   const [coverage, setCoverage] = useState<FeeCoverage | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [more, setMore] = useState(false);
+  const [paging, setPaging] = useState(false);
   const me = publicKey?.toBase58() ?? null;
+  // every response is tied to the query that asked for it: a newer query makes older answers void
+  const generation = useRef(0);
   useEffect(() => { const t = setTimeout(() => setSearch(query.trim()), 300); return () => clearTimeout(t); }, [query]);
   const load = async (offset: number) => {
+    const g = offset === 0 ? ++generation.current : generation.current;
     const r = await api.feeCoins({ sort, stage, eligible, creator: mine ? me : null, q: search || undefined, offset, limit: PAGE });
-    if (!r) { setState("error"); return; }
+    if (g !== generation.current) return;
+    if (!r) { if (offset === 0) setState("error"); return; }
     setCoverage(r.coverage); setRows((old) => (offset ? [...old, ...r.coins] : r.coins)); setMore(r.coins.length === PAGE); setState("ok");
   };
-  useEffect(() => { setState("loading"); void load(0); }, [sort, stage, eligible, mine, me, search]);
+  const loadMore = async () => { if (paging) return; setPaging(true); try { await load(rows.length); } finally { setPaging(false); } };
+  useEffect(() => { setState("loading"); setRows([]); void load(0); }, [sort, stage, eligible, mine, me, search]);
   return (
     <>
       <Coverage c={coverage} />
@@ -101,19 +107,20 @@ function Coins() {
                     <p className="source-kind">{c.stage === "graduated" ? copy.graduated : c.stage === "bonding" ? copy.bonding : copy.migrating}{c.creatorFeePct !== null ? ` · creator ${c.creatorFeePct}%` : ""}</p>
                   </td>
                   <td data-label={copy.launchpad}>{c.ours ? <Badge tone="gold">{copy.ours}</Badge> : c.launchpad ? <CopyAddress address={c.launchpad} label={copy.wallet} /> : "—"}</td>
-                  <td className="money" data-label={copy.last24h}><Money lamports={c.creatorLast24hLamports} />{c.last24hWindowHours > 0 && c.last24hWindowHours < 24 ? <span className="micro"> {copy.window(c.last24hWindowHours)}</span> : null}</td>
-                  <td className="money" data-label={copy.lifetime}><Money lamports={c.creatorLifetimeLamports} /></td>
+                  <td className="money" data-label={copy.last24h}><Money lamports={c.creatorLast24hEstimateLamports} />{c.last24hWindowHours < 24 ? <span className="micro"> {copy.window(c.last24hWindowHours)}</span> : null}</td>
+                  <td className="money" data-label={copy.lifetime}><Money lamports={c.creatorLifetimeEstimateLamports} /></td>
                   <td className="money" data-label={copy.claimable}><Money lamports={c.claimableLamports} /></td>
                   <td data-label={copy.tail}>
-                    <span className={`source-availability ${c.tailEligible ? "source-sellable" : ""}`} title={c.reasons.join("; ") || undefined}>{c.tailEligible ? copy.canTail : copy.cannotTail}</span>
-                    {!c.tailEligible && c.reasons.length > 0 && <p className="micro">{c.reasons[0]}</p>}
-                    {me && c.creator === me && c.tailEligible && <p className="mt-1"><Link className="text-link" href={`/sell?pool=${c.pool}`}>{copy.sell} ↗</Link></p>}
+                    <span className={`source-availability ${c.configAllowsTail ? "source-sellable" : ""}`} title={c.configAllowsTail ? copy.tailNote : c.reasons.join("; ")}>{c.configAllowsTail ? copy.canTail : copy.cannotTail}</span>
+                    {!c.configAllowsTail && c.reasons.length > 0 && <p className="micro">{c.reasons[0]}</p>}
+                    {me && c.creator === me && c.configAllowsTail && <p className="mt-1"><Link className="text-link" href={`/sell?pool=${c.pool}`}>{copy.sell} ↗</Link></p>}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {more && <button type="button" className="button button-secondary mt-4" onClick={() => void load(rows.length)}>{copy.more}</button>}
+          {more && <button type="button" className="button button-secondary mt-4" disabled={paging} onClick={() => void loadMore()}>{copy.more}</button>}
+          <p className="micro mt-3">{copy.estimateNote} {copy.tailNote}</p>
         </div>
       )}
     </>
@@ -121,7 +128,7 @@ function Coins() {
 }
 
 function Launchpads() {
-  const [data, setData] = useState<{ coverage: FeeCoverage; launchpads: Launchpad[]; ourConfigs: OurConfig[] } | null | undefined>(undefined);
+  const [data, setData] = useState<{ coverage: FeeCoverage; rankedBy: "last24h" | "lifetime"; historySinceMs: number; launchpads: Launchpad[]; ourConfigs: OurConfig[] } | null | undefined>(undefined);
   useEffect(() => { void api.feeLaunchpads().then(setData); }, []);
   const presets = useMemo(ourPresets, []);
   const ours = new Map((data?.ourConfigs ?? []).map((c) => [c.config, c]));
@@ -136,7 +143,8 @@ function Launchpads() {
             return (
               <li key={p.config}>
                 <div className="flex flex-wrap items-center gap-2"><strong>{p.label}</strong><CopyAddress address={p.config} label={copy.configLabel} /><CopyButton text={code} /></div>
-                {s && <p className="micro mt-1">{s.coins} coins · creators lifetime <Money lamports={s.creatorLifetimeLamports} secondary={false} /> · 24 h <Money lamports={s.creatorLast24hLamports} secondary={false} />{s.tailEligibleConfig ? " · tail-ready config" : ""}</p>}
+                {s && !s.covered && <p className="micro mt-1">{copy.notCovered}</p>}
+                {s && s.covered && <p className="micro mt-1">{s.coins} coins · creators lifetime (est.) <Money lamports={s.creatorLifetimeEstimateLamports} secondary={false} /> · 24 h (est.) <Money lamports={s.creatorLast24hEstimateLamports} secondary={false} />{s.tailEligibleConfig ? " · tail-ready config" : ""}</p>}
                 <pre className="fee-snippet mt-2"><code>{code}</code></pre>
               </li>
             );
@@ -146,6 +154,7 @@ function Launchpads() {
       <h2 className="mt-8">{copy.lpTitle}</h2>
       <p className="text-sm">{copy.lpBody}</p>
       <Coverage c={data?.coverage ?? null} />
+      {data && <p className="micro mt-1">{data.rankedBy === "lifetime" ? copy.rankedByLifetime(new Date(data.historySinceMs || Date.now()).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC") : copy.rankedByDay} {copy.estimateNote}</p>}
       {data === undefined && <DataState kind="loading" compact />}
       {data === null && <DataState kind="error" compact title={copy.unavailable} />}
       {data && (
@@ -158,8 +167,8 @@ function Launchpads() {
                   <td data-label={copy.launchpad}><span className="micro">#{l.rank} </span>{l.ours ? <Badge tone="gold">{copy.ours}</Badge> : null} <CopyAddress address={l.launchpad} label={copy.wallet} />{l.creatorFeePct !== null ? <p className="micro">creator share {l.creatorFeePct}%</p> : null}</td>
                   <td data-label={copy.lpCoins}>{l.coins.toLocaleString("en-US")}<p className="micro">{l.graduated.toLocaleString("en-US")} graduated · {l.configs.toLocaleString("en-US")} configs</p></td>
                   <td data-label={copy.lpEligible}>{l.tailEligibleCoins.toLocaleString("en-US")}</td>
-                  <td className="money" data-label={copy.lpDay}><Money lamports={l.creatorLast24hLamports} /></td>
-                  <td className="money" data-label={copy.lpLife}><Money lamports={l.creatorLifetimeLamports} /></td>
+                  <td className="money" data-label={copy.lpDay}><Money lamports={l.creatorLast24hEstimateLamports} />{l.coinsWithShorterWindow > 0 ? <p className="micro">{copy.shorter(l.coinsWithShorterWindow)}</p> : null}</td>
+                  <td className="money" data-label={copy.lpLife}><Money lamports={l.creatorLifetimeEstimateLamports} /></td>
                   <td className="money" data-label={copy.lpClaimable}><Money lamports={l.claimableLamports} /></td>
                 </tr>
               ))}

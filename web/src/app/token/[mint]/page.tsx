@@ -461,7 +461,8 @@ function TailLink({ mint }: { mint: string }) {
   const [vaults, setVaults] = useState<string[]>([]);
   useEffect(() => {
     let live = true;
-    void api.sky().then((r) => { if (live && r) setVaults([...new Set(r.streams.filter((x) => x.baseMint === mint && x.vault).map((x) => String(x.vault)))]); });
+    // every vault holding this coin's fees, on any launchpad's config (the worker joins streams by source mint)
+    void api.tails({ source: mint, limit: 100 }).then((r) => { if (live && r) setVaults(r.tails.map((t) => t.vault)); });
     return () => { live = false; };
   }, [mint]);
   if (!vaults.length) return null;

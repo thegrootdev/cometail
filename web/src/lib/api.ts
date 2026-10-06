@@ -63,19 +63,31 @@ async function get<T>(path: string): Promise<T | null> {
 export interface FeeCoin {
   mint: string; pool: string; config: string; creator: string; launchpad: string | null; ours: boolean; name: string | null; symbol: string | null;
   stage: "bonding" | "migrating" | "graduated"; creatorFeePct: number | null;
-  creatorLifetimeLamports: string; creatorLast24hLamports: string; last24hWindowHours: number; creatorAvgPerDayLamports: string;
-  claimableLamports: string; launchedAtMs: number; tailEligible: boolean; reasons: string[]; changedAtMs: number;
+  creatorLifetimeEstimateLamports: string; creatorLast24hEstimateLamports: string; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: string;
+  claimableLamports: string; launchedAtMs: number; configAllowsTail: boolean; reasons: string[]; changedAtMs: number;
 }
-export interface FeeCoverage { mode: string; pools: number; configs: number; fullAtMs: number; deltaAtMs: number; fullEveryHours: number; deltaEveryMinutes: number }
-export interface Launchpad { rank: number; launchpad: string; ours: boolean; coins: number; configs: number; graduated: number; tailEligibleCoins: number; creatorLifetimeLamports: string; creatorLast24hLamports: string; claimableLamports: string; creatorFeePct: number | null }
-export interface OurConfig { config: string; launchpad: string | null; creatorFeePct: number | null; tailEligibleConfig: boolean | null; coins: number; graduated: number; creatorLifetimeLamports: string; creatorLast24hLamports: string; claimableLamports: string }
+export interface FeeCoverage { mode: string; pools: number; configs: number; fullAtMs: number; deltaAtMs: number; fullEveryHours: number; deltaEveryMinutes: number; historySinceMs: number; fullDayOfHistory: boolean }
+export interface Launchpad { rank: number; launchpad: string; ours: boolean; coins: number; configs: number; graduated: number; tailEligibleCoins: number; creatorLifetimeEstimateLamports: string; creatorLast24hEstimateLamports: string; coinsWithShorterWindow: number; claimableLamports: string; creatorFeePct: number | null }
+export type OurConfig = { config: string; covered: false; note: string } | { config: string; covered: true; launchpad: string; creatorFeePct: number; tailEligibleConfig: boolean; coins: number; graduated: number; creatorLifetimeEstimateLamports: string; creatorLast24hEstimateLamports: string; claimableLamports: string };
+export interface Tail {
+  vault: string; status: string; stMint: string; name: string | null; symbol: string | null; decimals: number | null;
+  sources: { stream: string; kind: string; pool: string; mint: string | null; name: string | null; symbol: string | null }[];
+  raise: { raisedLamports: string; targetLamports: string; progressBps: number | null; stage: string | null } | null;
+  feesIn: { lifetimeLamports: string; last24hLamports: string };
+  bids: { placedLamports: string; refundedLamports: string; restingLamports: string | null; filledLamports: string | null };
+  burnedStRaw: string; unwindOpensAtSec: number | null;
+}
 export const api = {
   feeCoins: (q: { sort: string; stage: string; eligible: boolean; creator?: string | null; q?: string; offset?: number; limit?: number }) => {
     const p = new URLSearchParams({ sort: q.sort, stage: q.stage, limit: String(q.limit ?? 50), offset: String(q.offset ?? 0) });
     if (q.eligible) p.set("eligible", "1"); if (q.creator) p.set("creator", q.creator); if (q.q) p.set("q", q.q);
     return get<{ coverage: FeeCoverage; coins: FeeCoin[]; offset: number; limit: number }>(`/api/fees/coins?${p}`);
   },
-  feeLaunchpads: () => get<{ coverage: FeeCoverage; launchpads: Launchpad[]; ourConfigs: OurConfig[] }>("/api/fees/launchpads"),
+  feeLaunchpads: () => get<{ coverage: FeeCoverage; rankedBy: "last24h" | "lifetime"; historySinceMs: number; launchpads: Launchpad[]; ourConfigs: OurConfig[] }>("/api/fees/launchpads"),
+  tails: (q: { limit?: number; offset?: number; source?: string } = {}) => {
+    const p = new URLSearchParams({ limit: String(q.limit ?? 25), offset: String(q.offset ?? 0) }); if (q.source) p.set("source", q.source);
+    return get<{ total: number; offset: number; limit: number; tails: Tail[] }>(`/api/tails?${p}`);
+  },
   sky: () => get<{ streams: SkyStream[] }>("/api/sky?limit=500"),
   vaults: () => get<{ vaults: VaultRow[] }>("/api/vaults"),
   vault: (key: string) =>
