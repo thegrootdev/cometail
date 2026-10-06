@@ -13,13 +13,12 @@
 //
 // What is kept: pools on SOL-quoted configs that ever paid their creator. What is derived, and how
 // exact it is:
-//   - lifetime creator fees: the pool's lifetime trading-fee counter times the config's creator
-//     percentage, an upper bound (the program floors the creator share swap by swap, so the true sum is
-//     up to one lamport per swap lower). It is never shown below the claimable amount: when the two are
-//     within the smaller of 0.0001 SOL and 0.1% of the estimate the creator has claimed nothing (a claim
-//     that small aside) and the lifetime IS the claimable amount, exact; otherwise lifetime and "already
-//     claimed" are estimates.
-//     The average per day since activation inherits that;
+//   - lifetime creator fees: an ESTIMATE and an upper bound, the pool's lifetime trading-fee counter
+//     times the config's creator percentage (the program floors the creator share swap by swap, so the
+//     true sum can be lower by under a lamport per swap; exact at a 0% or 100% share). What the creator
+//     already claimed is therefore AT MOST lifetime minus claimable (exact at 100%), and nothing was
+//     claimed only when the two are equal (a claim can only take claimable below the true lifetime).
+//     Partial claims exist, so no smaller gap is read as "no claim". The average per day inherits that;
 //   - the last 24 hours: an ESTIMATE from hourly snapshots holding the counter's last observed value
 //     in each hour, so the base is the counter at the end of the hour 24 hours back; a pool younger
 //     in the index than that reports its shorter window;
@@ -109,15 +108,11 @@ export function decodeConfigSlice(config: string, d: Buffer): IndexConfig {
 
 export const stageOf = (progress: number) => (progress === 3 ? "graduated" : progress === 0 ? "bonding" : "migrating");
 export const creatorShare = (ttq: bigint, pct: number) => (ttq * BigInt(pct)) / 100n;
-/** Per-swap flooring makes the counter estimate overshoot the true creator total by under a lamport per swap.
- *  A gap between estimate and claimable within the smaller of 0.0001 SOL and 0.1% of the estimate is that
- *  rounding, not a claim (the relative bound keeps a small coin's real claim from reading as rounding). */
-export const ROUNDING_ALLOWANCE = 100_000n;
-export const roundingAllowance = (estimate: bigint) => (estimate / 1000n < ROUNDING_ALLOWANCE ? estimate / 1000n : ROUNDING_ALLOWANCE);
-/** Lifetime creator fees as shown: never below the exact claimable amount; equal to it when nothing was claimed. */
-export function creatorLifetime(estimate: bigint, claimable: bigint): { lifetime: bigint; claimed: bigint; nothingClaimed: boolean } {
-  if (estimate <= claimable + roundingAllowance(estimate)) return { lifetime: claimable, claimed: 0n, nothingClaimed: true };
-  return { lifetime: estimate, claimed: estimate - claimable, nothingClaimed: false };
+/** What the counters prove about the creator's past claims. The lifetime estimate is an upper bound of the true
+ *  total T (per-swap flooring; exact at a 0% or 100% share) and claimable = T - claimed, so claimed is at most
+ *  estimate - claimable (exactly that at 100%), and it is zero for certain only when the two are equal. */
+export function creatorClaims(estimate: bigint, claimable: bigint, pct: number): { claimedAtMost: bigint; lifetimeExact: boolean; noneClaimed: boolean } {
+  return { claimedAtMost: estimate > claimable ? estimate - claimable : 0n, lifetimeExact: pct === 0 || pct === 100, noneClaimed: estimate === claimable };
 }
 /** Name, symbol and uri from a Token-2022 mint's own metadata extension (null for a classic mint or none). */
 export function token2022Metadata(mint: PublicKey, info: { owner: PublicKey; data: Buffer; lamports: number; executable: boolean }): { name: string; symbol: string; uri: string } | null {
@@ -179,8 +174,6 @@ class IndexDb {
       // rows named before the uri was kept (or before Token-2022 metadata was read) are read once more
       this.db.exec("update fi_names set checked_at = 0");
     }
-    // rows written before the lifetime rule: lifetime never below claimable, and equal to it within the rounding allowance
-    this.db.prepare("update fi_pools set creator_life = creator_fee where creator_life <> creator_fee and creator_life <= creator_fee + min(?, creator_life / 1000)").run(ROUNDING_ALLOWANCE);
   }
   meta(key: string): string | null { const r = this.db.prepare("select value from fi_meta where key = ?").get(key); return r ? String(r.value) : null; }
   setMeta(key: string, value: string) { this.db.prepare("insert into fi_meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value").run(key, value); }
@@ -229,7 +222,24 @@ export class FeeIndex {
   }
   private get conn(): Connection { return this.chain.connection; }
 
-  async open() { await this.db.open(); for (const r of this.db.db.prepare("select * from fi_configs").all()) this.configs.set(String(r.config), this.configRow(r)); }
+  async open() {
+    await this.db.open();
+    for (const r of this.db.db.prepare("select * from fi_configs").all()) this.configs.set(String(r.config), this.configRow(r));
+    this.recoverLifetimes();
+  }
+  /** A build that clamped lifetime to claimable stored it that way (only rows where the two are equal can be
+   *  affected): once, the raw estimate is recomputed from the counter for those rows. */
+  private recoverLifetimes() {
+    if (this.db.meta("lifetime_raw") === "1") return;
+    const rows = this.db.db.prepare("select p.pool, p.ttq, p.creator_life, c.creator_pct from fi_pools p join fi_configs c on c.config = p.config where p.creator_life = p.creator_fee").all();
+    const set = this.db.db.prepare("update fi_pools set creator_life = ? where pool = ?");
+    this.db.db.exec("begin");
+    try {
+      for (const r of rows) { const raw = creatorShare(BigInt(r.ttq), Number(r.creator_pct)); if (raw !== BigInt(r.creator_life)) set.run(raw.toString(), r.pool); }
+      this.db.setMeta("lifetime_raw", "1");
+      this.db.db.exec("commit");
+    } catch (e) { this.db.db.exec("rollback"); throw e; }
+  }
   close() { this.db.close(); }
   private configRow(r: any): IndexConfig { return { config: String(r.config), quoteMint: WSOL, feeClaimer: String(r.fee_claimer), creatorPct: Number(r.creator_pct), activationType: Number(r.activation_type), partnerLocked: Number(r.partner_locked), creatorLocked: Number(r.creator_locked), threshold: BigInt(String(r.threshold)), reasons: JSON.parse(String(r.reasons)) }; }
   /** For tests: a config the index knows. */
@@ -298,9 +308,8 @@ export class FeeIndex {
       for (const p of pools) {
         const cfg = this.configs.get(p.config);
         if (!cfg) continue;
-        const estimate = creatorShare(p.ttq, cfg.creatorPct);
-        if (estimate === 0n && p.creatorFee === 0n) continue;
-        const life = creatorLifetime(estimate, p.creatorFee).lifetime;
+        const life = creatorShare(p.ttq, cfg.creatorPct);
+        if (life === 0n && p.creatorFee === 0n) continue;
         const prev = get.get(p.pool);
         if (prev) {
           const grew = p.ttq - BigInt(prev.ttq);
@@ -573,13 +582,13 @@ export class FeeIndex {
     const progress = Number(r.progress);
     if (progress === 1 || progress === 2) reasons.push("waiting for migration");
     const launchedAtMs = Number(r.launched_at);
-    const shown = creatorLifetime(BigInt(r.creator_life), BigInt(r.creator_fee));
-    const life = shown.lifetime;
+    const life = BigInt(r.creator_life);
+    const claims = creatorClaims(life, BigInt(r.creator_fee), cfg?.creatorPct ?? -1);
     const span = BigInt(Math.max(DAY, nowMs - launchedAtMs));
     return {
       mint: String(r.mint), pool: String(r.pool), config: String(r.config), creator: String(r.creator), launchpad: cfg?.feeClaimer ?? null, ours: this.opts.ourConfigs.includes(String(r.config)),
       name: r.name ?? null, symbol: r.symbol ?? null, imageUrl: r.image ?? null, stage: stageOf(progress), creatorFeePct: cfg?.creatorPct ?? null,
-      creatorLifetimeEstimateLamports: life.toString(), creatorClaimedEstimateLamports: shown.claimed.toString(), nothingClaimed: shown.nothingClaimed, creatorLast24hEstimateLamports: String(r.day_income), last24hWindowHours: Number(r.day_hours),
+      creatorLifetimeEstimateLamports: life.toString(), lifetimeExact: claims.lifetimeExact, creatorClaimedAtMostLamports: claims.claimedAtMost.toString(), noneClaimed: claims.noneClaimed, creatorLast24hEstimateLamports: String(r.day_income), last24hWindowHours: Number(r.day_hours),
       creatorAvgPerDayEstimateLamports: ((life * BigInt(DAY)) / span).toString(),
       claimableLamports: String(r.creator_fee), launchedAtMs, configAllowsTail: reasons.length === 0, reasons, changedAtMs: Number(r.changed_at),
     };

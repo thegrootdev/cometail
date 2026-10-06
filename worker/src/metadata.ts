@@ -84,6 +84,10 @@ export async function fetchMetadataJson(uri: string, timeoutMs = 6000): Promise<
 // is read through the gateways below instead, and a logo on IPFS is stored under the first one that
 // actually serves it as an image.
 const DEAD_IPFS_HOSTS = /^(ipfs\.io|gateway\.ipfs\.io|dweb\.link|w3s\.link|nftstorage\.link|cloudflare-ipfs\.com|cf-ipfs\.com)$/i;
+/** A host of the stopped ipfs.io family, path-style (dweb.link) or subdomain-style (<cid>.ipfs.dweb.link). */
+export function deadIpfsHost(hostname: string): boolean {
+  return DEAD_IPFS_HOSTS.test(hostname) || DEAD_IPFS_HOSTS.test(hostname.replace(/^[a-z0-9]+\.ipfs\./i, ""));
+}
 export const IPFS_GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.orbitor.dev/ipfs/", "https://gateway.pinata.cloud/ipfs/"];
 const CID = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/;
 /** "<cid>[/path]" when the address names an IPFS file (ipfs://, a /ipfs/ path, or a <cid>.ipfs.<host> subdomain); else null. */
@@ -104,7 +108,7 @@ export function metadataCandidates(uri: string): string[] {
   const path = ipfsPath(uri);
   if (!path) return [uri];
   let own: string | null = uri;
-  try { if (uri.startsWith("ipfs://") || DEAD_IPFS_HOSTS.test(new URL(uri).hostname)) own = null; } catch { own = null; }
+  try { if (uri.startsWith("ipfs://") || deadIpfsHost(new URL(uri).hostname)) own = null; } catch { own = null; }
   return [...(own ? [own] : []), ...IPFS_GATEWAYS.map((g) => g + path)];
 }
 /** A metadata file from the first candidate that answers. */
@@ -120,7 +124,7 @@ export async function liveImage(image: string, probe: (url: string) => Promise<b
   const https = /^https:\/\/[^\s"'<>]{4,1024}$/.test(image);
   const path = ipfsPath(image);
   // off IPFS, or on a gateway that still serves (a coin's own dedicated gateway): as it is
-  if (!path || (https && !DEAD_IPFS_HOSTS.test(new URL(image).hostname))) return https ? image : null;
+  if (!path || (https && !deadIpfsHost(new URL(image).hostname))) return https ? image : null;
   for (const g of IPFS_GATEWAYS) { if (await probe(g + path)) return g + path; }
   return null;
 }

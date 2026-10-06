@@ -109,7 +109,7 @@ function Coins() {
                   </td>
                   <td data-label={copy.launchpad}>{c.ours ? <Badge tone="gold">{copy.ours}</Badge> : c.launchpad ? <CopyAddress address={c.launchpad} label={copy.wallet} /> : "—"}</td>
                   <td className="money" data-label={copy.last24h}><Money lamports={c.creatorLast24hEstimateLamports} />{c.last24hWindowHours < 24 ? <span className="micro"> {copy.window(c.last24hWindowHours)}</span> : null}</td>
-                  <td className="money" data-label={copy.lifetime}><Money lamports={c.creatorLifetimeEstimateLamports} /><p className="micro">{c.nothingClaimed ? copy.nothingClaimed : <>{copy.claimedAbout} <Money lamports={c.creatorClaimedEstimateLamports} /></>}</p></td>
+                  <td className="money" data-label={copy.lifetime}><Money lamports={c.creatorLifetimeEstimateLamports} /><p className="micro">{c.noneClaimed ? copy.noneClaimed : <>{c.lifetimeExact ? copy.claimed : copy.claimedAtMost} <Money lamports={c.creatorClaimedAtMostLamports} /></>}</p></td>
                   <td className="money" data-label={copy.claimable}><Money lamports={c.claimableLamports} /></td>
                   <td data-label={copy.tail}>
                     <span className={`source-availability ${c.configAllowsTail ? "source-sellable" : ""}`} title={c.configAllowsTail ? copy.tailNote : c.reasons.join("; ")}>{c.configAllowsTail ? copy.canTail : copy.cannotTail}</span>

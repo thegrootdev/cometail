@@ -126,9 +126,10 @@ export interface FeeCoin {
   /** The https image from the coin's metadata file; null until read, or when it has none. */
   imageUrl: string | null;
   stage: "bonding" | "migrating" | "graduated"; creatorFeePct: number | null;
-  /** Estimates (see the answer's `basis`): the counter times the creator percentage; the program floors per swap.
-   *  The lifetime is never below claimableLamports and equals it exactly when `nothingClaimed`. */
-  creatorLifetimeEstimateLamports: RawAmount; creatorClaimedEstimateLamports: RawAmount; nothingClaimed: boolean; creatorLast24hEstimateLamports: RawAmount; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: RawAmount;
+  /** Estimates (see the answer's `basis`): the counter times the creator percentage, an upper bound since the
+   *  program floors per swap (exact when `lifetimeExact`). Already claimed is at most lifetime minus claimable;
+   *  `noneClaimed` only when the two are equal. */
+  creatorLifetimeEstimateLamports: RawAmount; lifetimeExact: boolean; creatorClaimedAtMostLamports: RawAmount; noneClaimed: boolean; creatorLast24hEstimateLamports: RawAmount; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: RawAmount;
   /** Exact: the pool's unclaimed creator fee. */
   claimableLamports: RawAmount; launchedAtMs: number;
   /** The config part of the vault's deposit rules and a stage it accepts; the deposit also checks the coin's mint. */

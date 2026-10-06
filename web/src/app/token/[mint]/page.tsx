@@ -12,9 +12,9 @@ import { Money } from "@/components/Money";
 import { SocialLinks } from "@/components/SocialLinks";
 import { metadataLinks, tickerText } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
-import { OutsideCoinFees } from "@/components/OutsideCoin";
+import { OutsideCoinFees, type FeeCoinResult } from "@/components/OutsideCoin";
 import { ourConfigs } from "@/lib/protocol-fees";
-import { creatorLifetime } from "@/lib/creator-fees";
+import { creatorClaims } from "@/lib/creator-fees";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
 import { use, useEffect, useRef, useState } from "react";
@@ -104,7 +104,8 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     return { image: typeof data.image === "string" && /^https?:\/\//.test(data.image) ? data.image as string : undefined, links: metadataLinks(data) };
   }, [meta?.uri]);
   // what the Fee Index knows about the coin (any launchpad), including its logo read on the server
-  const { data: feeCoin, loading: feeLoading } = useLoad(() => api.feeCoin(mintStr).then((r) => r?.coin ?? null), [mintStr], 60_000);
+  const { data: feeResult, reload: reloadFee } = useLoad<NonNullable<FeeCoinResult>>(() => api.feeCoin(mintStr), [mintStr], 60_000);
+  const feeCoin = feeResult?.state === "ok" ? feeResult.coin : null;
   const [actionError, setActionError] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [amount, setAmount] = useState("");
@@ -136,9 +137,9 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const creatorTotal = view
     ? view.tradingQuoteFee.muln(view.creatorFeePct).divn(100)
     : new BN(0);
-  // per-trade rounding is not a claim: below 0.0001 SOL the creator has claimed nothing
-  const shown = creatorLifetime(BigInt(creatorTotal.toString()), BigInt(claimable.toString()));
-  const realized = new BN(shown.claimed.toString());
+  // the counter estimate is an upper bound (per-trade rounding), so already claimed is at most the gap
+  const shown = creatorClaims(BigInt(creatorTotal.toString()), BigInt(claimable.toString()), view?.creatorFeePct ?? -1);
+  const realized = new BN(shown.claimedAtMost.toString());
   // the main index tracks only the protocol's own configs; a coin from another launchpad never fills its market panel
   const ours = view ? ourConfigs().some((k) => k.config.toBase58() === new PublicKey(view.state.config).toBase58()) : true;
   const outside = !!view && !ours && !market.data;
@@ -281,7 +282,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         )}
       </div>
       <TailLink mint={mintStr} />
-      {outside ? <OutsideCoinFees coin={feeCoin} loaded={!feeLoading || !!feeCoin} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} /> : <TokenMarket mint={mintStr} onChain={!!view} />}
+      {outside ? <OutsideCoinFees result={feeResult} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} onRetry={reloadFee} /> : <TokenMarket mint={mintStr} onChain={!!view} />}
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
       {!loading && !error && !view && (
@@ -332,7 +333,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                   value={<Money lamports={claimable.toString()} quote={asset} quoteRate={rate} />}
                   tone="dust"
                 />
-                <Stat label={c.curveEstimate} value={shown.nothingClaimed ? c.curveNothingClaimed : <Money lamports={realized.toString()} quote={asset} quoteRate={rate} />} />
+                <Stat label={shown.lifetimeExact ? c.curveClaimed : c.curveEstimate} value={shown.noneClaimed ? c.curveNothingClaimed : <Money lamports={realized.toString()} quote={asset} quoteRate={rate} />} />
               </div>
               <p className="caption mt-4">{c.curveEstimateBody}</p>
               <p className="mt-3 text-xs text-starlight/50">

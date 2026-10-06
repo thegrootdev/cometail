@@ -63,7 +63,7 @@ async function get<T>(path: string): Promise<T | null> {
 export interface FeeCoin {
   mint: string; pool: string; config: string; creator: string; launchpad: string | null; ours: boolean; name: string | null; symbol: string | null; imageUrl: string | null;
   stage: "bonding" | "migrating" | "graduated"; creatorFeePct: number | null;
-  creatorLifetimeEstimateLamports: string; creatorClaimedEstimateLamports: string; nothingClaimed: boolean; creatorLast24hEstimateLamports: string; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: string;
+  creatorLifetimeEstimateLamports: string; lifetimeExact: boolean; creatorClaimedAtMostLamports: string; noneClaimed: boolean; creatorLast24hEstimateLamports: string; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: string;
   claimableLamports: string; launchedAtMs: number; configAllowsTail: boolean; reasons: string[]; changedAtMs: number;
 }
 export interface FeeCoverage { mode: string; pools: number; configs: number; fullAtMs: number; deltaAtMs: number; fullEveryHours: number; deltaEveryMinutes: number; historySinceMs: number; fullDayOfHistory: boolean }
@@ -83,7 +83,16 @@ export const api = {
     if (q.eligible) p.set("eligible", "1"); if (q.creator) p.set("creator", q.creator); if (q.q) p.set("q", q.q);
     return get<{ coverage: FeeCoverage; coins: FeeCoin[]; offset: number; limit: number }>(`/api/fees/coins?${p}`);
   },
-  feeCoin: (mint: string) => get<{ coverage: FeeCoverage; coin: FeeCoin }>(`/api/fees/coins/${encodeURIComponent(mint)}`),
+  /** One coin from the Fee Index; "missing" only for a real 404, "error" for an outage or a network failure. */
+  feeCoin: async (mint: string): Promise<{ state: "ok"; coin: FeeCoin } | { state: "missing" } | { state: "error" }> => {
+    try {
+      const r = await fetch(`${API_URL}/api/fees/coins/${encodeURIComponent(mint)}`, { cache: "no-store", signal: AbortSignal.timeout(12_000) });
+      if (r.status === 404) return { state: "missing" };
+      if (!r.ok) return { state: "error" };
+      const body = (await r.json()) as { coin?: FeeCoin };
+      return body.coin ? { state: "ok", coin: body.coin } : { state: "error" };
+    } catch { return { state: "error" }; }
+  },
   feeLaunchpads: () => get<{ coverage: FeeCoverage; rankedBy: "last24h" | "lifetime"; historySinceMs: number; launchpads: Launchpad[]; ourConfigs: OurConfig[] }>("/api/fees/launchpads"),
   tails: (q: { limit?: number; offset?: number; source?: string } = {}) => {
     const p = new URLSearchParams({ limit: String(q.limit ?? 25), offset: String(q.offset ?? 0) }); if (q.source) p.set("source", q.source);

@@ -299,8 +299,8 @@ describe("fee index: database setting and fail-soft open", () => {
 });
 
 // ---- owner fixes 2026-10-06: lifetime never reads as the same number by accident; names and logos ----
-import { creatorLifetime, roundingAllowance } from "../../worker/src/feeindex";
-import { creatorLifetime as webCreatorLifetime } from "../../web/src/lib/creator-fees";
+import { creatorClaims } from "../../worker/src/feeindex";
+import { creatorClaims as webCreatorClaims } from "../../web/src/lib/creator-fees";
 
 /** A Metaplex metadata account body: key, update authority, mint, then name / symbol / uri as borsh strings. */
 function metaplexData(name: string, symbol: string, uri: string): Buffer {
@@ -308,48 +308,46 @@ function metaplexData(name: string, symbol: string, uri: string): Buffer {
   return Buffer.concat([Buffer.from([4]), Buffer.alloc(64), str(name), str(symbol), str(uri)]);
 }
 
-describe("fee index: lifetime against claimable (TBI, 6qoh...dBLV)", () => {
-  it("the chain's TBI numbers: the counter estimate is 100 lamports over claimable, so nothing was claimed and lifetime is claimable, exact", () => {
+describe("fee index: lifetime against claimable (TBI, 6qoh...dBLV; review 127)", () => {
+  it("TBI: claimable is exact, lifetime is the raw counter estimate, already claimed is only bounded (100 lamports at most)", () => {
     // pool 9DMBff...: totalTradingQuoteFee 353031534845, creator 70%, creatorQuoteFee 247122074291 (a simulated claim paid exactly this)
     const estimate = creatorShare(353_031_534_845n, 70);
     expect(estimate).eq(247_122_074_391n);
-    for (const f of [creatorLifetime, webCreatorLifetime]) {
-      const r = f(estimate, 247_122_074_291n);
-      expect(r.nothingClaimed).eq(true); expect(r.lifetime).eq(247_122_074_291n); expect(r.claimed).eq(0n);
-    }
+    for (const f of [creatorClaims, webCreatorClaims]) expect(f(estimate, 247_122_074_291n, 70)).deep.eq({ claimedAtMost: 100n, lifetimeExact: false, noneClaimed: false });
   });
-  it("a real claim is not rounding, on a big coin and on a small one; lifetime never drops below claimable", () => {
-    for (const f of [creatorLifetime, webCreatorLifetime]) {
-      expect(f(10_000_000_000n, 9_000_000_000n)).deep.eq({ lifetime: 10_000_000_000n, claimed: 1_000_000_000n, nothingClaimed: false });
-      expect(f(20_000n, 0n)).deep.eq({ lifetime: 20_000n, claimed: 20_000n, nothingClaimed: false }); // small coin, fully claimed
-      expect(f(20_000n, 19_985n).nothingClaimed).eq(true); // 15 lamports on 20,000: within 0.1%
-      expect(f(500n, 600n)).deep.eq({ lifetime: 600n, claimed: 0n, nothingClaimed: true });
-    }
-    expect(roundingAllowance(10n ** 12n)).eq(100_000n);
-    expect(roundingAllowance(20_000n)).eq(20n);
+  it("at a 100% share there is no rounding: a 50,000 claim is exact and never hidden", () => {
+    for (const f of [creatorClaims, webCreatorClaims]) expect(f(1_000_000_000n, 999_950_000n, 100)).deep.eq({ claimedAtMost: 50_000n, lifetimeExact: true, noneClaimed: false });
   });
-  it("coin rows use the shown lifetime: exact when nothing was claimed, an estimate with what was claimed otherwise", async () => {
-    const { fi } = await index({}, 70);
-    fi.applyPools([P("TBI", 353_031_534_845n, 247_122_074_291n, 0n), P("SMALL", 28_572n, 0n, 0n)], 1, Date.now(), 0);
-    const tbi = fi.coin("MTBI")!;
-    expect(tbi.creatorLifetimeEstimateLamports).eq("247122074291"); expect(tbi.claimableLamports).eq("247122074291");
-    expect(tbi.nothingClaimed).eq(true); expect(tbi.creatorClaimedEstimateLamports).eq("0");
-    const small = fi.coin("MSMALL")!;
-    expect(small.creatorLifetimeEstimateLamports).eq("20000"); expect(small.creatorClaimedEstimateLamports).eq("20000"); expect(small.nothingClaimed).eq(false);
+  it("rounding alone is not reported as a claim: 1,000 fees of 101 lamports at 70% earn 70,000; the 700 gap is an upper bound only", () => {
+    let truth = 0n; for (let i = 0; i < 1000; i++) truth += (101n * 70n) / 100n;
+    expect(truth).eq(70_000n);
+    const r = creatorClaims(creatorShare(101_000n, 70), truth, 70);
+    expect(r).deep.eq({ claimedAtMost: 700n, lifetimeExact: false, noneClaimed: false });
   });
-  it("rows stored with the raw estimate (the first release) are corrected when the index opens", async () => {
+  it("nothing claimed only when lifetime equals claimable", () => {
+    for (const f of [creatorClaims, webCreatorClaims]) { expect(f(5_000n, 5_000n, 70).noneClaimed).eq(true); expect(f(5_001n, 5_000n, 70).noneClaimed).eq(false); }
+  });
+  it("coin rows carry the raw lifetime, the bound and the flags; a claim never lowers lifetime", async () => {
+    const { fi } = await index({}, 100);
+    fi.applyPools([P("A", 1_000_000_000n, 1_000_000_000n, 0n)], 1, Date.now(), 0);
+    fi.applyPools([P("A", 1_000_000_000n, 999_950_000n, 0n)], 2, Date.now(), 1);
+    const a = fi.coin("MA")!;
+    expect([a.creatorLifetimeEstimateLamports, a.claimableLamports, a.creatorClaimedAtMostLamports, a.lifetimeExact, a.noneClaimed]).deep.eq(["1000000000", "999950000", "50000", true, false]);
+  });
+  it("lifetimes stored clamped by the earlier candidate are recomputed from the counter once, on open", async () => {
     const dir = fsx.mkdtempSync(pathx.join(os.tmpdir(), "fi-life-"));
     const file = pathx.join(dir, "feeindex.sqlite");
     const store = openStore("sqlite::memory:"); await store.init();
     const opts = { fullEveryHours: 24, deltaEveryMinutes: 5, pageDelayMs: 0, claimLookupsPerPass: 1, namesPerPass: 0, ourConfigs: [] };
     const first = new FeeIndex({ connection: {} } as any, store, file, opts); await first.open();
     first.rememberConfig({ config: "CFG", quoteMint: NATIVE_MINT.toBase58(), feeClaimer: "L", creatorPct: 70, activationType: 1, partnerLocked: 20, creatorLocked: 80, threshold: 1n, reasons: [] });
-    first.applyPools([P("TBI", 353_031_534_845n, 247_122_074_291n, 0n), P("SMALL", 28_572n, 0n, 0n)], 1, Date.now(), 0);
-    first.db.db.prepare("update fi_pools set creator_life = 247122074391 where pool = 'TBI'").run();
+    first.applyPools([P("TBI", 353_031_534_845n, 247_122_074_291n, 0n)], 1, Date.now(), 0);
+    first.db.db.prepare("update fi_pools set creator_life = creator_fee where pool = 'TBI'").run(); // the clamp
+    first.db.setMeta("lifetime_raw", "0");
     first.close();
     const again = new FeeIndex({ connection: {} } as any, store, file, opts); await again.open();
-    expect(String(again.db.db.prepare("select creator_life from fi_pools where pool = 'TBI'").get().creator_life)).eq("247122074291");
-    expect(String(again.db.db.prepare("select creator_life from fi_pools where pool = 'SMALL'").get().creator_life)).eq("20000");
+    expect(String(again.db.db.prepare("select creator_life from fi_pools where pool = 'TBI'").get().creator_life)).eq("247122074391");
+    expect(again.db.meta("lifetime_raw")).eq("1");
     again.close(); await store.close(); fsx.rmSync(dir, { recursive: true, force: true });
   });
 });
@@ -475,6 +473,11 @@ describe("metadata on IPFS: the public ipfs.io family stopped serving (429, suns
     // a coin's own dedicated gateway still serves: kept as it is, not probed
     expect(await liveImage(`https://lizard.mypinata.cloud/ipfs/${V0}/logo`, async () => { throw new Error("not probed"); })).eq(`https://lizard.mypinata.cloud/ipfs/${V0}/logo`);
     expect(await liveImage(`ipfs://${V0}`, async (u) => u.startsWith(IPFS_GATEWAYS[0]))).eq(IPFS_GATEWAYS[0] + V0);
+    // a subdomain gateway of the stopped family goes through the live gateways too (review 127)
+    const sub: string[] = [];
+    expect(await liveImage(`https://${TBI}.ipfs.dweb.link/logo.png`, async (u) => { sub.push(u); return u.startsWith(IPFS_GATEWAYS[1]); })).eq(`${IPFS_GATEWAYS[1]}${TBI}/logo.png`);
+    expect(sub).deep.eq([`${IPFS_GATEWAYS[0]}${TBI}/logo.png`, `${IPFS_GATEWAYS[1]}${TBI}/logo.png`]);
+    expect(metadataCandidates(`https://${TBI}.ipfs.w3s.link/meta.json`)).deep.eq(IPFS_GATEWAYS.map((g) => `${g}${TBI}/meta.json`));
   });
   it("an IPFS logo no gateway serves is retried later; a plain-http logo is simply missing", async () => {
     const conn = { getMultipleAccountsInfo: async (keys: any[]) => keys.map(() => ({ data: metaplexData("Racer", "RACER", `https://ipfs.io/ipfs/${V0}`) })) };
