@@ -59,13 +59,13 @@ async function readUrl(url: URL, signal: AbortSignal): Promise<{ body?: Buffer; 
   });
 }
 
-export async function fetchMetadataJson(uri: string): Promise<unknown> {
+export async function fetchMetadataJson(uri: string, timeoutMs = 6000): Promise<unknown> {
   if (uri.length > 2048) throw new Error("metadata URL too long");
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => {
     controller.abort(); reject(new Error("metadata timeout"));
-  }, 6000); });
+  }, timeoutMs); });
   try {
     return await Promise.race([deadline, (async () => {
       let url = new URL(uri);
@@ -77,4 +77,56 @@ export async function fetchMetadataJson(uri: string): Promise<unknown> {
       throw new Error("too many metadata redirects");
     })()]);
   } finally { clearTimeout(timer!); controller.abort(); }
+}
+
+// IPFS. Coins name their files on IPFS gateways, and the public ipfs.io family stopped serving them
+// (429, sunset 2026-09-21); dedicated *.mypinata.cloud gateways refuse outside readers. A file on IPFS
+// is read through the gateways below instead, and a logo on IPFS is stored under the first one that
+// actually serves it as an image.
+const DEAD_IPFS_HOSTS = /^(ipfs\.io|gateway\.ipfs\.io|dweb\.link|w3s\.link|nftstorage\.link|cloudflare-ipfs\.com|cf-ipfs\.com)$/i;
+export const IPFS_GATEWAYS = ["https://ipfs.filebase.io/ipfs/", "https://ipfs.orbitor.dev/ipfs/", "https://gateway.pinata.cloud/ipfs/"];
+const CID = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,})$/;
+/** "<cid>[/path]" when the address names an IPFS file (ipfs://, a /ipfs/ path, or a <cid>.ipfs.<host> subdomain); else null. */
+export function ipfsPath(address: string): string | null {
+  try {
+    if (address.startsWith("ipfs://")) { const p = address.slice(7).replace(/^ipfs\//, ""); return CID.test(p.split("/")[0]) ? p : null; }
+    const u = new URL(address);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    const m = u.pathname.match(/^\/ipfs\/([^/?#]+)(\/[^?#]*)?$/);
+    if (m && CID.test(m[1])) return m[1] + (m[2] ?? "");
+    const sub = u.hostname.match(/^([a-z0-9]+)\.ipfs\./i);
+    if (sub && CID.test(sub[1])) return sub[1] + (u.pathname === "/" ? "" : u.pathname);
+    return null;
+  } catch { return null; }
+}
+/** Where to read a metadata file from, in order: its own address unless that is a dead IPFS gateway, then the live gateways. */
+export function metadataCandidates(uri: string): string[] {
+  const path = ipfsPath(uri);
+  if (!path) return [uri];
+  let own: string | null = uri;
+  try { if (uri.startsWith("ipfs://") || DEAD_IPFS_HOSTS.test(new URL(uri).hostname)) own = null; } catch { own = null; }
+  return [...(own ? [own] : []), ...IPFS_GATEWAYS.map((g) => g + path)];
+}
+/** A metadata file from the first candidate that answers. */
+export async function fetchMetadataJsonAny(uri: string): Promise<unknown> {
+  let last: unknown = new Error("no metadata address");
+  for (const u of metadataCandidates(uri)) { try { return await fetchMetadataJson(u, 8000); } catch (e) { last = e; } }
+  throw last;
+}
+/** A logo address a browser can load: an https address on a live host as it is; on a dead IPFS gateway
+ *  or ipfs://, the first live gateway that serves it as an image (null when none does). Only the fixed
+ *  gateways are probed. */
+export async function liveImage(image: string, probe: (url: string) => Promise<boolean> = probeImage): Promise<string | null> {
+  const https = /^https:\/\/[^\s"'<>]{4,1024}$/.test(image);
+  const path = ipfsPath(image);
+  // off IPFS, or on a gateway that still serves (a coin's own dedicated gateway): as it is
+  if (!path || (https && !DEAD_IPFS_HOSTS.test(new URL(image).hostname))) return https ? image : null;
+  for (const g of IPFS_GATEWAYS) { if (await probe(g + path)) return g + path; }
+  return null;
+}
+async function probeImage(url: string): Promise<boolean> {
+  try {
+    const r = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(8000) });
+    return r.ok && /^image\//i.test(r.headers.get("content-type") ?? "");
+  } catch { return false; }
 }

@@ -1914,3 +1914,17 @@ small, .caption {
   .fee-table td:last-child { justify-content: space-between; }
   .fee-table td:last-child:before { content: attr(data-label); }
 }
+
+/* Coins in the Fee Index and Tails tables (2026-10-06): logo, name and ticker from the coin's metadata. */
+.coin-cell { min-width: 0; gap: 10px; }
+.coin-cell .token-avatar { width: 34px; height: 34px; flex: 0 0 34px; }
+.coin-cell-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.coin-cell-text strong { font-size: 14px; font-weight: 800; overflow-wrap: anywhere; }
+.coin-cell-text small { color: var(--muted); font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+.tail-source + .tail-source { margin-top: 10px; }
+.tail-source .micro { display: block; margin: 2px 0 0 44px; }
+/* A coin from another launchpad: Fee Index facts on its token page. */
+.outside-facts { display: grid; gap: 10px; margin: 0; }
+.outside-facts > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.outside-facts dt { color: var(--muted); font-size: 13px; font-weight: 700; }
+.outside-facts dd { margin: 0; text-align: right; overflow-wrap: anywhere; }

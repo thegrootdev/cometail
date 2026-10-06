@@ -12,6 +12,9 @@ import { Money } from "@/components/Money";
 import { SocialLinks } from "@/components/SocialLinks";
 import { metadataLinks, tickerText } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
+import { OutsideCoinFees } from "@/components/OutsideCoin";
+import { ourConfigs } from "@/lib/protocol-fees";
+import { creatorLifetime } from "@/lib/creator-fees";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
 // trades in both states, the creator's fee claim, and the door to selling the tail.
 import { use, useEffect, useRef, useState } from "react";
@@ -100,6 +103,8 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     const data = await response.json();
     return { image: typeof data.image === "string" && /^https?:\/\//.test(data.image) ? data.image as string : undefined, links: metadataLinks(data) };
   }, [meta?.uri]);
+  // what the Fee Index knows about the coin (any launchpad), including its logo read on the server
+  const { data: feeCoin, loading: feeLoading } = useLoad(() => api.feeCoin(mintStr).then((r) => r?.coin ?? null), [mintStr], 60_000);
   const [actionError, setActionError] = useState<string | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [amount, setAmount] = useState("");
@@ -131,9 +136,14 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const creatorTotal = view
     ? view.tradingQuoteFee.muln(view.creatorFeePct).divn(100)
     : new BN(0);
-  const realized = creatorTotal.gt(claimable)
-    ? creatorTotal.sub(claimable)
-    : new BN(0);
+  // per-trade rounding is not a claim: below 0.0001 SOL the creator has claimed nothing
+  const shown = creatorLifetime(BigInt(creatorTotal.toString()), BigInt(claimable.toString()));
+  const realized = new BN(shown.claimed.toString());
+  // the main index tracks only the protocol's own configs; a coin from another launchpad never fills its market panel
+  const ours = view ? ourConfigs().some((k) => k.config.toBase58() === new PublicKey(view.state.config).toBase58()) : true;
+  const outside = !!view && !ours && !market.data;
+  // the Fee Index logo is checked on the server (IPFS through a live gateway); the browser read is the fallback
+  const logo = feeCoin?.imageUrl ?? artwork?.image ?? undefined;
   const isCreator = !!(publicKey && view && view.creator.equals(publicKey));
   const dec = view?.decimals ?? 6;
   const ticker = meta?.symbol || "tokens";
@@ -254,10 +264,10 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       <BackToSky />
       <PageHeader
         eyebrow={c.tokenKicker}
-        title={meta?.name || short(mintStr)}
+        title={meta?.name || feeCoin?.name || short(mintStr)}
         body={tickerText(meta?.symbol) || undefined}
       >
-        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={artwork?.image} size="large" /><span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span></div>
+        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={logo} size="large" /><span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span></div>
       </PageHeader>
       <SocialLinks links={artwork?.links} tokenName={meta?.name} />
       <div className="detail-address">
@@ -271,7 +281,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         )}
       </div>
       <TailLink mint={mintStr} />
-      <TokenMarket mint={mintStr} onChain={!!view} />
+      {outside ? <OutsideCoinFees coin={feeCoin} loaded={!feeLoading || !!feeCoin} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} /> : <TokenMarket mint={mintStr} onChain={!!view} />}
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
       {!loading && !error && !view && (
@@ -322,7 +332,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                   value={<Money lamports={claimable.toString()} quote={asset} quoteRate={rate} />}
                   tone="dust"
                 />
-                <Stat label={c.curveEstimate} value={<Money lamports={realized.toString()} quote={asset} quoteRate={rate} />} />
+                <Stat label={c.curveEstimate} value={shown.nothingClaimed ? c.curveNothingClaimed : <Money lamports={realized.toString()} quote={asset} quoteRate={rate} />} />
               </div>
               <p className="caption mt-4">{c.curveEstimateBody}</p>
               <p className="mt-3 text-xs text-starlight/50">
@@ -449,7 +459,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
             )}
           </Card>
         </div>
-        <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} quote={asset} rate={rate} />
+        {!outside && <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} quote={asset} rate={rate} />}
         </>
       )}
     </Shell>

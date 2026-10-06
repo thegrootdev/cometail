@@ -123,9 +123,12 @@ export interface FeedReplay { schemaVersion: 1; cluster: string; type: "replay";
 /** One coin in the Fee Index: a SOL-paired DBC coin of any launchpad and what its creator earns on the curve. */
 export interface FeeCoin {
   mint: Address; pool: Address; config: Address; creator: Address; launchpad: Address | null; ours: boolean; name: string | null; symbol: string | null;
+  /** The https image from the coin's metadata file; null until read, or when it has none. */
+  imageUrl: string | null;
   stage: "bonding" | "migrating" | "graduated"; creatorFeePct: number | null;
-  /** Estimates (see the answer's `basis`): the counter times the creator percentage; the program floors per swap. */
-  creatorLifetimeEstimateLamports: RawAmount; creatorLast24hEstimateLamports: RawAmount; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: RawAmount;
+  /** Estimates (see the answer's `basis`): the counter times the creator percentage; the program floors per swap.
+   *  The lifetime is never below claimableLamports and equals it exactly when `nothingClaimed`. */
+  creatorLifetimeEstimateLamports: RawAmount; creatorClaimedEstimateLamports: RawAmount; nothingClaimed: boolean; creatorLast24hEstimateLamports: RawAmount; last24hWindowHours: number; creatorAvgPerDayEstimateLamports: RawAmount;
   /** Exact: the pool's unclaimed creator fee. */
   claimableLamports: RawAmount; launchedAtMs: number;
   /** The config part of the vault's deposit rules and a stage it accepts; the deposit also checks the coin's mint. */
@@ -137,8 +140,8 @@ export interface Launchpad { rank: number; launchpad: Address; ours: boolean; co
 export type OurConfig = { config: Address; covered: false; note: string } | { config: Address; covered: true; launchpad: Address; creatorFeePct: number; tailEligibleConfig: boolean; coins: number; graduated: number; creatorLifetimeEstimateLamports: RawAmount; creatorLast24hEstimateLamports: RawAmount; claimableLamports: RawAmount };
 /** One tail (a vault's fee token). A null field could not be computed; it is never a zero. */
 export interface Tail {
-  vault: Address; status: string; stMint: Address; name: string | null; symbol: string | null; decimals: number | null;
-  sources: { stream: Address; kind: string; pool: Address; mint: Address | null; name: string | null; symbol: string | null }[];
+  vault: Address; status: string; stMint: Address; name: string | null; symbol: string | null; imageUrl: string | null; decimals: number | null;
+  sources: { stream: Address; kind: string; pool: Address; mint: Address | null; name: string | null; symbol: string | null; imageUrl: string | null }[];
   raise: { raisedLamports: RawAmount; targetLamports: RawAmount; progressBps: number | null; stage: string | null } | null;
   feesIn: { lifetimeLamports: RawAmount; last24hLamports: RawAmount };
   /** placed is cumulative; filled = placed - refunded - resting, null while resting principal is unknown. */

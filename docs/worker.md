@@ -46,7 +46,10 @@ counter snapshots for about 50 hours. A claim is noticed when a claimable fee gr
 of the counter between walks, and confirmed from the claim event in the pool's transactions inside
 that walk window; it is published on the feed as a `claim` row. Every stream snapshot carries the
 source coin's mint (`sourceMint`, read once per stream), so `/api/tails?source=` finds vaults holding
-fees from any launchpad's coin. It
+fees from any launchpad's coin. Names (Metaplex, or a Token-2022 mint's own metadata) and logos fill
+in the background, 3,000 names and up to 400 logos per pass (at most 8 metadata reads at once, process-wide,
+a minute per pass), and on demand for the rows an API answer shows; IPFS files go through live public
+gateways. It
 reads OUR configs (`COMETAIL_SKY_CONFIGS`) to mark them in the launchpad ranking. Routes and field
 meanings: docs/api.md, "The Fee Index".
 

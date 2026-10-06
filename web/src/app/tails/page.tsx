@@ -9,6 +9,7 @@ import Link from "next/link";
 import { Shell } from "@/components/Shell";
 import { PageHeader, DataState, Badge } from "@/components/Experience";
 import { Money } from "@/components/Money";
+import { CoinCell } from "@/components/CoinCell";
 import { api, type Tail } from "@/lib/api";
 import { short, units } from "@/lib/format";
 import { tailsPage as copy } from "@/content/cometail";
@@ -45,8 +46,8 @@ export default function TailsPage() {
             <tbody>
               {rows.map((t) => (
                 <tr key={t.vault}>
-                  <td data-label="Tail"><Link className="token-cell" href={`/vault/${t.vault}`}><strong>{t.name || short(t.stMint)}</strong>{t.symbol ? <span className="micro"> {t.symbol}</span> : null}</Link><p className="mt-1"><Badge tone={t.status === "live" ? "gold" : "ion"}>{statusLabel(t.status)}</Badge></p></td>
-                  <td data-label={copy.source}>{t.sources.length ? t.sources.map((s) => <p key={s.stream}>{s.mint ? <Link className="text-link" href={`/token/${s.mint}`}>{s.name || s.symbol || short(s.mint)}</Link> : <span className="micro">{copy.unavailable}</span>}<span className="micro"> {s.kind === "dammV2Position" ? "locked liquidity" : "creator fees"}</span></p>) : "—"}</td>
+                  <td data-label="Tail"><CoinCell mint={t.stMint} name={t.name} symbol={t.symbol} imageUrl={t.imageUrl} href={`/vault/${t.vault}`} /><p className="mt-1"><Badge tone={t.status === "live" ? "gold" : "ion"}>{statusLabel(t.status)}</Badge></p></td>
+                  <td data-label={copy.source}>{t.sources.length ? t.sources.map((s) => <div key={s.stream} className="tail-source">{s.mint ? <CoinCell mint={s.mint} name={s.name} symbol={s.symbol} imageUrl={s.imageUrl} href={`/token/${s.mint}`} /> : <span className="micro">{copy.unavailable}</span>}<p className="micro">{s.kind === "dammV2Position" ? "locked liquidity" : "creator fees"}</p></div>) : "—"}</td>
                   <td data-label={copy.raise}>{t.raise ? <><Money lamports={t.raise.raisedLamports} secondary={false} /><span className="micro"> of </span><Money lamports={t.raise.targetLamports} secondary={false} />{t.raise.progressBps !== null ? <p className="micro">{(t.raise.progressBps / 100).toFixed(1)}%</p> : null}</> : <span className="micro">{copy.unavailable}</span>}</td>
                   <td className="money" data-label={copy.flowing}><Money lamports={t.feesIn.lifetimeLamports} /><p className="micro">24 h: <Money lamports={t.feesIn.last24hLamports} secondary={false} /></p></td>
                   <td className="money" data-label={copy.buybacks}>{t.bids.filledLamports !== null ? <Money lamports={t.bids.filledLamports} /> : <span className="micro">{copy.unavailable}</span>}<p className="micro">{copy.placed("")}<Money lamports={t.bids.placedLamports} secondary={false} /></p></td>

@@ -35,7 +35,7 @@ async function main() {
     const indexer = new Indexer(chain, store);
     // the Fee Index runs on its own clock beside the indexer: a full walk can take minutes and must never hold up the trade index
     let feeIndex: FeeIndex | null = null;
-    if (cfg.feeIndexDb) feeIndex = await openFeeIndexSoft(chain, store, cfg.feeIndexDb, { fullEveryHours: cfg.feeIndexFullHours, deltaEveryMinutes: cfg.feeIndexDeltaMinutes, pageDelayMs: 50, claimLookupsPerPass: 20, namesPerPass: 500, ourConfigs: cfg.skyConfigs.map((k) => k.toBase58()) });
+    if (cfg.feeIndexDb) feeIndex = await openFeeIndexSoft(chain, store, cfg.feeIndexDb, { fullEveryHours: cfg.feeIndexFullHours, deltaEveryMinutes: cfg.feeIndexDeltaMinutes, pageDelayMs: 50, claimLookupsPerPass: 20, namesPerPass: 3000, imagesPerPass: 400, imagePassMs: 60_000, ourConfigs: cfg.skyConfigs.map((k) => k.toBase58()) });
     if (feeIndex) {
       void (async () => {
         while (!stopping) {

@@ -68,10 +68,11 @@ export const feeIndex = {
   sort: "Sort", sortDay: "Last 24 hours", sortClaimable: "Claimable now", sortLifetime: "Lifetime", sortAvg: "Average per day",
   stage: "Stage", all: "All", bonding: "On the curve", graduated: "Graduated", migrating: "Moving to its pool",
   eligibleOnly: "Can launch a tail", mine: "My coins", search: "Name, symbol or mint",
-  coin: "Coin", launchpad: "Launchpad", last24h: "Creator · 24 h (est.)", lifetime: "Creator · lifetime (est.)", claimable: "Claimable now", tail: "Tail",
+  coin: "Coin", launchpad: "Launchpad", last24h: "Creator · 24 h (est.)", lifetime: "Creator · lifetime", claimable: "Claimable now (exact)",
+  nothingClaimed: "nothing claimed yet: all of it is claimable", claimedAbout: "already claimed ≈", tail: "Tail",
   ours: "COMETAIL", canTail: "Config allows a tail", cannotTail: "Cannot launch a tail", window: (h: number) => (h === 0 ? "no history yet" : `over ${h} h only`),
   tailNote: "The deposit also checks the coin's mint (no freeze authority, metadata-only extensions).",
-  estimateNote: "Estimates: the pool's lifetime trading-fee counter times the creator's share; Meteora rounds the share down on every swap, so the true figure can be a few lamports per swap lower. Claimable is exact.",
+  estimateNote: "Claimable now is exact: it is what the creator's claim pays today. Lifetime is never below it, and when the creator has claimed nothing the two are the same number. Once a creator has claimed, lifetime and already claimed are estimates from the pool's lifetime fee counter times the creator's share, high by under a lamport per trade because Meteora rounds that share down on every trade. The 24-hour figure is an estimate the same way.",
   rankedByLifetime: (since: string) => `Ranked by lifetime: the index has held 24-hour history only since ${since}.`, rankedByDay: "Ranked by the last 24 hours, then lifetime.",
   shorter: (n: number) => `${n} with less than 24 h of history`, notCovered: "Not SOL-quoted: outside the Fee Index, and the vault takes SOL-quoted fees only.",
   sell: "Sell these fees", empty: "No coins match.", emptyBody: "Clear the filters, or come back after the next update.",
@@ -82,6 +83,22 @@ export const feeIndex = {
   oursTitle: "Launch on COMETAIL's configs",
   oursBody: "The six launch presets, each a Meteora DBC config. Any app can create a coin on them with Meteora's own SDK. On the SOL-quoted presets the creator can sell those fees here; the stock presets quote in USDC or xStock, which the vault does not take.",
   copy: "Copy", copied: "Copied", wallet: "Fee wallet", configLabel: "Config",
+} as const;
+
+/** A coin from another launchpad on its token page: the Fee Index panel in place of the market panel. */
+export const outsideCoin = {
+  title: "Creator fees · Fee Index",
+  body: "This coin launched on another Meteora launchpad. COMETAIL does not chart its market; the Fee Index reads what its creator earns straight from the chain.",
+  loading: "Reading the Fee Index…",
+  notListed: "Not in the Fee Index: it lists SOL-paired coins once their creator has earned fees.",
+  claimable: "Claimable now (exact)", lifetime: "Creator · lifetime", day: "Creator · 24 h (est.)", avg: "Average per day (est.)",
+  window: (h: number) => `(${h < 1 ? "under 1" : Math.floor(h)} h of history)`,
+  nothingClaimed: "Nothing claimed yet: all of it is claimable.", claimedAbout: "Already claimed ≈",
+  exactNote: "Claimable is exactly what the creator's claim pays today.",
+  stage: "Stage", graduated: "Graduated", bonding: "On its curve", migrating: "Migrating", creatorShare: (pct: number) => `creator ${pct}% of trading fees`,
+  launchpad: "Launchpad", ours: "COMETAIL", wallet: "Wallet", creator: "Creator",
+  tail: "Tail", canTail: "Its fees can launch a tail", cannotTail: "Its config cannot launch a tail",
+  sell: "Sell these fees", trades: "Trades on the explorer", index: "Fee Index",
 } as const;
 
 export const tailsPage = {
@@ -447,9 +464,10 @@ export const experience = {
   finalReview: "Review the final step",
   uploadUnavailable:
     "Image storage is not ready on this deployment. Please try again after the operator connects storage.",
-  curveEstimate: "Estimated from the curve",
+  curveEstimate: "Already claimed (est.)",
+  curveNothingClaimed: "Nothing claimed yet",
   curveEstimateBody:
-    "Derived from the curve's total fees; rounding may differ from actual claims. Pool fees are not included.",
+    "Claimable now is exact: it is what a claim pays today. Already claimed comes from the curve's lifetime fee counter and is high by under a lamport per trade; a gap below 0.0001 SOL and below 0.1% of the total is that rounding, so it shows as nothing claimed. Pool fees after graduation are not included.",
   tokenKicker: "Token",
   vaultKicker: "Fee vault",
   disconnected: "Connect to continue",

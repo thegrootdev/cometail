@@ -323,6 +323,11 @@ export async function tailsRollup(store: Store, fi: FeeIndex | null, q: { limit:
   if (q.source) vaults = vaults.filter((v) => (byVault.get(v.vault) ?? []).some((s) => !s.data?.isOwn && sourceMint(s) === q.source));
   const total = vaults.length;
   vaults = vaults.sort((a, b) => b.updatedAt - a.updatedAt || a.vault.localeCompare(b.vault)).slice(q.offset, q.offset + q.limit);
+  // outside coins (not in the main index) get their name and logo from the Fee Index, read now if it lacks them
+  if (fi) {
+    const outside = vaults.flatMap((v) => (byVault.get(v.vault) ?? []).filter((s) => !s.data?.isOwn).map(sourceMint)).filter((m): m is string => !!m && !tokens.byMint.has(m));
+    if (outside.length) await fi.ensureIdentity(outside, 2_500);
+  }
   const since = Math.floor(nowMs / 1000) - 86_400;
   const harvests = await store.listEventsSince(["harvested", "oneTimeHarvested"], since);
   const rows = await Promise.all(vaults.map(async (v) => {
@@ -341,9 +346,9 @@ export async function tailsRollup(store: Store, fi: FeeIndex | null, q: { limit:
     const resting: string | null = outstanding === 0 ? "0" : ladderComplete ? String(ladder.restingLamports) : null;
     const placed = BigInt(String(acc.routedGross ?? 0)), refunded = BigInt(String(acc.refundedPrincipal ?? 0));
     return {
-      vault: v.vault, status, stMint: String(d.stMint), name: stIdentity?.name ?? null, symbol: stIdentity?.symbol ?? null, decimals: st?.decimals ?? null,
+      vault: v.vault, status, stMint: String(d.stMint), name: stIdentity?.name ?? null, symbol: stIdentity?.symbol ?? null, imageUrl: stIdentity?.imageUrl ?? null, decimals: st?.decimals ?? null,
       sources: mine.filter((s) => !s.data?.isOwn).map((s) => { const mint = sourceMint(s); const t = mint ? tokens.byMint.get(mint) : null; const f = mint && !t && fi ? fi.lookup(mint) : null;
-        return { stream: s.stream, kind: kind(s.data), pool: String(s.data?.pool ?? ""), mint, name: t?.name ?? f?.name ?? null, symbol: t?.symbol ?? f?.symbol ?? null }; }),
+        return { stream: s.stream, kind: kind(s.data), pool: String(s.data?.pool ?? ""), mint, name: t?.name ?? f?.name ?? null, symbol: t?.symbol ?? f?.symbol ?? null, imageUrl: t?.imageUrl ?? f?.imageUrl ?? null }; }),
       raise: bonding ? { raisedLamports: String(bonding.quoteRaisedLamports ?? "0"), targetLamports: String(bonding.targetLamports ?? "0"), progressBps: bonding.progressBps === null ? null : Number(bonding.progressBps), stage: bonding.migrationStage ?? null } : null,
       feesIn: { lifetimeLamports: String(acc.harvestedGross ?? "0"), last24hLamports: harvests.filter((e) => e.vault === v.vault).reduce((n, e) => n + BigInt(String((e.data as any)?.gross ?? 0)), 0n).toString() },
       bids: { placedLamports: placed.toString(), refundedLamports: refunded.toString(), restingLamports: resting, filledLamports: resting === null ? null : (placed - refunded - BigInt(resting)).toString() },
@@ -355,7 +360,7 @@ export async function tailsRollup(store: Store, fi: FeeIndex | null, q: { limit:
 }
 
 /** The Fee Index routes: public and read-only, any origin, rate-limited like everything else. */
-function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: number, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
+async function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: number, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
   const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=30" };
   if (!fi) return send(503, { error: "fee index not enabled on this server" }, any);
   const status = fi.status();
@@ -372,10 +377,19 @@ function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: number
     const offset = Math.max(0, Math.min(100_000, Number(url.searchParams.get("offset") ?? 0) || 0));
     const search = (url.searchParams.get("q") ?? "").trim().slice(0, 64) || null;
     const n = Math.min(200, limit);
-    return send(200, { ...head, basis: ESTIMATE_BASIS, coins: fi.coins({ sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset }), offset, limit: n }, any);
+    const q = { sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset };
+    let coins = fi.coins(q);
+    // names and logos the index has not read yet are read now (bounded); the page shows whatever arrived
+    const lacking = coins.filter((c: { name: string | null; imageUrl: string | null }) => !c.name || !c.imageUrl).map((c: { mint: string }) => c.mint);
+    if (lacking.length) { await fi.ensureIdentity(lacking, 2_500); coins = fi.coins(q); }
+    return send(200, { ...head, basis: ESTIMATE_BASIS, coins, offset, limit: n }, any);
   }
   const m = url.pathname.match(/^\/api\/fees\/coins\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
-  if (m) { const c = fi.coin(m[1]); return c ? send(200, { ...head, basis: ESTIMATE_BASIS, coin: c }, any) : send(404, { ...head, error: "not in the fee index (not SOL-paired, or no creator fee yet)" }, any); }
+  if (m) {
+    let c = fi.coin(m[1]);
+    if (c && (!c.name || !c.imageUrl)) { await fi.ensureIdentity([c.mint], 5_000); c = fi.coin(m[1]); }
+    return c ? send(200, { ...head, basis: ESTIMATE_BASIS, coin: c }, any) : send(404, { ...head, error: "not in the fee index (not SOL-paired, or no creator fee yet)" }, any);
+  }
   return send(404, { error: "not found" }, any);
 }
 
@@ -435,7 +449,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         return send(r.status, r.body, { "access-control-allow-origin": "*", "cache-control": "no-store" });
       }
       if (url.pathname === "/api/tokens" || url.pathname.startsWith("/api/tokens/")) return await tokenRoutes(store, opts, url, send);
-      if (url.pathname.startsWith("/api/fees")) return feeRoutes(opts.feeIndex ?? null, opts.cluster ?? "devnet", url, limit, send);
+      if (url.pathname.startsWith("/api/fees")) return await feeRoutes(opts.feeIndex ?? null, opts.cluster ?? "devnet", url, limit, send);
       if (url.pathname === "/api/tails") {
         const source = url.searchParams.get("source");
         if (source && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(source)) return send(400, { error: "bad source mint" });

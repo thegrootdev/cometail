@@ -10,6 +10,7 @@ import { Shell, Card } from "@/components/Shell";
 import { PageHeader, DataState, Badge } from "@/components/Experience";
 import { Money } from "@/components/Money";
 import { CopyAddress } from "@/components/CopyAddress";
+import { CoinCell } from "@/components/CoinCell";
 import { api, type FeeCoin, type FeeCoverage, type Launchpad, type OurConfig } from "@/lib/api";
 import { ADDRESSES } from "@/lib/addresses";
 import { short } from "@/lib/format";
@@ -103,12 +104,12 @@ function Coins() {
               {rows.map((c) => (
                 <tr key={c.pool}>
                   <td data-label={copy.coin}>
-                    <Link className="token-cell" href={`/token/${c.mint}`}><strong>{c.name || short(c.mint)}</strong>{c.symbol ? <span className="micro"> {c.symbol}</span> : null}</Link>
+                    <CoinCell mint={c.mint} name={c.name} symbol={c.symbol} imageUrl={c.imageUrl} href={`/token/${c.mint}`} />
                     <p className="source-kind">{c.stage === "graduated" ? copy.graduated : c.stage === "bonding" ? copy.bonding : copy.migrating}{c.creatorFeePct !== null ? ` · creator ${c.creatorFeePct}%` : ""}</p>
                   </td>
                   <td data-label={copy.launchpad}>{c.ours ? <Badge tone="gold">{copy.ours}</Badge> : c.launchpad ? <CopyAddress address={c.launchpad} label={copy.wallet} /> : "—"}</td>
                   <td className="money" data-label={copy.last24h}><Money lamports={c.creatorLast24hEstimateLamports} />{c.last24hWindowHours < 24 ? <span className="micro"> {copy.window(c.last24hWindowHours)}</span> : null}</td>
-                  <td className="money" data-label={copy.lifetime}><Money lamports={c.creatorLifetimeEstimateLamports} /></td>
+                  <td className="money" data-label={copy.lifetime}><Money lamports={c.creatorLifetimeEstimateLamports} /><p className="micro">{c.nothingClaimed ? copy.nothingClaimed : <>{copy.claimedAbout} <Money lamports={c.creatorClaimedEstimateLamports} /></>}</p></td>
                   <td className="money" data-label={copy.claimable}><Money lamports={c.claimableLamports} /></td>
                   <td data-label={copy.tail}>
                     <span className={`source-availability ${c.configAllowsTail ? "source-sellable" : ""}`} title={c.configAllowsTail ? copy.tailNote : c.reasons.join("; ")}>{c.configAllowsTail ? copy.canTail : copy.cannotTail}</span>
