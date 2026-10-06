@@ -269,7 +269,9 @@ export class Indexer {
           const price = (id: number) => binPriceSolPerSt(id, binStep, !!vault.stIsX, dec);
           const orders: any[] = [];
           const read: { order: any; record: any }[] = [];
-          for (const r of await this.chain.orderRecords(vaultPk)) { const order = await this.chain.limitOrder(r.account.limitOrder); if (order) read.push({ order, record: r }); }
+          const records = await this.chain.orderRecords(vaultPk);
+          let missingOrders = 0;
+          for (const r of records) { const order = await this.chain.limitOrder(r.account.limitOrder); if (order) read.push({ order, record: r }); else missingOrders++; }
           // the fill state of every bin comes from its bin array, the same accounting the program's
           // settle applies (chain.unfilledAmount); crossed is only the keeper's settle trigger
           const arrays = await this.chain.binArrays(vault.dlmmPair, read.flatMap((x) => x.order.bins.map((b: any) => b.id)));
@@ -286,7 +288,8 @@ export class Indexer {
           const allBins = orders.flatMap((o) => o.bins as any[]);
           const resting = allBins.reduce((a, b) => a + BigInt(b.remaining ?? 0), 0n);
           const unknownBins = allBins.filter((b) => b.remaining === null).length;
-          out.ladder = { status: "ok", pair: vault.dlmmPair.toBase58(), activeId, binStep, activePrice: price(activeId), orders, restingLamports: resting.toString(), unknownBins };
+          // an order record whose order account could not be read makes the ladder partial: its resting principal is unknown
+          out.ladder = { status: missingOrders ? "partial" : "ok", pair: vault.dlmmPair.toBase58(), activeId, binStep, activePrice: price(activeId), orders, records: records.length, missingOrders, restingLamports: resting.toString(), unknownBins };
         }
       }
     } catch (e) {

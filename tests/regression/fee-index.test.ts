@@ -192,3 +192,83 @@ describe("tails rollup (review 120)", () => {
     await store.close();
   });
 });
+
+// ---- recheck 122: incomplete reads never finish a claim or a ladder ----
+import { createHash } from "crypto";
+import { PublicKey } from "@solana/web3.js";
+import { utils } from "@coral-xyz/anchor";
+import { Indexer } from "../../worker/src/indexer";
+
+const DBC_ID = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN");
+/** A transaction carrying one DBC creator-claim event (the event-authority self-CPI), as readTx returns it. */
+function claimTx(pool: PublicKey, quote: bigint, slot: number) {
+  const disc = createHash("sha256").update("event:EvtClaimCreatorTradingFee").digest().subarray(0, 8);
+  const payload = Buffer.alloc(48); pool.toBuffer().copy(payload, 0); payload.writeBigUInt64LE(0n, 32); payload.writeBigUInt64LE(quote, 40);
+  const data = utils.bytes.bs58.encode(Buffer.concat([Buffer.from("e445a52e51cb9a1d", "hex"), disc, payload]));
+  const keys = [DBC_ID];
+  return { slot, blockTime: null, meta: { err: null, loadedAddresses: { writable: [], readonly: [] }, innerInstructions: [{ index: 0, instructions: [{ programIdIndex: 0, accounts: [], data }] }] },
+    transaction: { message: { getAccountKeys: () => ({ get: (i: number) => keys[i], length: keys.length }), compiledInstructions: [] } } };
+}
+async function claimWorld(sigs: { signature: string; slot: number }[], readable: Set<string>, claims?: Set<string>) {
+  const pool = Keypair.generate().publicKey;
+  const conn: any = { rpcEndpoint: "http://x",
+    getSignaturesForAddress: async (_p: PublicKey, o: { limit: number; before?: string }) => { const i = o.before ? sigs.findIndex((s) => s.signature === o.before) + 1 : 0; return sigs.slice(i, i + o.limit).map((s) => ({ ...s, err: null })); },
+    getTransaction: async (sig: string) => {
+      if (!readable.has(sig)) return null;
+      const tx = claimTx(pool, 50n, sigs.find((s) => s.signature === sig)!.slot);
+      if (claims && !claims.has(sig)) tx.meta.innerInstructions = [];
+      return tx;
+    } };
+  const { Chain } = await import("../../worker/src/chain");
+  const store = openStore("sqlite::memory:"); await store.init();
+  const fi = new FeeIndex(new Chain(conn), store, ":memory:", { fullEveryHours: 24, deltaEveryMinutes: 5, pageDelayMs: 0, claimLookupsPerPass: 10, namesPerPass: 0, ourConfigs: [] });
+  await fi.open();
+  fi.rememberConfig({ config: "CFG", quoteMint: NATIVE_MINT.toBase58(), feeClaimer: "L", creatorPct: 100, activationType: 1, partnerLocked: 20, creatorLocked: 80, threshold: 1n, reasons: [] });
+  const key = pool.toBase58();
+  fi.applyPools([P(key, 1000n, 1000n, 0n)], 100, Date.now(), 50);
+  fi.applyPools([P(key, 1000n, 900n, 0n)], 110, Date.now(), 100);
+  fi.closeClaimWindows(500);
+  const claimRows = async () => (await store.listFeedSince(null, 1000)).filter((r) => r.type === "claim").map((r) => r.signature).sort();
+  const status = () => fi.db.db.prepare("select status, note from fi_claims").get();
+  return { fi, readable, claimRows, status };
+}
+
+describe("fee index: incomplete claim windows (recheck 122)", () => {
+  it("one claim readable and one not: publishes the first, stays pending, then confirms with both and no duplicate", async () => {
+    const w = await claimWorld([{ signature: "s112", slot: 112 }, { signature: "s111", slot: 111 }], new Set(["s111"]));
+    await w.fi.resolveClaims();
+    expect(String(w.status().status)).eq("pending");
+    expect(await w.claimRows()).deep.eq(["s111"]);
+    w.readable.add("s112");
+    await w.fi.resolveClaims();
+    expect(String(w.status().status)).eq("confirmed");
+    expect(await w.claimRows()).deep.eq(["s111", "s112"]);
+  });
+  it("a window past the signature cap with a claim found is partial, not confirmed", async () => {
+    const sigs = Array.from({ length: 320 }, (_, i) => ({ signature: `x${i}`, slot: 400 - i }));
+    const w = await claimWorld(sigs, new Set(sigs.map((x) => x.signature)), new Set(["x5"]));
+    await w.fi.resolveClaims();
+    const s = w.status();
+    expect(String(s.status)).eq("partial"); expect(String(s.note)).match(/more than 300 signatures/);
+    expect(await w.claimRows()).deep.eq(["x5"]);
+  });
+});
+
+describe("ladder read: an unreadable order makes resting principal unknown (recheck 122)", () => {
+  it("the indexer marks the ladder partial and the rollup reports filled as unknown", async () => {
+    const pair = Keypair.generate().publicKey, stMint = Keypair.generate().publicKey, vaultPk = Keypair.generate().publicKey;
+    const chain: any = { lbPair: async () => ({ binStep: 100, activeId: 0 }), orderRecords: async () => [{ account: { limitOrder: Keypair.generate().publicKey, placedTs: 1, grossSpent: 100n } }], limitOrder: async () => null, binArrays: async () => new Map() };
+    const store = openStore("sqlite::memory:"); await store.init();
+    const ix: any = new Indexer(chain, store);
+    ix.stDecimalsCache.set(stMint.toBase58(), 6);
+    const live = await ix.liveView(vaultPk, { dlmmPair: pair, stMint, stIsX: true });
+    expect(live.ladder.status).eq("partial"); expect(live.ladder.missingOrders).eq(1); expect(live.ladder.records).eq(1);
+    await store.upsertVault(vaultPk.toBase58(), { status: { live: {} }, stMint: stMint.toBase58(), accounting: { harvestedGross: "0", routedGross: "100", refundedPrincipal: "0", burnedSt: "0" }, routing: { outstandingOrders: 1 }, live });
+    const t = (await tailsRollup(store, null, { limit: 10, offset: 0, source: null })).tails[0];
+    expect(t.bids).deep.eq({ placedLamports: "100", refundedLamports: "0", restingLamports: null, filledLamports: null });
+    // and an "ok" ladder whose order count disagrees with the vault is not trusted either
+    await store.upsertVault(vaultPk.toBase58(), { status: { live: {} }, stMint: stMint.toBase58(), accounting: { routedGross: "100", refundedPrincipal: "0" }, routing: { outstandingOrders: 2 }, live: { ladder: { status: "ok", orders: [{}], records: 1, missingOrders: 0, unknownBins: 0, restingLamports: "0" } } });
+    expect((await tailsRollup(store, null, { limit: 10, offset: 0, source: null })).tails[0].bids.filledLamports).eq(null);
+    await store.close();
+  });
+});

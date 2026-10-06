@@ -43,7 +43,7 @@ creator earns on the curve. Public and read-only: any origin, the same per-clien
 as every route (120 requests a minute, burst 60), `cache-control: public, max-age=30`. Every
 answer carries `{ schemaVersion: 1, cluster, generatedAtMs, coverage }`, where `coverage` is
 `{ mode: "all-dbc", pools, configs, fullSlot, deltaSlot, fullAtMs, deltaAtMs, fullEveryHours, deltaEveryMinutes, historySinceMs, fullDayOfHistory, claims }`
-(`claims` counts claim lookups by status: pending, confirmed, unconfirmed). Answers holding an
+(`claims` counts claim lookups by status: pending, confirmed, partial, unconfirmed). Answers holding an
 estimate carry `basis`: what each `...EstimateLamports` field means.
 
 | Route | Answer |
@@ -60,7 +60,7 @@ How the numbers are made:
 - `creatorLast24hEstimateLamports` (an estimate): the counter's growth since the end of the hour 24 hours back, times the creator share. Hourly snapshots hold each hour's last observed value, and a pool absent from every walk in between did not change, so that base is the counter at that time. `last24hWindowHours` is 24, or less while the index holds less history for the coin (0: none yet).
 - `creatorAvgPerDayEstimateLamports` (an estimate): the lifetime estimate over the days since activation (at least one).
 - `configAllowsTail` and `reasons`: the config part of the program's deposit rules for creator rights (SOL quote, fees in SOL, DAMM v2 migration, creator liquidity permanently locked and nothing unlocked or vesting) and a stage the vault accepts (bonding or graduated). The deposit itself also checks the coin's mint (no freeze authority, metadata-only extensions).
-- Tails `feesIn.last24hLamports` is the exact sum of every indexed harvest event of the last 24 hours. `bids.placedLamports` is cumulative SOL placed in buyback bids (re-placed bids count again); `filledLamports` = placed − refunded − still resting, null while the resting principal of open orders is unknown.
+- Tails `feesIn.last24hLamports` is the exact sum of every indexed harvest event of the last 24 hours. `bids.placedLamports` is cumulative SOL placed in buyback bids (re-placed bids count again); `filledLamports` = placed − refunded − still resting, null while the resting principal of open orders is unknown: the ladder must have been read completely (no unreadable order or bin) and hold as many order records as the vault counts outstanding.
 - Not included: fees on the creator's locked DAMM v2 position after graduation, which are not in the DBC pool.
 
 Coverage: a full walk of every SOL-quoted DBC config and every DBC pool once a day (paginated,
@@ -75,9 +75,10 @@ partner's share is the rest). When it grew by less, beyond rounding (none withou
 trading, 1,000 lamports plus 0.5% of the expected growth), a claim happened, including one masked
 by new trading. The pool's transactions from the previous walk's slot to the slot read after this
 walk ended (up to 300 signatures) are read for the claim events, which become `claim` rows on the
-feed with exact amounts. A lookup whose transactions are not available yet is retried (six times);
-one that reads its window without the event, or a pool busier than 300 signatures in the window,
-is marked unconfirmed and published nowhere. Claims smaller than the rounding tolerance while the
+feed with exact amounts. Whatever events were read are published at once (a retry never repeats a
+row); the lookup finishes only when its whole window was read. Transactions not available yet keep
+it pending (six tries); a window it could not read completely is `partial` when some of its claims
+were found, `unconfirmed` when none were; a complete window without the event is `unconfirmed`. Claims smaller than the rounding tolerance while the
 pool trades, and claims on pools the index does not keep, are not covered; the `claim` stream is
 complete only for what it covers, never presented as every claim on Meteora.
 

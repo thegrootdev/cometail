@@ -383,11 +383,14 @@ export class FeeIndex {
               data: { mint: mintRow ? String(mintRow.mint) : null, pool, role: evRole, quoteAmountLamports: String(ev.data.tokenQuoteAmount ?? "0"), baseAmountRaw: String(ev.data.tokenBaseAmount ?? "0"), signature: s.signature } });
           }
         }
+        // what was read is published now (a row's identity is its signature and ordinal, so a retry never
+        // repeats one); the candidate finishes only when its whole window was read
         if (feed.length) await publish(this.store, feed);
         const found = feed.some((f) => f.data.role === role);
-        if (found) setStatus.run("confirmed", attempts, null, id);
-        else if (unread > 0 && attempts < CLAIM_ATTEMPTS) setStatus.run("pending", attempts, `${unread} transactions not available yet`, id);
-        else setStatus.run("unconfirmed", attempts, !complete ? `more than ${CLAIM_SIGNATURE_CAP} signatures in the window` : unread > 0 ? `${unread} transactions never became available` : "no claim event in the window", id);
+        if (unread > 0 && attempts < CLAIM_ATTEMPTS) setStatus.run("pending", attempts, `${unread} transactions not available yet${found ? "; some claims published" : ""}`, id);
+        else if (!complete) setStatus.run(found ? "partial" : "unconfirmed", attempts, `more than ${CLAIM_SIGNATURE_CAP} signatures in the window`, id);
+        else if (unread > 0) setStatus.run(found ? "partial" : "unconfirmed", attempts, `${unread} transactions never became available`, id);
+        else setStatus.run(found ? "confirmed" : "unconfirmed", attempts, found ? null : "no claim event in the window", id);
       } catch (e) {
         setStatus.run(attempts < CLAIM_ATTEMPTS ? "pending" : "unconfirmed", attempts, String((e as Error).message ?? e).slice(0, 200), id);
       }

@@ -335,7 +335,10 @@ export async function tailsRollup(store: Store, fi: FeeIndex | null, q: { limit:
     const bonding = st ? { quoteRaisedLamports: st.quoteRaisedLamports, targetLamports: st.targetLamports, progressBps: st.progressBps, migrationStage: st.stage } : null;
     const ladder = d.live?.ladder ?? null;
     const outstanding = Number(d.routing?.outstandingOrders ?? 0);
-    const resting: string | null = outstanding === 0 ? "0" : ladder?.status === "ok" && Number(ladder.unknownBins ?? 0) === 0 ? String(ladder.restingLamports) : null;
+    // resting principal is known only from a complete read: the ladder ok, no unknown bins or unread orders,
+    // and as many order records read as the vault says are outstanding; anything else is unknown, not zero
+    const ladderComplete = ladder?.status === "ok" && Number(ladder.unknownBins ?? 0) === 0 && Number(ladder.missingOrders ?? 0) === 0 && Array.isArray(ladder.orders) && ladder.orders.length === outstanding && (ladder.records === undefined || Number(ladder.records) === outstanding);
+    const resting: string | null = outstanding === 0 ? "0" : ladderComplete ? String(ladder.restingLamports) : null;
     const placed = BigInt(String(acc.routedGross ?? 0)), refunded = BigInt(String(acc.refundedPrincipal ?? 0));
     return {
       vault: v.vault, status, stMint: String(d.stMint), name: stIdentity?.name ?? null, symbol: stIdentity?.symbol ?? null, decimals: st?.decimals ?? null,
