@@ -150,6 +150,7 @@ export default function AdminVerifyPage() {
         {simulation && <p className="mt-2 text-sm">{simulation}</p>}
         {status.state === "sending" && <p className="mt-2 text-sm">Waiting for the wallet and the confirmation.</p>}
         {status.state === "error" && <p className="mt-2 text-sm" role="alert">Failed: {status.message}</p>}
+        {status.state === "error" && status.signature && <p className="mt-1 text-sm">The transaction was sent but its confirmation did not come back: check <a href={EXPLORER("tx", status.signature)} target="_blank" rel="noreferrer">{status.signature}</a> before trying again.</p>}
         {status.state === "done" && status.signature && <p className="mt-2 text-sm">Sent: <a href={EXPLORER("tx", status.signature)} target="_blank" rel="noreferrer">{status.signature}</a></p>}
       </Card>
     </Shell>
