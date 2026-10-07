@@ -1,0 +1,373 @@
+/* Glass (2026-10-07 redesign): frosted, translucent cards over a deep space sky, thin light borders,
+   soft depth; ion for actions, dust for money and progress. Loads last. Blur is limited to the header,
+   the tab bar, cards and dialogs (12px), never on list rows, so long feeds stay fast on phones. */
+
+/* The sky: deep space with two soft glows for the glass to frost, and the faint star tile. */
+body:before {
+  background:
+    radial-gradient(60% 40% at 12% 0%, #5bc8ff1f, transparent 70%),
+    radial-gradient(50% 35% at 100% 30%, #8f7bff1c, transparent 70%),
+    radial-gradient(60% 40% at 30% 100%, #f5c45110, transparent 70%),
+    linear-gradient(#05060bd9, #05060bd9),
+    url("/art/stars-tile.webp") repeat,
+    linear-gradient(180deg, var(--space-top), var(--space-bottom));
+}
+
+/* Type: one clean face, calmer sizes. */
+h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.01em; }
+h1 { font-size: clamp(30px, 5vw, 52px) !important; line-height: 1.08; text-shadow: none; font-weight: 800 !important; }
+h2 { font-size: clamp(22px, 2.6vw, 30px); }
+h3 { font-size: 19px; }
+.micro, .stat-label, .stream-table th, .field > span, .caption { font-weight: 700; color: #aab4d0; }
+
+/* Surfaces: glass. */
+.panel, .glass, .atlas-surface, .data-state, .chapter, .mechanics, .portfolio-item, .upload-drop, .form-success, .token-summary,
+.market-card, .token-market, .market-trades, .glass-details, .trade-box, .chart-card {
+  background: linear-gradient(180deg, #ffffff12, #ffffff06);
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius);
+  box-shadow: var(--glass-shadow);
+}
+.panel, .data-state, .token-market, .market-trades, .glass-details, .trade-box, .chart-card {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+.panel + .panel, .sticker-gold, .panel:nth-of-type(even), .chapter:nth-child(2), .portfolio-item:nth-child(even) { box-shadow: var(--glass-shadow); }
+.panel .panel { background: #ffffff08; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.panel { padding: 20px; }
+.panel-heading { font-size: 18px; font-weight: 800; margin: 0 0 14px; }
+.panel-heading:before { display: none; }
+.stat-value { font-weight: 800; font-size: clamp(22px, 2.6vw, 30px); }
+
+/* Eyebrows become a quiet glass chip. */
+.eyebrow { background: #ffffff0f; color: #cfd8f2; border: 1px solid var(--glass-line); box-shadow: none; font-size: 12px; padding: 5px 12px; margin-bottom: 12px; }
+.eyebrow span { background: var(--ion); width: 7px; height: 7px; }
+
+/* Buttons: ion pill for the action, glass pill for the rest; no hard shadow, a soft press. */
+.button, body .wallet-adapter-button, .wallet-placeholder, .page-content button.rounded-full, .panel button.rounded-full,
+.page-content a.rounded-full, .crop-actions button, .empty-actions a, .empty-actions button {
+  min-height: 48px;
+  padding: 12px 22px !important;
+  border: 1px solid var(--glass-line-strong) !important;
+  background: #ffffff10 !important;
+  font-family: var(--font-body) !important;
+  font-weight: 800 !important;
+  font-size: 16px !important;
+  box-shadow: var(--glass-highlight);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.button-primary, body .wallet-adapter-button-trigger, .page-content button.rounded-full.bg-ion, .page-content a.rounded-full.bg-ion, .panel button.rounded-full.bg-ion {
+  background: linear-gradient(180deg, #7dd5ff, #4bb8f2) !important;
+  color: #04111f !important;
+  border-color: #b9e8ff99 !important;
+  box-shadow: 0 6px 22px #5bc8ff40, inset 0 1px 0 #ffffff80;
+}
+.button-gold, .page-content button.rounded-full.bg-dust, .page-content a.rounded-full.bg-dust, .panel button.rounded-full.bg-dust {
+  background: linear-gradient(180deg, #ffd978, #efb93c) !important;
+  color: #1c1303 !important;
+  border-color: #ffe6a399 !important;
+  box-shadow: 0 6px 22px #f5c45133, inset 0 1px 0 #ffffff80;
+}
+.button:active:not(:disabled), body .wallet-adapter-button:active:not(:disabled), .page-content button.rounded-full:active:not(:disabled),
+.panel button.rounded-full:active:not(:disabled), .crop-actions button:active:not(:disabled) { transform: scale(0.98); box-shadow: none; }
+.text-link { text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+.link-button { background: none; border: 0; padding: 0; color: var(--ion); font: inherit; font-weight: 800; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Inputs: frosted wells with a thin line, ion focus ring. */
+.page-content input:not([type="radio"]):not([type="checkbox"]):not([type="range"]), .page-content textarea, .page-content select {
+  background: #ffffff0a !important;
+  border: 1px solid var(--glass-line) !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+  color: var(--starlight);
+}
+.page-content input:focus-visible, .page-content textarea:focus-visible, .page-content select:focus-visible {
+  outline: 2px solid var(--ion); outline-offset: 1px; border-color: transparent !important;
+}
+
+/* Header and tab bar: the two pieces of chrome, both glass. */
+/* the header's glass runs edge to edge while its content keeps the page gutter */
+.site-header { z-index: 20; background: transparent; border-bottom: 0; padding: 10px 0; }
+.site-header:before { content: ""; position: absolute; inset: 0 calc(50% - 50vw); z-index: -1; background: #07091299; -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-bottom: 1px solid var(--glass-line); }
+.desktop-nav a { font-family: var(--font-body); font-weight: 700; font-size: 15px; border: 1px solid transparent; color: #cdd6ef; }
+.desktop-nav a:hover { border-color: var(--glass-line); background: #ffffff0d; }
+.desktop-nav a[aria-current] { background: #ffffff14; color: #fff; border-color: var(--glass-line-strong); box-shadow: none; }
+.mobile-nav { background: #0709129e !important; -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border-top: 1px solid var(--glass-line) !important; }
+.mobile-nav a { font-family: var(--font-body) !important; font-weight: 700 !important; color: #9aa6c6 !important; gap: 3px !important; }
+.mobile-nav a[aria-current] { color: #fff !important; }
+.tab-icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mobile-nav a[aria-current] .tab-icon { stroke: var(--ion); filter: drop-shadow(0 0 6px #5bc8ff80); }
+.site-footer { background: transparent; }
+.footer-signature { font-family: var(--font-body) !important; font-weight: 800; font-size: 17px; }
+.social-pill, .built-on { background: #ffffff0d !important; border: 1px solid var(--glass-line) !important; box-shadow: none !important; }
+
+/* Badges and notices: glass chips. */
+.badge { border: 1px solid var(--glass-line) !important; box-shadow: none !important; }
+.form-notice { background: #f5c4511a !important; color: #f7e3b0 !important; border: 1px solid #f5c45140 !important; box-shadow: none !important; }
+.form-notice .text-link, .form-notice a { color: var(--dust) !important; text-decoration-color: var(--dust) !important; }
+
+/* Folded details: the technical layer, one tap away. */
+.glass-details { margin: 16px 0; padding: 0; overflow: hidden; }
+.glass-details > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 14px 18px; font-weight: 800; color: #e4eaf8; }
+.glass-details > summary::-webkit-details-marker { display: none; }
+.glass-details > summary:after { content: ""; width: 9px; height: 9px; border-right: 2px solid #aab4d0; border-bottom: 2px solid #aab4d0; transform: rotate(45deg) translateY(-3px); transition: transform .15s; flex: none; }
+.glass-details[open] > summary:after { transform: rotate(-135deg) translateY(-2px); }
+.glass-details > :not(summary) { margin-left: 18px; margin-right: 18px; }
+.glass-details > :last-child { margin-bottom: 18px; }
+.glass-details p { color: var(--muted); font-size: 14px; }
+.glass-details > .panel, .glass-details > section { margin-top: 4px; }
+
+/* Home: the promise, one launch button, the live burn line. */
+.home-top { position: relative; display: grid; justify-items: start; gap: 10px; padding: 18px 0 8px; max-width: 640px; }
+.home-top h1 { margin: 0; padding-right: 84px; min-height: 76px; }
+.home-top p { margin: 0; font-size: 15px; line-height: 1.5; color: var(--muted); }
+.home-mascot { position: absolute; top: 12px; right: -4px; width: 84px; height: 84px; object-fit: contain; pointer-events: none; }
+.button-launch { width: 100%; max-width: 420px; min-height: 56px !important; font-size: 18px !important; margin-top: 8px; }
+.button-launch > span { font-size: 24px; line-height: 0; font-weight: 700; }
+.home-links { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 4px; }
+.home-sell { font-weight: 800; color: var(--ion); font-size: 14px; min-height: 44px; display: inline-flex; align-items: center; }
+.burn-stat { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 6px 12px; border-radius: 999px; background: #f5c45114; border: 1px solid #f5c45140; font-size: 13px; color: #f3e2b8; }
+.burn-stat strong { color: var(--dust); font-size: 14px; font-variant-numeric: tabular-nums; }
+.burn-flame { width: 10px; height: 13px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; background: radial-gradient(circle at 50% 70%, #fff3c4, var(--dust) 45%, #ff8a3d); box-shadow: 0 0 10px #ffb34a99; }
+.burn-live { width: 6px; height: 6px; border-radius: 50%; background: #5ee6a1; box-shadow: 0 0 0 0 #5ee6a180; animation: burn-pulse 2s infinite; }
+@keyframes burn-pulse { 0% { box-shadow: 0 0 0 0 #5ee6a180; } 70% { box-shadow: 0 0 0 7px #5ee6a100; } 100% { box-shadow: 0 0 0 0 #5ee6a100; } }
+@media (prefers-reduced-motion: reduce) { .burn-live { animation: none; } }
+
+/* The coin feed. */
+.coin-feed { margin-top: 20px; }
+.feed-search { position: relative; display: block; }
+.feed-search svg { position: absolute; left: 15px; top: 50%; width: 19px; height: 19px; transform: translateY(-50%); fill: none; stroke: #8f9bbd; stroke-width: 2; stroke-linecap: round; pointer-events: none; }
+.page-content .feed-search input { width: 100%; min-height: 50px; padding: 12px 14px 12px 44px !important; font: inherit; font-size: 16px; border-radius: 16px !important; background: #ffffff0d !important; }
+.feed-tabs { display: flex; gap: 2px; margin: 12px 0 10px; padding: 4px; border-radius: 16px; background: #ffffff08; border: 1px solid var(--glass-line); overflow-x: auto; scrollbar-width: none; }
+.feed-tabs::-webkit-scrollbar { display: none; }
+.feed-tabs button { flex: 1 1 auto; min-height: 40px; padding: 8px 5px; border: 0; border-radius: 12px; background: transparent; color: #a9b4d2; font: 800 14px var(--font-body); white-space: nowrap; cursor: pointer; }
+.feed-tabs button[aria-selected="true"] { background: #ffffff1a; color: #fff; box-shadow: inset 0 1px 0 #ffffff1f, 0 2px 10px #00000033; }
+.feed-note { margin: 2px 2px 10px; font-size: 13px; color: #9aa6c6; }
+.coin-list { display: grid; gap: 6px; }
+@media (min-width: 760px) { .coin-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1100px) { .coin-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.coin-card { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 68px; padding: 8px 12px 8px 8px; border-radius: 14px; background: #ffffff09; border: 1px solid #ffffff17; color: inherit; text-decoration: none; transition: border-color .15s, background .15s; }
+.coin-card:hover, .coin-card:focus-visible { border-color: #5bc8ff66; background: #ffffff10; }
+.coin-card .token-avatar { width: 52px !important; height: 52px !important; flex: none; border-radius: 12px !important; border: 1px solid var(--glass-line) !important; box-shadow: none !important; }
+.coin-card .token-avatar img { border-radius: 11px; }
+.coin-official { border-color: #f5c45155; background: #f5c4510f; }
+.coin-main { display: grid; gap: 6px; min-width: 0; flex: 1; }
+.coin-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.coin-title strong { flex: 0 1 auto; min-width: 0; font-size: 15px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.coin-ticker { flex: 0 3 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; color: #8f9bbd; }
+.coin-badge { flex: none; align-self: center; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 800; color: #1c1303; background: var(--dust); }
+.coin-progress { display: flex; align-items: center; gap: 8px; }
+.coin-bar { position: relative; flex: 1; height: 5px; border-radius: 99px; background: #ffffff14; overflow: hidden; }
+.coin-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 99px; background: linear-gradient(90deg, #5bc8ff, #9fe1ff); min-width: 3px; }
+.coin-bar.is-done > span { background: linear-gradient(90deg, #f5c451, #ffe08a); }
+.coin-pct { flex: none; font-size: 11px; font-weight: 800; color: #aab4d0; font-variant-numeric: tabular-nums; }
+.coin-side { flex: none; display: grid; justify-items: end; gap: 4px; min-width: 64px; }
+.coin-cap strong { font-size: 15px; font-weight: 800; color: #5ee6a1; font-variant-numeric: tabular-nums; }
+.coin-age { font-size: 11px; font-weight: 700; color: #8a96b8; }
+.feed-more { width: 100%; margin-top: 12px; }
+.home-how { margin-top: 22px; }
+.how-steps { list-style: none; padding: 0; display: grid; gap: 14px; }
+.how-steps li { display: flex; gap: 12px; align-items: flex-start; }
+.how-steps p { margin: 2px 0 0; }
+.how-n { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #5bc8ff22; border: 1px solid #5bc8ff55; color: var(--ion); font-weight: 800; font-size: 14px; }
+
+/* Phone: tighter gutters, a lighter header. */
+@media (max-width: 760px) {
+  .site-header { position: relative; padding: 8px 0; height: auto; min-height: 60px; }
+  body .site-header .wallet-adapter-button, .site-header .wallet-placeholder { min-height: 40px; padding: 8px 16px !important; font-size: 14px !important; }
+  .panel { padding: 16px; }
+  .home-top { padding-top: 10px; }
+}
+
+/* Simple page headings: a small mascot, a title, one line. */
+.simple-heading { display: flex; align-items: center; gap: 14px; margin: 14px 0 16px; }
+.simple-heading img { flex: none; width: 72px; height: 72px; object-fit: contain; }
+.simple-heading h1 { margin: 0; font-size: clamp(28px, 4.4vw, 44px) !important; }
+.simple-heading p { margin: 4px 0 0; font-size: 15px; line-height: 1.45; }
+
+/* Launch: one short form. */
+.launch-form { display: grid; gap: 18px; max-width: 720px; }
+.launch-form > .identity-fields { display: grid; gap: 16px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.launch-form .form-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; }
+.launch-form .field { margin: 0; }
+.launch-socials { border: 1px solid var(--glass-line); border-radius: 14px; background: #ffffff06; }
+.launch-socials > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 12px 14px; font-weight: 800; }
+.launch-socials > summary::-webkit-details-marker { display: none; }
+.launch-socials > summary:before { content: "+"; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--glass-line-strong); color: var(--ion); font-weight: 800; line-height: 1; }
+.launch-socials[open] > summary:before { content: "−"; }
+.launch-socials > summary span { font-weight: 600; font-size: 13px; color: #9aa6c6; }
+.launch-socials .social-fields { margin: 0; padding: 4px 14px 14px; border: 0; }
+.launch-socials .social-fields-heading { display: none; }
+.launch-presets { margin: 0; }
+.launch-presets legend { font-size: 15px; font-weight: 800; margin-bottom: 2px; }
+.launch-presets .caption { margin: 0; font-weight: 600; }
+.launch-preset-grid { grid-template-columns: 1fr !important; gap: 8px; margin: 10px 0 0; }
+@media (min-width: 760px) { .launch-preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
+.launch-preset { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 12px !important; padding: 12px 14px !important; border-radius: 14px !important; border: 1px solid var(--glass-line) !important; background: #ffffff06 !important; box-shadow: none !important; }
+.launch-preset.is-selected { border-color: #5bc8ffaa !important; background: #5bc8ff14 !important; box-shadow: inset 0 0 0 1px #5bc8ff66 !important; }
+.launch-preset-check { flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; border: 1.5px solid #ffffff55; }
+.launch-preset.is-selected .launch-preset-check { border-color: var(--ion); background: radial-gradient(circle, var(--ion) 0 45%, transparent 50%); }
+.launch-preset-text { display: grid; gap: 2px; min-width: 0; }
+.launch-preset-heading { font-weight: 800; font-size: 15px !important; color: #fff; }
+.launch-preset-line { font-size: 13.5px; line-height: 1.4; color: var(--muted); }
+.launch-preset-unit { font-size: 12px; font-weight: 700; color: var(--dust); }
+.launch-actions { display: grid; gap: 8px; margin: 0; }
+.launch-actions .wallet-adapter-button, .launch-actions .wallet-placeholder { width: 100%; }
+.launch-cost { margin: 0; font-size: 13px; color: #9aa6c6; text-align: center; }
+.launch-form .form-error { margin: 0; }
+.glass-details .identity-preview { margin-bottom: 18px; }
+
+/* Token page: name, four numbers, the chart, progress, buy and sell, then trades and holders. */
+.token-back { display: inline-flex; align-items: center; min-height: 40px; margin-top: 8px; font-weight: 800; font-size: 14px; color: #aab4d0; }
+.token-top { display: flex; align-items: center; gap: 14px; margin: 6px 0 10px; min-width: 0; }
+.token-top .token-avatar { width: 72px !important; height: 72px !important; flex: none; border-radius: 18px !important; border: 1px solid var(--glass-line) !important; box-shadow: none !important; }
+.token-top .token-avatar img { border-radius: 17px; }
+.token-top-text { min-width: 0; display: grid; gap: 6px; }
+.token-top h1 { margin: 0; font-size: clamp(24px, 4vw, 40px) !important; overflow-wrap: anywhere; }
+.token-top-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.token-ticker { font-weight: 800; color: #c9d3ee; }
+.token-top .address-copy { min-height: 34px; padding: 4px 10px; font-size: 12px; background: #ffffff10; color: #dfe6f7; border: 1px solid var(--glass-line); box-shadow: none; }
+.token-top .address-explorer { min-width: 34px; min-height: 34px; }
+.quick-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 14px 0; }
+@media (min-width: 760px) { .quick-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.quick-stat { display: grid; gap: 2px; padding: 10px 14px; border-radius: 14px; background: #ffffff0a; border: 1px solid var(--glass-line); min-width: 0; }
+.quick-stat span { font-size: 12px; font-weight: 700; color: #9aa6c6; }
+.quick-stat strong { font-size: 18px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.quick-stat.is-cap strong { color: #5ee6a1; }
+.chart-card { padding: 14px; margin: 0 0 14px; color: #5ee6a1; }
+.chart-card.is-down { color: #ff7a8a; }
+.chart-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; color: var(--starlight); }
+.chart-head span { width: 100%; font-size: 12px; font-weight: 700; color: #9aa6c6; }
+.chart-head strong { font-size: 22px; font-weight: 800; }
+.chart-head em { font-style: normal; font-weight: 800; font-size: 14px; color: #5ee6a1; }
+.chart-card.is-down .chart-head em { color: #ff7a8a; }
+.chart-head small { margin-left: auto; font-size: 12px; color: #9aa6c6; }
+.chart-svg { display: block; width: 100%; height: 160px; margin-top: 8px; }
+.chart-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: #8a96b8; }
+.chart-foot span:nth-child(2) { text-align: center; }
+.chart-empty { margin: 0; padding: 18px 4px; text-align: center; font-size: 14px; color: #9aa6c6; }
+.token-grid { display: grid; gap: 14px; }
+@media (min-width: 900px) { .token-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; } }
+.progress-card { padding: 14px 16px; border-radius: 18px; background: linear-gradient(180deg, #ffffff10, #ffffff05); border: 1px solid var(--glass-line); }
+.progress-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.progress-head strong { font-size: 15px; }
+.progress-head span { font-weight: 800; color: var(--ion); font-variant-numeric: tabular-nums; }
+.progress-card.is-done .progress-head span { color: var(--dust); }
+.progress-card .coin-bar { height: 10px; }
+.progress-card p { margin: 8px 0 0; font-size: 13px; }
+.trade-box { padding: 16px; display: grid; gap: 14px; }
+.trade-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px; border-radius: 14px; background: #ffffff08; border: 1px solid var(--glass-line); }
+.trade-sides button { min-height: 44px; border: 0; border-radius: 10px; background: transparent; color: #a9b4d2; font: 800 16px var(--font-body); cursor: pointer; }
+.trade-sides .trade-side-buy[aria-pressed="true"] { background: #5ee6a1; color: #03140c; }
+.trade-sides .trade-side-sell[aria-pressed="true"] { background: #ff7a8a; color: #1f0307; }
+.button-sell { background: linear-gradient(180deg, #ff97a4, #f2687a) !important; color: #1f0307 !important; border-color: #ffc2ca99 !important; box-shadow: 0 6px 22px #ff7a8a33, inset 0 1px 0 #ffffff80; }
+.trade-box .button-primary { background: linear-gradient(180deg, #7ff0b8, #4fd994) !important; color: #03140c !important; border-color: #b8f7d699 !important; box-shadow: 0 6px 22px #5ee6a133, inset 0 1px 0 #ffffff80; }
+.trade-connect .wallet-adapter-button, .trade-connect .wallet-placeholder { width: 100%; }
+.trade-paused, .trade-done { margin: 0; font-size: 14px; }
+.trade-box .quote-card { margin: 0; }
+.creator-card { margin-top: 14px; display: grid; gap: 12px; }
+.creator-card .panel-heading { margin: 0; }
+.creator-body { margin: -6px 0 0; font-size: 14px; }
+.creator-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.creator-stats .stat-value { font-size: 20px; }
+.creator-more > summary { cursor: pointer; font-weight: 800; font-size: 14px; color: #aab4d0; min-height: 40px; display: flex; align-items: center; }
+.token-tabs { margin-top: 18px; }
+.token-tabs .feed-tabs { max-width: 420px; }
+.token-tabs .market-trades { margin-top: 4px; }
+.holders-card { padding: 6px 16px 14px; border-radius: var(--radius); background: linear-gradient(180deg, #ffffff10, #ffffff05); border: 1px solid var(--glass-line); }
+.holder-list { list-style: none; padding: 0; margin: 0 0 10px; }
+.holder-list li { display: flex; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid #ffffff10; }
+.holder-rank { width: 22px; font-size: 12px; font-weight: 800; color: #8a96b8; text-align: right; }
+.holder-who { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-weight: 700; color: #dfe6f7; }
+.holder-tag { padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; background: #5bc8ff22; color: var(--ion); border: 1px solid #5bc8ff44; }
+.holder-pct { font-weight: 800; font-variant-numeric: tabular-nums; }
+.detail-list { display: grid; gap: 8px; margin: 12px 18px; }
+.detail-list div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.detail-list dt { color: #9aa6c6; }
+.detail-list dd { margin: 0; text-align: right; }
+.glass-details .token-market { margin: 0 12px 12px; box-shadow: none; }
+
+/* Quick amounts: one row of four on a phone. */
+.quick-amounts { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px !important; }
+.quick-amount { min-width: 0 !important; padding: 8px 4px !important; min-height: 40px; border-radius: 12px !important; background: #ffffff0d !important; border: 1px solid var(--glass-line) !important; box-shadow: none !important; font-size: 13px !important; white-space: nowrap; }
+@media (max-width: 420px) { .feed-tabs button { font-size: 13px; padding: 8px 4px; } }
+
+/* Trades: two short lines per trade. */
+.token-tabs .market-trades { padding: 6px 16px 14px; }
+.trade-list { list-style: none; margin: 0; padding: 0; }
+.trade-row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 0; border-bottom: 1px solid #ffffff10; }
+.trade-row .trade-side { flex: none; min-width: 46px; text-align: center; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 800; border: 0; }
+.trade-row .trade-buy { background: #5ee6a126; color: #5ee6a1; }
+.trade-row .trade-sell { background: #ff7a8a26; color: #ff8d9b; }
+.trade-main { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.trade-quote { font-weight: 800; font-size: 15px; }
+.trade-quote .money-pair { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.trade-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: #9aa6c6; }
+.trade-meta a { color: #c9d3ee; }
+.trade-end { flex: none; display: grid; justify-items: end; gap: 2px; font-size: 12px; color: #9aa6c6; }
+.trade-tx { color: var(--ion); font-weight: 700; min-height: 24px; display: inline-flex; align-items: center; }
+.trade-connect > * { width: 100%; }
+.trade-connect .wallet-adapter-dropdown { width: 100%; }
+
+/* Shared page headings (Tails, All tokens, Presets, Portfolio, vaults, admin): smaller title, the mascot small at the side. */
+.page-heading { display: grid !important; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; margin: 14px 0 16px !important; padding: 0 !important; min-height: 0 !important; }
+.page-heading-main { min-width: 0; }
+.page-heading h1 { font-size: clamp(28px, 4.4vw, 44px) !important; margin: 0 0 6px; }
+.page-heading p { font-size: 15px !important; line-height: 1.5 !important; max-width: 640px; margin: 0; }
+.page-heading .page-mascot { width: 72px !important; height: 72px !important; grid-column: 2; grid-row: 1; object-fit: contain; filter: none; }
+.page-heading-side { grid-column: 1 / -1; }
+.page-heading .eyebrow { margin-bottom: 8px; }
+
+/* Empty, loading and wallet states: calm text, the mascot smaller. */
+.data-state h3 { font-family: var(--font-body); font-weight: 800 !important; font-size: 20px !important; line-height: 1.25; }
+.data-state p { font-size: 14px; }
+.data-state .state-mascot { width: 72px; height: 72px; }
+.data-state .state-orbit { display: none; }
+
+/* Sell, signed out: connect first, the numbers folded. */
+.sell-simple { display: grid; gap: 14px; max-width: 720px; }
+.sell-window-note { font-size: 13px !important; }
+.example-list { padding-left: 20px; display: grid; gap: 8px; color: var(--muted); font-size: 14px; }
+
+/* Fee Index: one compact row per coin, the rest behind a tap. */
+.sort-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
+.sort-chips button { min-height: 36px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--glass-line); background: #ffffff08; color: #a9b4d2; font: 800 13px var(--font-body); cursor: pointer; }
+.sort-chips button[aria-pressed="true"] { background: #5bc8ff22; border-color: #5bc8ff88; color: #fff; }
+.fee-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 14px; color: #c9d3ee; }
+.fee-filters label { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; }
+.page-content .fee-stage select { min-height: 40px; padding: 6px 12px; font: inherit; font-size: 14px; }
+.fee-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.fee-row { border-radius: 16px; border: 1px solid var(--glass-line); background: linear-gradient(180deg, #ffffff0f, #ffffff05); }
+.fee-row > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; min-height: 64px; }
+.fee-row > summary::-webkit-details-marker { display: none; }
+.fee-row[open] { border-color: #5bc8ff55; }
+.fee-coin { display: grid; gap: 2px; min-width: 0; }
+.fee-coin .source-kind { margin: 0; font-size: 12px; }
+.fee-main { flex: none; display: grid; justify-items: end; text-align: right; }
+.fee-main .money-pair { display: grid; justify-items: end; }
+.fee-row .detail-list { margin: 0 14px 12px; padding-top: 10px; border-top: 1px solid #ffffff10; }
+.fee-row .detail-list dd .micro { margin: 0; }
+.fee-sell { margin: 0 14px 14px; }
+
+/* Addresses: a quiet glass chip everywhere. */
+.address-copy { background: #ffffff10 !important; color: #dfe6f7 !important; border: 1px solid var(--glass-line) !important; box-shadow: none !important; }
+.launch-socials .advanced-body { padding: 4px 14px 14px; }
+
+/* Compact coin items (Portfolio, Sell): one row of name and money, one line of status, small chips. */
+.compact-coin { padding: 10px 12px !important; border-radius: 14px !important; display: grid; gap: 6px; margin: 0 0 6px !important; }
+.compact-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.compact-row .portfolio-owned-link { min-width: 0; }
+.compact-coin .token-avatar, .sell-source .token-avatar { width: 40px !important; height: 40px !important; border-radius: 10px !important; }
+.compact-coin .token-heading-text strong, .sell-source .token-heading-text strong { font-size: 15px !important; }
+.compact-coin .token-heading-text small, .sell-source .token-heading-text small { font-size: 12px !important; }
+.compact-coin .portfolio-income { flex: none; display: grid; justify-items: end; margin: 0 !important; padding: 0 !important; border: 0 !important; text-align: right; }
+.compact-coin .portfolio-income > span { font-size: 11px; color: #9aa6c6; }
+.compact-coin .source-kind { margin: 0; font-size: 12px; }
+.compact-extras { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+.compact-extras .address-copy { min-height: 32px; padding: 3px 9px; font-size: 12px; }
+.compact-extras .social-pills { margin: 0 !important; gap: 6px; }
+.compact-extras .social-pills a { min-height: 32px !important; min-width: 32px !important; padding: 6px !important; }
+.compact-extras .social-pills a > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sell-source { padding: 10px 12px !important; border-color: var(--glass-line) !important; background: #ffffff06; }
+.sell-source .source-kind { margin: 2px 0; font-size: 12px; }

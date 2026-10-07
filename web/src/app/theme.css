@@ -1,14 +1,8 @@
-/* The comet universe: a cartoon sky, sticker cards, chunky pills and rounded display type.
-   This layer loads after globals.css and reskins the shared classes the pages already use,
-   so transaction surfaces, the upload flow and every builder stay exactly as they are.
-   Illustrations live in /art (placeholders until the real ones land); their names and
-   sizes are the contract. */
-@font-face {
-  font-family: Fredoka;
-  src: url("/fonts/Fredoka.woff2") format("woff2");
-  font-weight: 300 700;
-  font-display: swap;
-}
+/* The glass layer: frosted, translucent cards over a deep space sky, thin light borders and soft depth,
+   with ion and dust as accents. It loads after globals.css and reskins the shared classes the pages
+   already use, so transaction surfaces, the upload flow and every builder stay exactly as they are.
+   glass.css (loaded last) adds the blur and the simplified page layouts. Illustrations live in /art;
+   their names and sizes are the contract. */
 @font-face {
   font-family: Nunito;
   src: url("/fonts/Nunito.woff2") format("woff2");
@@ -18,25 +12,32 @@
 :root {
   --ion: #5bc8ff;
   --dust: #f5c451;
-  --night: #06070b;
-  --starlight: #e8ecf4;
-  --muted: #b7c0dc;
-  --line: #0b1226;
-  --panel: #151d47;
-  --panel-deep: #0f1538;
-  --space-top: #07080c;
-  --space-bottom: #0b0d14;
+  --night: #05060b;
+  --starlight: #eef2fb;
+  --muted: #b4bdd6;
+  --line: #ffffff1f;
+  /* glass: translucent fills over the deep sky, thin light borders, soft depth */
+  --panel: #ffffff0d;
+  --panel-deep: #0a0d1a8c;
+  --glass-line: #ffffff24;
+  --glass-line-strong: #ffffff3d;
+  --glass-highlight: inset 0 1px 0 #ffffff14;
+  --glass-shadow: 0 10px 30px #00000059, inset 0 1px 0 #ffffff14;
+  --glass-shadow-sm: 0 4px 14px #00000040;
+  --glass-blur: blur(12px) saturate(140%);
+  --space-top: #05060b;
+  --space-bottom: #0a0c1c;
   --nebula-pink: #ff8fb1;
   --nebula-violet: #8f7bff;
-  --ink: #0b1226;
-  --font-body: Nunito, "Segoe UI", sans-serif;
-  --font-display: Fredoka, "Arial Rounded MT Bold", sans-serif;
+  --ink: #06101f;
+  --font-body: Nunito, "Segoe UI", system-ui, sans-serif;
+  --font-display: Nunito, "Segoe UI", system-ui, sans-serif;
   --font-mono: Nunito, sans-serif;
-  --radius: 22px;
-  --outline: 3px;
-  --shadow-ion: 7px 7px 0 var(--ion);
-  --shadow-dust: 7px 7px 0 var(--dust);
-  --shadow-ink: 0 6px 0 var(--ink);
+  --radius: 20px;
+  --outline: 1px;
+  --shadow-ion: var(--glass-shadow);
+  --shadow-dust: var(--glass-shadow);
+  --shadow-ink: var(--glass-shadow-sm);
 }
 html {
   color-scheme: dark;
@@ -86,7 +87,7 @@ h1 {
   letter-spacing: 0 !important;
   font-size: clamp(40px, 6vw, 72px) !important;
   line-height: 1.02;
-  text-shadow: 4px 4px 0 var(--ink);
+  text-shadow: none;
 }
 h2 {
   font-size: clamp(26px, 3.2vw, 36px);
@@ -145,8 +146,8 @@ strong {
   border-radius: 999px;
   background: var(--dust);
   color: var(--ink);
-  border: var(--outline) solid var(--ink);
-  box-shadow: 3px 3px 0 var(--ink);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow-sm);
   font-weight: 800;
   font-size: 13px;
   margin-bottom: 18px;
@@ -171,7 +172,7 @@ strong {
 .form-success,
 .token-summary {
   background: var(--panel);
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: var(--radius);
   box-shadow: var(--shadow-ion);
   padding: 26px;
@@ -203,7 +204,7 @@ strong {
   width: 40px;
   height: 40px;
   background: var(--sticker, url("/art/sticker-planet.webp")) center/contain no-repeat;
-  filter: drop-shadow(2px 2px 0 var(--ink));
+  filter: none;
 }
 .panel-heading.no-sticker:before {
   display: none;
@@ -260,7 +261,7 @@ body .wallet-adapter-button,
   min-height: 50px;
   padding: 12px 26px !important;
   border-radius: 999px !important;
-  border: var(--outline) solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   background: var(--panel) !important;
   color: #fff !important;
   font-family: var(--font-display) !important;
@@ -303,7 +304,7 @@ body .wallet-adapter-button:active:not(:disabled),
 .panel button.rounded-full:active:not(:disabled),
 .crop-actions button:active:not(:disabled) {
   transform: translateY(6px);
-  box-shadow: 0 0 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .button:disabled,
 .page-content button.rounded-full:disabled {
@@ -343,7 +344,7 @@ select,
 .amount-input,
 .atlas-search input {
   background: var(--panel-deep) !important;
-  border: var(--outline) solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   border-radius: 16px !important;
   color: #fff;
   font-family: var(--font-body);
@@ -385,12 +386,12 @@ input[type="range"] {
   gap: 6px;
   padding: 5px 12px;
   border-radius: 999px;
-  border: 2px solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   background: var(--panel-deep);
   color: #fff;
   font-weight: 800;
   font-size: 13px;
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .badge-ion {
   background: var(--ion);
@@ -428,7 +429,7 @@ input[type="range"] {
 .brand-link .brand-mascot {
   width: 44px;
   height: 44px;
-  filter: drop-shadow(2px 2px 0 var(--ink));
+  filter: none;
 }
 .brand-link .wordmark {
   display: block;
@@ -436,7 +437,7 @@ input[type="range"] {
   font-weight: 700;
   font-size: 24px;
   color: #fff;
-  text-shadow: 2px 2px 0 var(--ink);
+  text-shadow: none;
 }
 .desktop-nav {
   display: flex;
@@ -459,7 +460,7 @@ input[type="range"] {
   background: var(--dust);
   color: var(--ink);
   border-color: var(--ink);
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .desktop-nav a[aria-current]:after {
   display: none;
@@ -472,7 +473,7 @@ input[type="range"] {
 .site-footer {
   margin-top: 64px;
   padding: 28px;
-  border-top: var(--outline) solid var(--ink);
+  border-top: 1px solid var(--glass-line);
   background: #0b1226cc;
   display: flex;
   align-items: center;
@@ -491,10 +492,10 @@ input[type="range"] {
   gap: 8px;
   padding: 8px 14px;
   border-radius: 999px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   background: var(--panel);
   font-weight: 800;
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .built-on > span {
   color: var(--dust);
@@ -514,7 +515,7 @@ input[type="range"] {
 .mobile-nav a img {
   width: 30px;
   height: 30px;
-  filter: drop-shadow(1px 1px 0 var(--ink));
+  filter: none;
 }
 .mobile-nav a[aria-current] {
   color: var(--dust);
@@ -556,7 +557,7 @@ input[type="range"] {
 }
 .hero-art {
   position: relative;
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 28px;
   box-shadow: var(--shadow-dust);
   overflow: hidden;
@@ -588,7 +589,7 @@ input[type="range"] {
   right: -8px;
   bottom: -14px;
   width: 38%;
-  filter: drop-shadow(3px 3px 0 var(--ink));
+  filter: none;
 }
 .atlas-divider {
   display: flex;
@@ -604,11 +605,11 @@ input[type="range"] {
   margin: 40px 0 0;
 }
 .chapter {
-  border-left: var(--outline) solid var(--ink);
+  border-left: 1px solid var(--glass-line);
   padding-top: 68px;
 }
 .chapter + .chapter {
-  border-left: var(--outline) solid var(--ink);
+  border-left: 1px solid var(--glass-line);
 }
 .chapter:before {
   content: "";
@@ -618,7 +619,7 @@ input[type="range"] {
   width: 44px;
   height: 44px;
   background: var(--sticker, url("/art/sticker-planet.webp")) center/contain no-repeat;
-  filter: drop-shadow(2px 2px 0 var(--ink));
+  filter: none;
 }
 .chapter .micro {
   position: absolute;
@@ -654,7 +655,7 @@ input[type="range"] {
   justify-content: space-between;
   align-items: center;
   padding: 14px 20px;
-  border-bottom: var(--outline) solid var(--ink);
+  border-bottom: 1px solid var(--glass-line);
   background: var(--panel-deep);
   font-weight: 800;
 }
@@ -669,20 +670,20 @@ input[type="range"] {
 }
 .atlas-legend {
   padding: 12px 20px;
-  border-top: var(--outline) solid var(--ink);
+  border-top: 1px solid var(--glass-line);
   background: var(--panel-deep);
   font-weight: 700;
   color: #dfe6ff;
 }
 .atlas-stats {
-  border-top: var(--outline) solid var(--ink);
+  border-top: 1px solid var(--glass-line);
   background: var(--panel);
 }
 .atlas-stats .stat {
   padding: 18px 20px;
 }
 .atlas-stats .stat + .stat {
-  border-left: var(--outline) solid var(--ink);
+  border-left: 1px solid var(--glass-line);
 }
 .live-status {
   display: inline-flex;
@@ -690,7 +691,7 @@ input[type="range"] {
   gap: 8px;
   padding: 4px 12px;
   border-radius: 999px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   background: var(--panel);
   font-size: 13px;
 }
@@ -711,16 +712,16 @@ input[type="range"] {
 .stream-table td {
   padding: 14px;
   background: var(--panel-deep);
-  border-top: var(--outline) solid var(--ink);
-  border-bottom: var(--outline) solid var(--ink);
+  border-top: 1px solid var(--glass-line);
+  border-bottom: 1px solid var(--glass-line);
   font-weight: 700;
 }
 .stream-table td:first-child {
-  border-left: var(--outline) solid var(--ink);
+  border-left: 1px solid var(--glass-line);
   border-radius: 16px 0 0 16px;
 }
 .stream-table td:last-child {
-  border-right: var(--outline) solid var(--ink);
+  border-right: 1px solid var(--glass-line);
   border-radius: 0 16px 16px 0;
 }
 .stream-table tbody tr:hover td {
@@ -733,13 +734,13 @@ input[type="range"] {
   color: #fff;
 }
 .token-avatar {
-  border: 2px solid var(--ink);
-  box-shadow: 2px 2px 0 var(--ink);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow-sm);
   background: linear-gradient(135deg, var(--ion), var(--nebula-violet));
 }
 .avatar-large {
   border-width: var(--outline);
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 
 /* Loading, empty, error and wallet states carry the mascot. */
@@ -755,10 +756,10 @@ input[type="range"] {
   width: 96px;
   height: 96px;
   margin: 0 auto 10px;
-  filter: drop-shadow(3px 3px 0 var(--ink));
+  filter: none;
 }
 .state-error {
-  box-shadow: 7px 7px 0 var(--nebula-pink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .state-compact {
   padding: 22px;
@@ -770,7 +771,7 @@ input[type="range"] {
 .loading-track {
   height: 10px;
   border-radius: 999px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   background: var(--panel-deep);
   overflow: hidden;
   margin: 14px auto 0;
@@ -795,7 +796,7 @@ input[type="range"] {
 }
 .page-mascot {
   width: clamp(120px, 16vw, 200px);
-  filter: drop-shadow(4px 4px 0 var(--ink));
+  filter: none;
   justify-self: end;
 }
 
@@ -830,14 +831,14 @@ input[type="range"] {
   display: none;
 }
 .crop-frame {
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 20px;
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
   overflow: hidden;
 }
 .identity-preview {
   background: var(--panel-deep);
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 20px;
 }
 .identity-preview:before {
@@ -853,9 +854,9 @@ input[type="range"] {
   border-radius: 50%;
   background: var(--dust);
   color: var(--ink);
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   font-weight: 900;
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .form-error,
 .upload-error,
@@ -866,7 +867,7 @@ input[type="range"] {
   border-radius: 14px;
   background: #ff8fb1;
   color: var(--ink) !important;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   font-weight: 800;
 }
 .form-success,
@@ -883,7 +884,7 @@ input[type="range"] {
 }
 .page-content .h-3 {
   height: 16px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 999px;
   background: var(--panel-deep);
 }
@@ -904,7 +905,7 @@ input[type="range"] {
 /* Wallet adapter: pills and a sticker modal. */
 body .wallet-adapter-modal-wrapper {
   background: var(--panel);
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 28px;
   box-shadow: var(--shadow-dust);
   font-family: var(--font-body);
@@ -920,18 +921,18 @@ body .wallet-adapter-modal-list .wallet-adapter-button {
 }
 body .wallet-adapter-modal-button-close {
   background: var(--dust);
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 50%;
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 body .wallet-adapter-modal-button-close svg {
   fill: var(--ink);
 }
 body .wallet-adapter-dropdown-list {
   background: var(--panel);
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 18px;
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 body .wallet-adapter-dropdown-list-item {
   font-family: var(--font-body);
@@ -940,8 +941,8 @@ body .wallet-adapter-dropdown-list-item {
 }
 .wallet-adapter-modal-middle:before {
   background: url("/art/mascot.webp") center/80px no-repeat;
-  border: var(--outline) solid var(--ink);
-  box-shadow: 3px 3px 0 var(--ink);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--glass-shadow-sm);
   background-color: var(--panel-deep);
 }
 .wallet-adapter-modal-overlay {
@@ -955,8 +956,6 @@ body .wallet-adapter-dropdown-list-item {
   }
   :root {
     --radius: 18px;
-    --shadow-ion: 5px 5px 0 var(--ion);
-    --shadow-dust: 5px 5px 0 var(--dust);
   }
   /* The phone header stays in flow (no sticky overlap inside in-app browsers) and the
      desktop links give way to the bottom tabs. */
@@ -1086,7 +1085,7 @@ body:before {
 }
 .atlas-empty-overlay .data-state {
   background: var(--panel) !important;
-  border: var(--outline) solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   padding: 26px !important;
 }
 /* 2. The wallet modal: the old rules carried !important, so these do too. */
@@ -1095,7 +1094,7 @@ body .wallet-adapter-modal-overlay {
 }
 body .wallet-adapter-modal-wrapper {
   background: var(--panel) !important;
-  border: var(--outline) solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   border-radius: 28px !important;
   box-shadow: var(--shadow-dust) !important;
 }
@@ -1108,7 +1107,7 @@ body .wallet-adapter-modal-title {
 }
 body .wallet-adapter-modal-list .wallet-adapter-button {
   background: var(--panel-deep) !important;
-  border: var(--outline) solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   color: #fff !important;
   box-shadow: 0 4px 0 var(--ink);
 }
@@ -1118,15 +1117,15 @@ body .wallet-adapter-modal-list .wallet-adapter-button:hover {
 }
 body .wallet-adapter-modal-button-close {
   background: var(--dust) !important;
-  border: 2px solid var(--ink) !important;
-  box-shadow: 2px 2px 0 var(--ink);
+  border: 1px solid var(--glass-line) !important;
+  box-shadow: var(--glass-shadow-sm);
 }
 body .wallet-adapter-modal-button-close svg {
   fill: var(--ink) !important;
 }
 body .wallet-adapter-dropdown-list {
   background: var(--panel) !important;
-  border: var(--outline) solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
 }
 /* 3. Page headings: the title group keeps the flexible column, the mascot a fixed one. */
 .page-heading {
@@ -1210,9 +1209,9 @@ body .wallet-adapter-dropdown-list {
     margin: 0 0 14px;
     padding: 6px 14px;
     background: var(--panel-deep);
-    border: var(--outline) solid var(--ink);
+    border: 1px solid var(--glass-line);
     border-radius: 16px;
-    box-shadow: 3px 3px 0 var(--ink);
+    box-shadow: var(--glass-shadow-sm);
   }
   .stream-table td {
     display: flex;
@@ -1376,7 +1375,7 @@ body:before {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 12px;
   background: var(--panel-deep);
   font-weight: 700;
@@ -1400,7 +1399,7 @@ body:before {
   width: 44px;
   height: 44px;
   border-radius: 999px;
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   background: var(--panel);
   color: #fff;
   box-shadow: 0 5px 0 var(--ink);
@@ -1421,7 +1420,7 @@ body:before {
 }
 .social-pill:active {
   transform: translateY(5px);
-  box-shadow: 0 0 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .social-pill:focus-visible {
   outline: 3px solid var(--dust);
@@ -1473,11 +1472,11 @@ body:before {
   gap: 6px;
   margin: 0 0 18px;
   padding: 14px 16px;
-  border: var(--outline) solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 16px;
   background: var(--dust);
   color: var(--ink);
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
   font-weight: 700;
 }
 .form-notice strong {
@@ -1505,11 +1504,11 @@ body:before {
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   background: var(--panel);
   color: #fff;
   font-weight: 800;
-  box-shadow: 2px 2px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 /* Trades card: the hard shadows of the buttons stop above the caption. */
 .token-order-entry .mt-3.flex {
@@ -1599,7 +1598,7 @@ body:before {
   margin: 0;
   padding: 14px 112px 14px 16px !important;
   background: var(--panel-deep) !important;
-  border: var(--outline) solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   border-radius: 16px !important;
   color: #fff;
   font-family: var(--font-display);
@@ -1642,7 +1641,7 @@ body:before {
   min-height: 36px;
   padding: 6px 14px !important;
   border-radius: 999px !important;
-  border: 2px solid var(--ink) !important;
+  border: 1px solid var(--glass-line) !important;
   background: var(--panel) !important;
   color: #fff !important;
   font-family: var(--font-display) !important;
@@ -1679,7 +1678,7 @@ body:before {
 .quote-card {
   margin-top: 14px;
   padding: 12px 14px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   border-radius: 14px;
   background: var(--panel-deep);
   display: grid;
@@ -1774,7 +1773,7 @@ body:before {
 .preset-config { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 14px; }
 .preset-action { display: inline-flex; }
 .presets-launchpads { margin-top: 24px; }
-.preset-snippet { margin: 14px 0; padding: 12px 14px; border: 2px solid var(--ink); border-radius: 14px; background: var(--panel-deep); font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre; }
+.preset-snippet { margin: 14px 0; padding: 12px 14px; border: 1px solid var(--glass-line); border-radius: 14px; background: var(--panel-deep); font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre; }
 .presets-link { margin: 14px 0 0; }
 @media (max-width: 760px) { .presets-grid { grid-template-columns: 1fr; } .preset-facts dd { font-size: 17px; } }
 
@@ -1873,13 +1872,13 @@ small, .caption {
   text-align: left;
   padding: 14px 16px;
   border-radius: 14px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--glass-line);
   background: var(--panel-deep);
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: var(--glass-shadow-sm);
 }
 .preset-card[aria-pressed="true"] {
   border-color: var(--dust);
-  box-shadow: 3px 3px 0 var(--dust);
+  box-shadow: var(--glass-shadow-sm);
 }
 .preset-card:hover:not(:disabled) {
   transform: translate(-1px, -1px);
@@ -1898,12 +1897,12 @@ small, .caption {
 .source-list .source-kind { margin: 0; }
 
 /* The official token (2026-10-05): pinned above the directory and first on Explore, with a gold badge. */
-.official-badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; border: 2px solid var(--ink); background: var(--dust); color: var(--ink); font-weight: 800; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: 2px 2px 0 var(--ink); margin-bottom: 8px; }
+.official-badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--glass-line); background: var(--dust); color: var(--ink); font-weight: 800; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; box-shadow: var(--glass-shadow-sm); margin-bottom: 8px; }
 .market-pinned { margin-bottom: 18px; }
 .official-card { border-color: var(--dust); box-shadow: var(--shadow-dust); }
 
 /* Fee Index and Tails (2026-10-06): copy-paste snippets and the wide tables. */
-.fee-snippet { max-width: 100%; overflow-x: auto; padding: 12px 14px; border: 2px solid var(--ink); border-radius: 12px; background: var(--panel-deep); font-size: 12px; line-height: 1.5; color: var(--muted); }
+.fee-snippet { max-width: 100%; overflow-x: auto; padding: 12px 14px; border: 1px solid var(--glass-line); border-radius: 12px; background: var(--panel-deep); font-size: 12px; line-height: 1.5; color: var(--muted); }
 .fee-snippet code { white-space: pre; }
 .fee-table td .micro { display: inline; }
 .fee-table td p.micro, .fee-table td p.source-kind { display: block; margin: 2px 0 0; }

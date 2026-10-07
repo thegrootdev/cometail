@@ -27,12 +27,12 @@ import { NATIVE_MINT } from "@solana/spl-token";
 import BN from "bn.js";
 import {
   DataState,
-  PageHeader,
   TokenAvatar,
   BackToSky,
 } from "@/components/Experience";
-import { Shell, Card, Stat, ConnectWallet } from "@/components/Shell";
-import { tokenPage, amounts, experience as c, failures, tailsPage } from "@/content/cometail";
+import { Shell, Stat, ConnectWallet } from "@/components/Shell";
+import { tokenPage, amounts, experience as c, failures, tailsPage, tokenSimple as simple } from "@/content/cometail";
+import { QuickStats, PriceChart, HolderList } from "@/components/TokenView";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
   claimCreatorFeesTx,
@@ -112,6 +112,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const [quoting, setQuoting] = useState(false);
   const [amount, setAmount] = useState("");
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [lower, setLower] = useState<"trades" | "holders">("trades");
   const [quote, setQuote] = useState<{ inRaw: bigint; out: bigint; minOut: bigint; side: "buy" | "sell" } | null>(null);
   const quoteSeq = useRef(0);
   const market = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mintStr)}`);
@@ -262,30 +263,111 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       setActionError(friendlyError(e, failures.actionFailed));
     }
   };
+  const marketToken = market.data?.data ?? null;
+  const observedAt = market.error ? 0 : market.data?.generatedAtMs ?? 0;
+  const tradeBox = view && (
+    <section className="trade-box token-order-entry" aria-label={tokenPage.trades}>
+      {bonding && ADDRESSES.streamConfigs.some((k) => k.equals(new PublicKey(view.state.config))) && (
+        <p className="form-notice">{tokenPage.streamUnwindNote}</p>
+      )}
+      {!bonding && !graduated && <p className="trade-paused">{simple.migrating}</p>}
+      {(bonding || graduated) && (
+        <>
+          <div className="trade-sides" role="group" aria-label={tokenPage.trades}>
+            {(["buy", "sell"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={side === s}
+                onClick={() => {
+                  setSide(s);
+                  setQuote(null);
+                }}
+                className={`trade-side-${s}`}
+              >
+                {s === "buy" ? tokenPage.buy : tokenPage.sellToken}
+              </button>
+            ))}
+          </div>
+          <AmountInput
+            label={side === "buy" ? tokenPage.solIn : tokenPage.tokensIn}
+            unit={side === "buy" ? asset.symbol : ticker}
+            value={amount}
+            onChange={setAmount}
+            balance={!publicKey ? undefined : side === "buy" ? (buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: asset.symbol })) : (tokenBalance.raw === null ? null : formatAmount(tokenBalance.raw, dec, { ticker }))}
+            quick={quickAmounts}
+            hint={!nativeQuote ? c.quoteFees : side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined}
+            disabled={status.state === "sending"}
+          />
+          {(quote || quoting) && (
+            <div className="quote-card" aria-busy={quoting} aria-live="polite">
+              {quote ? (
+                <>
+                  <div className="quote-row"><span>{quote.side === "buy" ? tokenPage.youPay : tokenPage.youSell}</span><strong>{quote.side === "buy" ? quoteWithUsd(quote.inRaw) : formatAmount(quote.inRaw, dec, { ticker })}</strong></div>
+                  <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.side === "buy" ? formatAmount(quote.out, dec, { ticker }) : quoteWithUsd(quote.out)}</strong></div>
+                  <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{quote.side === "buy" ? formatAmount(quote.minOut, dec, { ticker }) : quoteWithUsd(quote.minOut)}</strong></div>
+                  <p className="quote-note">{tokenPage.quoteNote}</p>
+                </>
+              ) : (
+                <p className="quote-note">{tokenPage.quoting}</p>
+              )}
+            </div>
+          )}
+          {publicKey ? (
+            <button
+              onClick={trade}
+              disabled={!publicKey || status.state === "sending" || quoting || !quote || quote.side !== side || quote.inRaw !== (parseAmount(amount, side === "buy" ? quoteDecimals : dec) ?? -1n)}
+              className={`button button-full ${side === "buy" ? "button-primary" : "button-sell"}`}
+            >
+              {status.state === "sending"
+                ? tokenPage.sending
+                : side === "buy"
+                  ? tokenPage.buy
+                  : tokenPage.sellToken}
+            </button>
+          ) : (
+            <div className="trade-connect"><ConnectWallet /></div>
+          )}
+          {actionError && (
+            <p role="alert" className="form-error">
+              {actionError}
+            </p>
+          )}
+          {status.state === "error" && (
+            <p className="form-error">{status.message}</p>
+          )}
+          {status.state === "done" && (
+            <p className="trade-done">
+              <a
+                href={EXPLORER("tx", status.signature!)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-link"
+              >
+                Confirmed ↗
+              </a>
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
   return (
     <Shell>
-      <BackToSky />
-      <PageHeader
-        eyebrow={c.tokenKicker}
-        title={meta?.name || feeCoin?.name || short(mintStr)}
-        body={tickerText(meta?.symbol) || undefined}
-      >
-        <div className="token-header-identity"><TokenAvatar seed={mintStr} image={logo} size="large" /><span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span></div>
-      </PageHeader>
+      <Link href="/" className="token-back">← {simple.back}</Link>
+      <header className="token-top">
+        <TokenAvatar seed={mintStr} image={logo} size="large" />
+        <div className="token-top-text">
+          <h1>{meta?.name || feeCoin?.name || short(mintStr)}</h1>
+          <div className="token-top-sub">
+            {tickerText(meta?.symbol) && <span className="token-ticker">{tickerText(meta?.symbol)}</span>}
+            <span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span>
+          </div>
+        </div>
+      </header>
       <SocialLinks links={artwork?.links} tokenName={meta?.name} />
-      <div className="detail-address">
-        {view && nativeQuote && (
-          <Link
-            href={`/sell?pool=${pool.toBase58()}`}
-            className="button button-secondary"
-          >
-            {tokenPage.sellTail} ↗
-          </Link>
-        )}
-      </div>
-      <TailLink mint={mintStr} />
-      {isOfficial(mintStr) && <BurnPanel />}
-      {outside ? <OutsideCoinFees result={feeResult} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} onRetry={reloadFee} /> : <TokenMarket mint={mintStr} onChain={!!view} />}
+      {!outside && <QuickStats token={marketToken} observedAt={observedAt} />}
+      {!outside && (view || marketToken) && <PriceChart mint={mintStr} token={marketToken} observedAt={observedAt} />}
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
       {!loading && !error && !view && (
@@ -294,178 +376,92 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         </DataState>
       )}
       {view && (
-        <>
-        <div className="token-execution-grid mt-6 grid gap-6 md:grid-cols-[3fr_2fr]">
-          <div className="space-y-6">
-            <Card title={tokenPage.curve}>
-              <p className="text-sm text-starlight/70">
-                {STAGE[view.progress]}
-              </p>
-              {!graduated && (
-                <div className="mt-3">
-                  <div className="h-3 w-full overflow-hidden rounded-full bg-starlight/10">
-                    <div
-                      className="h-3 rounded-full bg-ion"
-                      style={{ width: `${progressPct}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-sm text-starlight/70">
-                    {formatAmount(BigInt(view.quoteReserve.toString()), quoteDecimals, { ticker: asset.symbol })} of {formatAmount(BigInt(view.threshold.toString()), quoteDecimals, { ticker: asset.symbol })}{" "}
-                    {tokenPage.progress}
-                  </p>
-                </div>
-              )}
-              {graduated && (
-                <p className="mt-2 text-sm">
-                  <a
-                    className="text-ion"
-                    href={EXPLORER("address", dammPool.toBase58())}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    DAMM v2 pool {short(dammPool.toBase58())}
-                  </a>
-                </p>
-              )}
-            </Card>
-            <Card title={tokenPage.tail}>
-              <p className="text-sm text-starlight/70">{tokenPage.tailBody}</p>
-              <div className="mt-4 grid grid-cols-2 gap-4">
-                <Stat
-                  label="claimable now"
-                  value={<Money lamports={claimable.toString()} quote={asset} quoteRate={rate} />}
-                  tone="dust"
-                />
-                <Stat label={shown.lifetimeExact ? c.curveClaimed : c.curveEstimate} value={shown.noneClaimed ? c.curveNothingClaimed : <Money lamports={realized.toString()} quote={asset} quoteRate={rate} />} />
-              </div>
-              <p className="caption mt-4">{c.curveEstimateBody}</p>
-              <p className="mt-3 text-xs text-starlight/50">
-                Creator:{" "}
-                <a
-                  href={EXPLORER("address", view.creator.toBase58())}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {short(view.creator.toBase58())}
-                </a>
-              </p>
-              {isCreator && claimable.gtn(0) && (
-                <button
-                  disabled={status.state === "sending"}
-                  onClick={() =>
-                    run(
-                      () => claimCreatorFeesTx(connection, pool, publicKey!),
-                      [],
-                      300_000,
-                    ).then(reload)
-                  }
-                  className="mt-4 rounded-full bg-dust px-5 py-2 font-semibold text-night"
-                >
-                  {tokenPage.claim}
-                </button>
-              )}
-            </Card>
+        <div className="token-grid">
+          <div className="token-main">
+            {graduated ? (
+              <section className="progress-card is-done">
+                <div className="progress-head"><strong>{simple.graduatedTitle}</strong><span>100%</span></div>
+                <div className="coin-bar is-done"><span style={{ width: "100%" }} /></div>
+                <p>{simple.graduatedBody}</p>
+              </section>
+            ) : (
+              <section className="progress-card">
+                <div className="progress-head"><strong>{simple.progress}</strong><span>{progressPct < 10 ? progressPct.toFixed(1) : Math.round(progressPct)}%</span></div>
+                <div className="coin-bar" role="progressbar" aria-label={simple.progress} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPct)}><span style={{ width: `${progressPct}%` }} /></div>
+                <p>{simple.progressOf(formatAmount(BigInt(view.quoteReserve.toString()), quoteDecimals, { ticker: asset.symbol }), formatAmount(BigInt(view.threshold.toString()), quoteDecimals, { ticker: asset.symbol }))}</p>
+              </section>
+            )}
           </div>
-          <Card title={tokenPage.trades} className="token-order-entry">
-            {view && bonding && ADDRESSES.streamConfigs.some((k) => k.equals(new PublicKey(view.state.config))) && (
-              <p className="form-notice">{tokenPage.streamUnwindNote}</p>
-            )}
-            {!bonding && !graduated && (
-              <p className="text-sm text-starlight/60">
-                Trading pauses while the curve migrates.
-              </p>
-            )}
-            {(bonding || graduated) && (
-              <>
-                <div className="flex gap-2">
-                  {(["buy", "sell"] as const).map((s) => (
-                    <button
-                      key={s}
-                      aria-pressed={side === s}
-                      onClick={() => {
-                        setSide(s);
-                        setQuote(null);
-                      }}
-                      className={`rounded-full px-4 py-1 text-sm ${side === s ? "bg-ion text-night" : "border border-starlight/20"}`}
-                    >
-                      {s === "buy" ? tokenPage.buy : tokenPage.sellToken}
-                    </button>
-                  ))}
-                </div>
-                <AmountInput
-                  label={side === "buy" ? tokenPage.solIn : tokenPage.tokensIn}
-                  unit={side === "buy" ? asset.symbol : ticker}
-                  value={amount}
-                  onChange={setAmount}
-                  balance={!publicKey ? undefined : side === "buy" ? (buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: asset.symbol })) : (tokenBalance.raw === null ? null : formatAmount(tokenBalance.raw, dec, { ticker }))}
-                  quick={quickAmounts}
-                  hint={!nativeQuote ? c.quoteFees : side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined}
-                  disabled={status.state === "sending"}
-                />
-                {(quote || quoting) && (
-                  <div className="quote-card" aria-busy={quoting} aria-live="polite">
-                    {quote ? (
-                      <>
-                        <div className="quote-row"><span>{quote.side === "buy" ? tokenPage.youPay : tokenPage.youSell}</span><strong>{quote.side === "buy" ? quoteWithUsd(quote.inRaw) : formatAmount(quote.inRaw, dec, { ticker })}</strong></div>
-                        <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.side === "buy" ? formatAmount(quote.out, dec, { ticker }) : quoteWithUsd(quote.out)}</strong></div>
-                        <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{quote.side === "buy" ? formatAmount(quote.minOut, dec, { ticker }) : quoteWithUsd(quote.minOut)}</strong></div>
-                        <p className="quote-note">{tokenPage.quoteNote}</p>
-                      </>
-                    ) : (
-                      <p className="quote-note">{tokenPage.quoting}</p>
-                    )}
-                  </div>
-                )}
-                <div className="mt-3 flex gap-3">
-                  <button
-                    onClick={trade}
-                    disabled={!publicKey || status.state === "sending" || quoting || !quote || quote.side !== side || quote.inRaw !== (parseAmount(amount, side === "buy" ? quoteDecimals : dec) ?? -1n)}
-                    className="rounded-full bg-ion px-5 py-2 font-semibold text-night disabled:opacity-40"
-                  >
-                    {status.state === "sending"
-                      ? tokenPage.sending
-                      : side === "buy"
-                        ? tokenPage.buy
-                        : tokenPage.sellToken}
-                  </button>
-                </div>
-                {!publicKey && (
-                  <div className="mt-4">
-                    <ConnectWallet />
-                  </div>
-                )}
-                {actionError && (
-                  <p role="alert" className="form-error">
-                    {actionError}
-                  </p>
-                )}
-                {status.state === "error" && (
-                  <p className="mt-3 text-sm text-red-300">{status.message}</p>
-                )}
-                {status.state === "done" && (
-                  <p className="mt-3 text-sm">
-                    <a
-                      href={EXPLORER("tx", status.signature!)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-ion"
-                    >
-                      Confirmed
-                    </a>
-                  </p>
-                )}
-                <p className="mt-4 text-xs text-starlight/50">
-                  {bonding
-                    ? "Trades go through Meteora's bonding curve."
-                    : "Trades go through the graduated DAMM v2 pool."}
-                </p>
-              </>
-            )}
-          </Card>
+          <div className="token-side">{tradeBox}</div>
         </div>
-        {!outside && <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} quote={asset} rate={rate} />}
-        </>
       )}
+      {view && (
+        <section className="panel creator-card">
+          <h2 className="panel-heading">{simple.creatorFees}</h2>
+          <p className="creator-body">{simple.creatorFeesBody}</p>
+          <div className="creator-stats">
+            <Stat
+              label={simple.claimable}
+              value={<Money lamports={claimable.toString()} quote={asset} quoteRate={rate} />}
+              tone="dust"
+            />
+            <Stat label={shown.lifetimeExact ? c.curveClaimed : c.curveEstimate} value={shown.noneClaimed ? c.curveNothingClaimed : <Money lamports={realized.toString()} quote={asset} quoteRate={rate} />} />
+          </div>
+          {isCreator && claimable.gtn(0) && (
+            <button
+              disabled={status.state === "sending"}
+              onClick={() =>
+                run(
+                  () => claimCreatorFeesTx(connection, pool, publicKey!),
+                  [],
+                  300_000,
+                ).then(reload)
+              }
+              className="button button-gold button-full"
+            >
+              {tokenPage.claim}
+            </button>
+          )}
+          {nativeQuote && (
+            <Link href={`/sell?pool=${pool.toBase58()}`} className="button button-secondary button-full">
+              {tokenPage.sellTail} ↗
+            </Link>
+          )}
+          <details className="creator-more">
+            <summary>{simple.feesMore}</summary>
+            <p className="caption">{tokenPage.tailBody}</p>
+            <p className="caption">{c.curveEstimateBody}</p>
+          </details>
+        </section>
+      )}
+      <TailLink mint={mintStr} />
+      {isOfficial(mintStr) && <BurnPanel />}
+      {outside && <OutsideCoinFees result={feeResult} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} onRetry={reloadFee} />}
+      {view && !outside && (
+        <section className="token-tabs">
+          <div className="feed-tabs" role="tablist" aria-label={simple.trades}>
+            {(["trades", "holders"] as const).map((k) => (
+              <button key={k} type="button" role="tab" aria-selected={lower === k} onClick={() => setLower(k)}>{k === "trades" ? simple.trades : simple.holderTab}</button>
+            ))}
+          </div>
+          {lower === "trades"
+            ? <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} quote={asset} rate={rate} />
+            : <section className="holders-card"><h2 className="sr-only">{simple.holdersTitle}</h2><HolderList mint={mintStr} creator={view.creator.toBase58()} decimals={dec} /></section>}
+        </section>
+      )}
+      <details className="glass-details">
+        <summary>{simple.details}</summary>
+        {!outside && <TokenMarket mint={mintStr} onChain={!!view} />}
+        {view && (
+          <dl className="detail-list">
+            <div><dt>{simple.detailsStage}</dt><dd>{STAGE[view.progress]}</dd></div>
+            <div><dt>{simple.creatorAddress}</dt><dd><a className="text-link" href={EXPLORER("address", view.creator.toBase58())} target="_blank" rel="noreferrer">{short(view.creator.toBase58())} ↗</a></dd></div>
+            <div><dt>{simple.curvePool}</dt><dd><a className="text-link" href={EXPLORER("address", pool.toBase58())} target="_blank" rel="noreferrer">{short(pool.toBase58())} ↗</a></dd></div>
+            {graduated && <div><dt>{simple.graduatedPool}</dt><dd><a className="text-link" href={EXPLORER("address", dammPool.toBase58())} target="_blank" rel="noreferrer">DAMM v2 {short(dammPool.toBase58())} ↗</a></dd></div>}
+          </dl>
+        )}
+        {view && (bonding || graduated) && <p>{simple.route(bonding)}</p>}
+      </details>
     </Shell>
   );
 }

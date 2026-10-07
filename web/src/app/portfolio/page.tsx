@@ -80,26 +80,26 @@ export default function PortfolioPage() {
                   token = tokenForMint(source?.token, mint);
                 return (
                   <div
-                    className="portfolio-item portfolio-owned"
+                    className="portfolio-item portfolio-owned compact-coin"
                     key={pool.toBase58()}
                   >
-                    <Link
-                      className="portfolio-owned-link"
-                      href={`/token/${mint}`}
-                    >
-                      <TokenHeading token={token} mint={mint} />
-                    </Link>
-                    <p className="source-kind">{identity.creatorFees}</p>
-                    <SourceStatus stream={source} />
-                    <CopyAddress address={mint} />
-                    <SocialLinks links={token?.links} tokenName={token?.name} />
-                    <div className="portfolio-income">
-                      <span>{copy.accrued}</span>
-                      <Money quote={quoteAsset(source?.quoteMint)} lamports={state.creatorQuoteFee.toString()} />
+                    <div className="compact-row">
+                      <Link
+                        className="portfolio-owned-link"
+                        href={`/token/${mint}`}
+                      >
+                        <TokenHeading token={token} mint={mint} />
+                      </Link>
+                      <div className="portfolio-income">
+                        <span>{copy.accrued}</span>
+                        <Money quote={quoteAsset(source?.quoteMint)} lamports={state.creatorQuoteFee.toString()} />
+                      </div>
                     </div>
-                    <Link href={`/token/${mint}`} className="text-link">
-                      {identity.viewToken} ↗
-                    </Link>
+                    <p className="source-kind">{identity.creatorFees} · <SourceStatus stream={source} /></p>
+                    <div className="compact-extras">
+                      <CopyAddress address={mint} />
+                      <SocialLinks links={token?.links} tokenName={token?.name} />
+                    </div>
                   </div>
                 );
               })

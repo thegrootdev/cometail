@@ -1,64 +1,39 @@
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
-import { HomeAtlas } from "@/components/Atlas";
-import { MarketDirectory } from "@/components/Market";
-import { BurnPanel } from "@/components/BurnPanel";
-import { experience as copy, hero, plainLaunch } from "@/content/cometail";
+import { CoinFeed } from "@/components/CoinFeed";
+import { BurnStat } from "@/components/BurnPanel";
+import { home } from "@/content/cometail";
+// Home is the coin feed: one promise, one launch button, a live burn line, then every coin.
+// How it works and the details stay one tap away, folded.
 export default function Home() {
   return (
     <Shell wide>
-      <section className="hero">
-        <div className="hero-copy">
-          <div className="eyebrow">
-            <span />
-            {copy.eyebrow}
-          </div>
-          <h1>
-            {hero.titleLine1}
-            <br />
-            <em>{hero.titleLine2}</em>
-          </h1>
-          <p>{hero.body}</p>
-          <div className="hero-actions">
-            <Link className="button button-primary" href="/sell">
-              {hero.sell}
-              <span>→</span>
-            </Link>
-            <Link className="button button-secondary" href="/launch">
-              {hero.launch}
-              <span>↗</span>
-            </Link>
-          </div>
-          <div className="hero-footnote">{plainLaunch.creationFee}</div>
-        </div>
-        <div className="hero-art">
-          <picture>
-            <source media="(max-width: 760px)" srcSet="/art/hero-mobile.webp" />
-            <img src="/art/hero.webp" alt="" width="1600" height="900" />
-          </picture>
-          <span className="art-caption">{copy.illustration}</span>
+      <section className="home-top">
+        <img className="home-mascot" src="/art/mascot.webp" alt="" width="200" height="200" />
+        <h1>{home.title}</h1>
+        <p>{home.body}</p>
+        <Link className="button button-primary button-launch" href="/launch">
+          <span aria-hidden="true">+</span> {home.launch}
+        </Link>
+        <div className="home-links">
+          <BurnStat />
+          <Link className="home-sell" href="/sell">{home.sell} →</Link>
         </div>
       </section>
-      <MarketDirectory />
-      <BurnPanel compact />
-      <HomeAtlas />
-      <section className="chapter-grid">
-        {copy.chapters.map((c, i) => (
-          <article
-            className="chapter"
-            key={c.number}
-            style={{ "--sticker": `url(/art/sticker-${["planet", "coin", "flame"][i % 3]}.webp)` } as React.CSSProperties}
-          >
-            <span className="micro">{c.number} /</span>
-            <h3>{c.title}</h3>
-            <p>{c.body}</p>
-          </article>
-        ))}
-      </section>
-      <section className="mechanics">
-        <h2>{copy.mechanics}</h2>
-        <p>{copy.mechanicsBody}</p>
-      </section>
+      <CoinFeed />
+      <details className="glass-details home-how">
+        <summary>{home.how}</summary>
+        <ol className="how-steps">
+          {home.steps.map((s, i) => (
+            <li key={s.title}><span className="how-n">{i + 1}</span><span><strong>{s.title}</strong><p>{s.body}</p></span></li>
+          ))}
+        </ol>
+      </details>
+      <details className="glass-details">
+        <summary>{home.details}</summary>
+        <p>{home.marketCapNote}</p>
+        <p><Link className="text-link" href="/sky">{home.explore} ↗</Link></p>
+      </details>
     </Shell>
   );
 }

@@ -8,14 +8,14 @@ import Link from "next/link";
 import { Keypair } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
-import { Shell, Card, ConnectWallet } from "@/components/Shell";
-import { PageHeader , StorageNotice } from "@/components/Experience";
+import { Shell, ConnectWallet } from "@/components/Shell";
+import { StorageNotice } from "@/components/Experience";
 import {
   LogoUpload,
   IdentityPreview,
   type TokenImage,
 } from "@/components/TokenIdentity";
-import { plainLaunch, amounts, experience as c } from "@/content/cometail";
+import { plainLaunch, amounts, experience as c, launchSimple as launchCopy } from "@/content/cometail";
 import { presetsPage } from "@/content/presets";
 import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
@@ -125,118 +125,125 @@ export default function LaunchPage() {
   };
   return (
     <Shell>
-      <PageHeader
-        art="launch"
-        eyebrow={c.launchKicker}
-        title={plainLaunch.title}
-        body={c.launchBody}
-      />
-      <p className="form-notice presets-link">{presetsPage.launchLink} <Link href="/presets" className="text-link">{presetsPage.launchLinkAction} ↗</Link></p>
-      <div className="launch-layout">
-        <Card title={c.identity}>
-          <StorageNotice storage={storage} />
-          <LaunchPresets value={presetId} onChange={id => { setPresetId(id); setFirstBuy(""); }} disabled={busy || !!mint || blocked} />
-          {!preset.native && CLUSTER === "devnet" && <p className="form-notice">{c.testQuote}</p>}
-          <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
-            <div className="form-row">
-              <label className="field">
-                {c.name}
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={32}
-                  placeholder={c.namePlaceholder}
-                  autoComplete="off"
-                />
-              </label>
-              <label className="field">
-                {c.symbol}
-                <input
-                  value={symbol}
-                  onChange={(e) => setSymbol(cleanSymbolInput(e.target.value))}
-                  maxLength={10}
-                  placeholder={c.symbolPlaceholder}
-                  autoComplete="off"
-                />
-              </label>
-            </div>
-            <LogoUpload onChange={setImage} />
+      <div className="simple-heading">
+        <img src="/art/mascot-launch.webp" alt="" width="200" height="200" />
+        <div>
+          <h1>{launchCopy.title}</h1>
+          <p>{launchCopy.body}</p>
+        </div>
+      </div>
+      <StorageNotice storage={storage} />
+      <section className="panel launch-form">
+        <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
+          <LogoUpload onChange={setImage} />
+          <div className="form-row">
             <label className="field">
-              {c.description}
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                maxLength={500}
-                rows={3}
-                placeholder={c.descriptionHint}
+              {c.name}
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={32}
+                placeholder={c.namePlaceholder}
+                autoComplete="off"
               />
             </label>
-            <SocialFields value={links} onChange={setLinks} />
-            <AmountInput
-              label={`${c.firstBuy} · ${c.optional}`}
-              unit={quoteTicker}
-              value={firstBuy}
-              onChange={setFirstBuy}
-              balance={!publicKey ? undefined : buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: quoteTicker })}
-              quick={quickBuys}
-              hint={!preset.native ? c.quoteFees : publicKey ? amounts.maxKeepsFees : c.firstBuyHint}
-              error={firstBuyRaw === null ? c.buyInvalid : shortfall}
-              disabled={busy}
-            />
-          </fieldset>
-          <div className="form-actions">
-            {connected ? (
-              <button
-                disabled={!valid || busy || !!mint}
-                onClick={submit}
-                className="button button-primary"
-              >
-                {busy
-                  ? status.state === "sending"
-                    ? c.creating
-                    : c.uploading
-                  : c.launchAction}
-                <span aria-hidden>↗</span>
-              </button>
-            ) : (
-              <ConnectWallet />
-            )}
-            <p className="caption">{c.uploadProof}</p>
+            <label className="field">
+              {launchCopy.ticker}
+              <input
+                value={symbol}
+                onChange={(e) => setSymbol(cleanSymbolInput(e.target.value))}
+                maxLength={10}
+                placeholder={c.symbolPlaceholder}
+                autoComplete="off"
+              />
+            </label>
           </div>
-          {(error || status.state === "error") && (
-            <p className="form-error" role="alert">
-              {error || status.message}
-            </p>
+          <label className="field">
+            {c.description}
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={500}
+              rows={3}
+              placeholder={c.descriptionHint}
+            />
+          </label>
+          <details className="launch-socials">
+            <summary>{launchCopy.socials} <span>{c.optional}</span></summary>
+            <SocialFields value={links} onChange={setLinks} />
+          </details>
+          {!linksValid(links) && <p className="form-error" role="alert">{launchCopy.socialsInvalid}</p>}
+        </fieldset>
+        <LaunchPresets value={presetId} onChange={id => { setPresetId(id); setFirstBuy(""); }} disabled={busy || !!mint || blocked} />
+        {!preset.native && CLUSTER === "devnet" && <p className="form-notice">{c.testQuote}</p>}
+        <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
+          <AmountInput
+            label={`${c.firstBuy} · ${c.optional}`}
+            unit={quoteTicker}
+            value={firstBuy}
+            onChange={setFirstBuy}
+            balance={!publicKey ? undefined : buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: quoteTicker })}
+            quick={quickBuys}
+            hint={!preset.native ? c.quoteFees : publicKey ? amounts.maxKeepsFees : c.firstBuyHint}
+            error={firstBuyRaw === null ? c.buyInvalid : shortfall}
+            disabled={busy}
+          />
+        </fieldset>
+        <div className="form-actions launch-actions">
+          {connected ? (
+            <button
+              disabled={!valid || busy || !!mint}
+              onClick={submit}
+              className="button button-primary button-full"
+            >
+              {busy
+                ? status.state === "sending"
+                  ? c.creating
+                  : c.uploading
+                : launchCopy.create}
+            </button>
+          ) : (
+            <ConnectWallet />
           )}
-          {status.state === "done" && mint && (
-            <div className="success-note" role="status">
-              <strong>{c.launchReady}</strong>
-              <Link href={`/token/${mint}`}>{c.openToken} ↗</Link>
-              <CopyAddress address={mint} />
-              <a
-                href={EXPLORER("tx", status.signature!)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {c.transaction}
-              </a>
-            </div>
-          )}
-        </Card>
-        <aside className="preview-column">
-          <IdentityPreview name={name} symbol={symbol} image={image?.preview} links={links} />
-          <Card title={c.review}>
-            <p className="caption">{plainLaunch.presets.selected}: <strong>{plainLaunch.presets[presetId].name}</strong></p>
-            <p className="creation-fee">{plainLaunch.creationFee}</p>
-            <p className="fees-line">{plainLaunch.feesLine}</p>
-            <details className="fees-details">
-              <summary>{plainLaunch.feesToggle}</summary>
-              <p className="disclosure-copy">{plainLaunch.intro}</p>
-              <p className="disclosure-copy">{plainLaunch.lock}</p>
-            </details>
-          </Card>
-        </aside>
-      </div>
+          <p className="launch-cost">{plainLaunch.creationFee} {launchCopy.signs}</p>
+        </div>
+        {(error || status.state === "error") && (
+          <p className="form-error" role="alert">
+            {error || status.message}
+          </p>
+        )}
+        {status.state === "done" && mint && (
+          <div className="success-note" role="status">
+            <strong>{c.launchReady}</strong>
+            <Link href={`/token/${mint}`}>{c.openToken} ↗</Link>
+            <CopyAddress address={mint} />
+            <a
+              href={EXPLORER("tx", status.signature!)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {c.transaction}
+            </a>
+          </div>
+        )}
+      </section>
+      <details className="glass-details">
+        <summary>{launchCopy.preview}</summary>
+        <IdentityPreview name={name} symbol={symbol} image={image?.preview} links={links} />
+      </details>
+      <details className="glass-details">
+        <summary>{plainLaunch.feesToggle}</summary>
+        <p>{plainLaunch.feesLine}</p>
+        <p>{plainLaunch.intro}</p>
+        <p>{plainLaunch.lock}</p>
+      </details>
+      <details className="glass-details">
+        <summary>{launchCopy.details}</summary>
+        <p>{plainLaunch.presets.selected}: <strong>{plainLaunch.presets[presetId].name}</strong>{preset.config ? <> · <CopyAddress address={preset.config.toBase58()} /></> : null}</p>
+        <p>{c.uploadProof}</p>
+        <p>{plainLaunch.presets.shapeNote}</p>
+        <p>{presetsPage.launchLink} <Link href="/presets" className="text-link">{presetsPage.launchLinkAction} ↗</Link></p>
+      </details>
     </Shell>
   );
 }

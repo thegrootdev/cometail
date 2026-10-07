@@ -18,7 +18,7 @@ import {
   IdentityPreview,
   type TokenImage,
 } from "@/components/TokenIdentity";
-import { DataState, PageHeader , StorageNotice } from "@/components/Experience";
+import { DataState, StorageNotice } from "@/components/Experience";
 import { uploadIdentity } from "@/lib/upload";
 import { SocialFields } from "@/components/SocialLinks";
 import { cleanLinks, linksValid, type TokenLinks, cleanSymbolInput } from "@/lib/token-display";
@@ -26,7 +26,7 @@ import { api } from "@/lib/api";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
 import { CopyAddress } from "@/components/CopyAddress";
-import { identity, sellExample, failures } from "@/content/cometail";
+import { identity, sellExample, failures, sellSimple, launchSimple } from "@/content/cometail";
 import { wizard, splits, product, experience as c } from "@/content/cometail";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
@@ -398,33 +398,30 @@ function Wizard() {
   return (
     <>
       {!publicKey && (
-        <div className="launch-layout">
-          <div className="space-y-6">
-            <Card title={sellExample.title} icon="coin">
-              <ol className="example-list">
-                {sellExample.lines.map((line) => (<li key={line}>{line}</li>))}
-              </ol>
-              <p className="caption">{sellExample.note}</p>
-            </Card>
-            <DataState kind="wallet" title={c.connectTitle} body={wizard.connect}>
-              <ConnectWallet />
-            </DataState>
-          </div>
-          <aside className="preview-column">
-            <Card title={wizard.moneyTitle}>
-              <p className="fees-line">{splits.summary}</p>
-              <details className="fees-details">
-                <summary>{wizard.feesToggle}</summary>
-                <ul className="disclosure-list">
-                  <li>{splits.curve}</li>
-                  <li>{splits.pool}</li>
-                  <li>{splits.external}</li>
-                  <li>{splits.cashout}</li>
-                  <li>{splits.orderFees}</li>
-                </ul>
-              </details>
-            </Card>
-          </aside>
+        <div className="sell-simple">
+          <DataState kind="wallet" title={c.connectTitle} body={wizard.connect}>
+            <ConnectWallet />
+          </DataState>
+          <Card title={wizard.moneyTitle}>
+            <p className="fees-line">{splits.summary}</p>
+            <details className="fees-details">
+              <summary>{wizard.feesToggle}</summary>
+              <ul className="disclosure-list">
+                <li>{splits.curve}</li>
+                <li>{splits.pool}</li>
+                <li>{splits.external}</li>
+                <li>{splits.cashout}</li>
+                <li>{splits.orderFees}</li>
+              </ul>
+            </details>
+          </Card>
+          <details className="glass-details">
+            <summary>{sellExample.title}</summary>
+            <ol className="example-list">
+              {sellExample.lines.map((line) => (<li key={line}>{line}</li>))}
+            </ol>
+            <p className="caption">{sellExample.note}</p>
+          </details>
         </div>
       )}
       {publicKey && (
@@ -464,7 +461,7 @@ function Wizard() {
                   return (
                     <li
                       key={k}
-                      className={`flex items-start gap-3 rounded-xl border border-starlight/10 p-3 ${ok ? "" : "opacity-60"}`}
+                      className={`sell-source flex items-start gap-3 rounded-xl border border-starlight/10 p-3 ${ok ? "" : "opacity-60"}`}
                     >
                       <input
                         type="checkbox"
@@ -484,7 +481,7 @@ function Wizard() {
                           const token = catalogue?.streams.find(row => row.baseMint === s.baseMint.toBase58())?.token;
                           return <><Link href={`/token/${s.baseMint.toBase58()}`} className="token-cell"><TokenHeading token={token} mint={s.baseMint.toBase58()}/></Link>
                             <p className="source-kind">{s.kind === "rights" ? identity.creatorFees : identity.positionFees}</p>
-                            <CopyAddress address={s.baseMint.toBase58()}/><SocialLinks links={token?.links} tokenName={token?.name}/>
+                            <div className="compact-extras"><CopyAddress address={s.baseMint.toBase58()}/><SocialLinks links={token?.links} tokenName={token?.name}/></div>
                           </>;
                         })()}
                         {s.kind === "rights" && <span className="source-kind">{wizard.stages[s.progress]} · <Money lamports={s.claimable.toString()}/> {wizard.claimable}</span>}
@@ -553,8 +550,14 @@ function Wizard() {
                     placeholder={c.descriptionHint}
                   />
                 </label>
-                <SocialFields value={links} onChange={setLinks} />
-                <label className="mt-3 block text-sm">
+                <details className="launch-socials mt-4">
+                  <summary>{launchSimple.socials} <span>{c.optional}</span></summary>
+                  <SocialFields value={links} onChange={setLinks} />
+                </details>
+                <details className="launch-socials mt-3">
+                  <summary>{sellSimple.advanced}</summary>
+                  <div className="advanced-body">
+                <label className="block text-sm">
                   {wizard.cap}
                   <input
                     value={capSol}
@@ -568,12 +571,15 @@ function Wizard() {
                     ? `${wizard.capEncoded} ${q64ToCap(capQ64, 6)} SOL/token`
                     : wizard.capInvalid}
                 </p>
+                  </div>
+                </details>
+                {!capQ64 && <p className="form-error" role="alert">{wizard.capInvalid}</p>}
               </fieldset>
               <p className="caption mt-4">{c.uploadProof}</p>
               <button
                 disabled={!ready}
                 onClick={launch}
-                className="mt-5 rounded-full bg-dust px-6 py-3 font-semibold text-night disabled:opacity-40"
+                className="button button-gold button-full mt-5"
               >
                 {preparing
                   ? status.state === "sending"
@@ -651,12 +657,13 @@ function Wizard() {
 export default function SellPage() {
   return (
     <Shell>
-      <PageHeader
-        art="sell"
-        eyebrow={c.sellKicker}
-        title={wizard.title}
-        body={c.sellBody}
-      />
+      <div className="simple-heading">
+        <img src="/art/mascot-sell.webp" alt="" width="200" height="200" />
+        <div>
+          <h1>{wizard.title}</h1>
+          <p>{sellSimple.body}</p>
+        </div>
+      </div>
       <p className="form-notice sell-window-note">{wizard.irreversible}</p>
       <Suspense fallback={<DataState kind="loading" />}>
         <Wizard />

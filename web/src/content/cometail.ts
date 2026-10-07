@@ -51,9 +51,10 @@ export const failures = {
 } as const;
 
 export const nav = {
-  launch: "Launch a token",
-  sell: "Sell your fees",
-  sky: "Explore tokens",
+  home: "Coins",
+  launch: "Launch",
+  sell: "Sell fees",
+  sky: "All tokens",
   fees: "Fee Index",
   portfolio: "Portfolio",
 } as const;
@@ -61,6 +62,10 @@ export const nav = {
 export const feeIndex = {
   eyebrow: "Every Meteora launchpad",
   title: "Fee Index",
+  short: "Which Meteora coins pay their creators the most, from every launchpad.",
+  about: "About the Fee Index",
+  details: "How these numbers are counted",
+  creatorShare: "Creator share",
   body: "Every SOL-paired Meteora coin that has paid its creator, from any launchpad: what the creator earns, what is waiting to be claimed, and whether those fees can launch a tail.",
   coverage: (pools: string, configs: string, at: string) => `${pools} coins on ${configs} configs, updated ${at}.`,
   coverageNote: "Curve fees only: fees on the creator's locked pool position after graduation are not in this number.",
@@ -145,7 +150,7 @@ export const hero = {
 } as const;
 
 export const sky = {
-  title: "Explore tokens",
+  title: "All tokens",
   body: "Every coin launched or tracked here, drawn as a comet. The longer the tail, the more fees it has earned.",
   legend: {
     claimable: "ready to claim",
@@ -562,6 +567,7 @@ export const market = {
   overview: "Market", trades: "Recent trades", tradesBody: "Executed swaps on the curve and its graduated pool.",
   noTrades: "No trades in this window.", noTradesBody: "New confirmed swaps will appear here when the indexer observes them.",
   buy: "Buy", sell: "Sell", side: "Side", amount: "Tokens", quote: "Quote value", when: "Time · UTC", venue: "Venue", receipt: "Transaction",
+  curveShort: "Curve", poolShort: "Pool",
   curve: "Curve (DBC)", trader: "Swap authority", payer: "Fee payer only", unknownTrader: "Authority unavailable",
   tradeNote: "Trades are historical executions. Use the trading form for a current quote.",
   sourceNote: "Holder counts are addresses with a nonzero balance, not people. The pools’ own vaults are excluded; custody accounts such as vaults may be included.",
@@ -591,4 +597,106 @@ export const identity = {
     website: { label: "Website", placeholder: "https://yourproject.com", invalid: "Use a full HTTPS website link, up to 200 characters." },
     discord: { label: "Discord", placeholder: "https://discord.gg/yourinvite", invalid: "Use an HTTPS link on discord.gg or discord.com, up to 200 characters." },
   },
+} as const;
+
+/** The simplified home: one promise, one launch button, the coin feed (2026-10-07 redesign). */
+export const home = {
+  title: "Launch a coin in seconds.",
+  body: "Anyone can buy it on its curve. When the curve fills, it graduates to a Meteora pool. Coin creators earn a share of every trade.",
+  launch: "Launch a coin",
+  sell: "Sell your coin's fees",
+  burned: "$COMETAIL burned",
+  feedTitle: "Coins",
+  tabs: { new: "New", trending: "Trending", soon: "About to graduate", graduated: "Graduated" },
+  trendingNote: "Most traded in the last 24 hours.",
+  trendingOff: "Trending is not available right now.",
+  search: "Search coins",
+  searchHint: "Name, ticker or address",
+  marketCap: "Market cap",
+  graduated: "Graduated",
+  graduating: "Graduating",
+  toGraduate: "to graduation",
+  official: "Official",
+  showMore: "Show more",
+  empty: "No coins here yet.",
+  emptyBody: "Try another search or tab, or launch the first one.",
+  soonEmpty: "No coin is on its curve right now.",
+  soonNote: "Coins still on their curve, closest to graduation first.",
+  how: "How it works",
+  steps: [
+    { title: "Launch", body: "Pick a name, a ticker and an image. It costs 0.01 SOL. Your coin starts on a price curve." },
+    { title: "Trade", body: "People buy and sell on the curve. Every trade pays a 1% fee, and the coin's creator earns a share of it." },
+    { title: "Graduate", body: "When the curve fills, the coin moves to a Meteora pool and keeps trading there." },
+    { title: "Sell your fees", body: "Have a coin that earns fees? Sell those future fees for SOL now, through a fee vault." },
+  ],
+  details: "Details",
+  marketCapNote: "The number on the right of each coin is its market cap: price × total supply, in USD at the latest SOL price. Live numbers refresh every 20 seconds.",
+  explore: "All tokens and fee sources",
+} as const;
+
+/** The short launch form (2026-10-07 redesign). */
+export const launchSimple = {
+  title: "Launch a coin",
+  body: "Add an image, a name and a ticker. Your coin goes live the moment you sign.",
+  ticker: "Ticker",
+  socials: "Add socials",
+  socialsInvalid: "One of the social links needs fixing before you can create the coin.",
+  create: "Create coin",
+  signs: "You sign twice: once to save the image, once to create the coin.",
+  preview: "Preview your coin card",
+  details: "Details",
+  presetTitle: "Price curve",
+  presetBody: "Standard suits most coins. You can't change it later.",
+  lines: {
+    standard: "The classic curve. Price rises as people buy.",
+    long: "A longer curve, with more room to grow before it graduates.",
+    flat: "A steadier price for most of the way, then a final climb.",
+    exp: "Starts slow, then climbs faster near graduation.",
+    stockUsdc: "The classic curve, bought and sold in USDC.",
+    stockXstock: "Bought and sold in a tokenized stock instead of SOL.",
+  },
+} as const;
+
+/** The simplified token page (2026-10-07 redesign). */
+export const tokenSimple = {
+  back: "Coins",
+  marketCap: "Market cap",
+  price: "Price",
+  volume: "24h volume",
+  holders: "Holders",
+  chart: "Market cap",
+  chartWindow: (n: number) => `Last ${n} trades`,
+  chartEmpty: "Not enough trades for a chart yet.",
+  chartLoading: "Loading the chart…",
+  progress: "Progress to graduation",
+  progressOf: (have: string, need: string) => `${have} of ${need} raised`,
+  graduatedTitle: "Graduated",
+  graduatedBody: "This coin finished its curve and now trades in its Meteora pool.",
+  migrating: "Curve complete. Moving to its Meteora pool; trading resumes there in a moment.",
+  trades: "Trades",
+  holderTab: "Holders",
+  holdersTitle: "Top holders",
+  holdersNote: "The 20 largest accounts on the chain right now. The curve and pool hold the coins that are for sale.",
+  holdersLoading: "Reading holders…",
+  holdersFailed: "Holders could not be read right now.",
+  curve: "Bonding curve",
+  pool: "Meteora pool",
+  creator: "Creator",
+  you: "You",
+  details: "Details",
+  detailsStage: "Stage",
+  creatorAddress: "Creator",
+  curvePool: "Curve pool",
+  graduatedPool: "Meteora pool",
+  route: (bonding: boolean) => bonding ? "Trades go through Meteora's bonding curve." : "Trades go through the coin's Meteora pool.",
+  creatorFees: "Creator fees",
+  claimable: "Claimable now",
+  creatorFeesBody: "The creator earns part of every trade's fee.",
+  feesMore: "How this is counted",
+} as const;
+
+/** The simplified sell page (2026-10-07 redesign). */
+export const sellSimple = {
+  body: "Get SOL now for your coin's future trading fees. Nothing moves until you sign.",
+  advanced: "Advanced: highest buyback price",
 } as const;

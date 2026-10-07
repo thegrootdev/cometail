@@ -43,12 +43,13 @@ export function Shell({
 }) {
   const path = usePathname();
   const links = [
-    { href: "/sky", label: nav.sky, icon: "/art/sticker-telescope.webp" },
-    { href: "/launch", label: nav.launch, icon: "/art/sticker-planet.webp" },
-    { href: "/sell", label: nav.sell, icon: "/art/sticker-coin.webp" },
-    { href: "/fees", label: nav.fees, icon: "/art/sticker-coin.webp" },
-    { href: "/portfolio", label: nav.portfolio, icon: "/art/sticker-flame.webp" },
+    { href: "/", label: nav.home, icon: "home" },
+    { href: "/launch", label: nav.launch, icon: "launch" },
+    { href: "/sell", label: nav.sell, icon: "sell" },
+    { href: "/fees", label: nav.fees, icon: "fees" },
+    { href: "/portfolio", label: nav.portfolio, icon: "portfolio" },
   ];
+  const desktop = [...links.slice(0, 1), { href: "/sky", label: nav.sky, icon: "" }, ...links.slice(1)];
   return (
     <div className="site-frame">
       <a className="skip-link" href="#content">
@@ -66,7 +67,7 @@ export function Shell({
           />
         </Link>
         <nav className="desktop-nav" aria-label={copy.menu}>
-          {links.map((l) => (
+          {desktop.map((l) => (
             <Link
               key={l.href}
               href={l.href}
@@ -109,13 +110,24 @@ export function Shell({
             href={l.href}
             aria-current={path === l.href ? "page" : undefined}
           >
-            <img src={l.icon} alt="" width="30" height="30" />
+            <TabIcon name={l.icon} />
             {l.label}
           </Link>
         ))}
       </nav>
     </div>
   );
+}
+/** Line icons for the phone tab bar: thin strokes that sit on the glass. */
+function TabIcon({ name }: { name: string }) {
+  const paths: Record<string, React.ReactNode> = {
+    home: <><path d="M4 11.5 12 5l8 6.5" /><path d="M6.5 10v9h11v-9" /></>,
+    launch: <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v8M8 12h8" /></>,
+    sell: <><circle cx="9" cy="12" r="5" /><path d="M14 8.5a5 5 0 1 1 0 7" /><path d="M9 10v4" /></>,
+    fees: <><path d="M5 19V11M10 19V6M15 19v-6M20 19V9" /></>,
+    portfolio: <><rect x="4" y="7.5" width="16" height="11.5" rx="2.5" /><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5M4 12.5h16" /></>,
+  };
+  return <svg className="tab-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
 // Every sticker card carries a small illustrated icon; pages can name one, otherwise the
 // title picks it (income and fees: coin; buybacks and burns: flame; streams, sky and

@@ -9,7 +9,7 @@ import { Money } from "./Money";
 import { api, type BurnRow, type BurnView } from "@/lib/api";
 import { EXPLORER } from "@/lib/addresses";
 import { short, units } from "@/lib/format";
-import { burnPanel as copy } from "@/content/cometail";
+import { burnPanel as copy, home as homeCopy } from "@/content/cometail";
 
 const when = (sec: number | null) => (sec ? new Date(sec * 1000).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC" : "—");
 
@@ -80,5 +80,27 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
           <p className="micro mt-3"><a className="text-link" href={EXPLORER("address", data.program)} target="_blank" rel="noreferrer">{copy.program} {short(data.program)} ↗</a>{compact && data.cometail ? <> · <Link className="text-link" href={`/token/${data.cometail.mint}`}>{copy.more} ↗</Link></> : null}</p>
         </>}
     </Card>
+  );
+}
+
+/** The home page's live line: how much $COMETAIL the burn program has burned, linking to its page. Hidden until the program reports. */
+export function BurnStat() {
+  const [data, setData] = useState<BurnView | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    const load = () => void api.burn().then((r) => { if (live && r) setData(r); });
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  const raw = data?.status === "live" ? data.totals?.burnedRaw : null;
+  if (!data || !raw || !data.cometail) return null;
+  return (
+    <Link className="burn-stat" href={`/token/${data.cometail.mint}`}>
+      <span className="burn-flame" aria-hidden="true" />
+      <strong>{units(raw, data.cometail.decimals ?? 6, 0)}</strong>
+      <span>{homeCopy.burned}</span>
+      <span className="burn-live" aria-hidden="true" />
+    </Link>
   );
 }

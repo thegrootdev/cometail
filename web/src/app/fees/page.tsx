@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Shell, Card } from "@/components/Shell";
-import { PageHeader, DataState, Badge } from "@/components/Experience";
+import { DataState, Badge } from "@/components/Experience";
 import { Money } from "@/components/Money";
 import { CopyAddress } from "@/components/CopyAddress";
 import { CoinCell } from "@/components/CoinCell";
@@ -79,17 +79,17 @@ function Coins() {
   useEffect(() => { setState("loading"); setRows([]); void load(0); }, [sort, stage, eligible, mine, me, search]);
   return (
     <>
-      <Coverage c={coverage} />
-      <div className="market-controls mt-4">
-        <div className="market-switch fee-switch" aria-label={copy.sort}>
-          {([["day", copy.sortDay], ["claimable", copy.sortClaimable], ["lifetime", copy.sortLifetime], ["avg", copy.sortAvg]] as [Sort, string][]).map(([k, label]) => (
-            <button type="button" key={k} aria-pressed={sort === k} onClick={() => setSort(k)}>{label}</button>
-          ))}
-        </div>
-        <label className="market-search"><span>{copy.search}</span><input type="search" placeholder={copy.search} value={query} onChange={(e) => setQuery(e.target.value)} /></label>
-        <label className="market-filter"><span>{copy.stage}</span><select value={stage} onChange={(e) => setStage(e.target.value)}><option value="all">{copy.all}</option><option value="bonding">{copy.bonding}</option><option value="graduated">{copy.graduated}</option></select></label>
+      <label className="feed-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+        <input type="search" placeholder={copy.search} aria-label={copy.search} value={query} onChange={(e) => setQuery(e.target.value)} />
+      </label>
+      <div className="sort-chips" role="group" aria-label={copy.sort}>
+        {([["day", copy.sortDay], ["claimable", copy.sortClaimable], ["lifetime", copy.sortLifetime], ["avg", copy.sortAvg]] as [Sort, string][]).map(([k, label]) => (
+          <button type="button" key={k} aria-pressed={sort === k} onClick={() => setSort(k)}>{label}</button>
+        ))}
       </div>
-      <div className="atlas-search mt-3">
+      <div className="fee-filters">
+        <label className="fee-stage"><span className="sr-only">{copy.stage}</span><select value={stage} onChange={(e) => setStage(e.target.value)} aria-label={copy.stage}><option value="all">{copy.all}</option><option value="bonding">{copy.bonding}</option><option value="graduated">{copy.graduated}</option></select></label>
         <label><input type="checkbox" checked={eligible} onChange={(e) => setEligible(e.target.checked)} /> {copy.eligibleOnly}</label>
         {me && <label><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> {copy.mine}</label>}
       </div>
@@ -97,31 +97,44 @@ function Coins() {
       {state === "error" && <DataState kind="error" compact title={copy.unavailable} onRetry={() => { setState("loading"); void load(0); }} />}
       {state === "ok" && rows.length === 0 && <DataState title={copy.empty} body={copy.emptyBody} />}
       {state === "ok" && rows.length > 0 && (
-        <div className="table-scroll mt-4">
-          <table className="stream-table fee-table">
-            <thead><tr><th>{copy.coin}</th><th>{copy.launchpad}</th><th>{copy.last24h}</th><th>{copy.lifetime}</th><th>{copy.claimable}</th><th>{copy.tail}</th></tr></thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr key={c.pool}>
-                  <td data-label={copy.coin}>
-                    <CoinCell mint={c.mint} name={c.name} symbol={c.symbol} imageUrl={c.imageUrl} href={`/token/${c.mint}`} />
-                    <p className="source-kind">{c.stage === "graduated" ? copy.graduated : c.stage === "bonding" ? copy.bonding : copy.migrating}{c.creatorFeePct !== null ? ` · creator ${c.creatorFeePct}%` : ""}</p>
-                  </td>
-                  <td data-label={copy.launchpad}>{c.ours ? <Badge tone="gold">{copy.ours}</Badge> : c.launchpad ? <CopyAddress address={c.launchpad} label={copy.wallet} /> : "—"}</td>
-                  <td className="money" data-label={copy.last24h}><Money lamports={c.creatorLast24hEstimateLamports} />{c.last24hWindowHours < 24 ? <span className="micro"> {copy.window(c.last24hWindowHours)}</span> : null}</td>
-                  <td className="money" data-label={copy.lifetime}><Money lamports={c.creatorLifetimeEstimateLamports} /><p className="micro">{c.noneClaimed ? copy.noneClaimed : <>{c.lifetimeExact ? copy.claimed : copy.claimedAtMost} <Money lamports={c.creatorClaimedAtMostLamports} /></>}</p></td>
-                  <td className="money" data-label={copy.claimable}><Money lamports={c.claimableLamports} /></td>
-                  <td data-label={copy.tail}>
-                    <span className={`source-availability ${c.configAllowsTail ? "source-sellable" : ""}`} title={c.configAllowsTail ? copy.tailNote : c.reasons.join("; ")}>{c.configAllowsTail ? copy.canTail : copy.cannotTail}</span>
-                    {!c.configAllowsTail && c.reasons.length > 0 && <p className="micro">{c.reasons[0]}</p>}
-                    {me && c.creator === me && c.configAllowsTail && <p className="mt-1"><Link className="text-link" href={`/sell?pool=${c.pool}`}>{copy.sell} ↗</Link></p>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="mt-4">
+          <ul className="fee-list">
+            {rows.map((c) => {
+              const main = sort === "claimable" ? c.claimableLamports : sort === "lifetime" ? c.creatorLifetimeEstimateLamports : c.creatorLast24hEstimateLamports;
+              const mainLabel = sort === "claimable" ? copy.claimable : sort === "lifetime" ? copy.lifetime : copy.last24h;
+              return (
+                <li key={c.pool}>
+                  <details className="fee-row">
+                    <summary>
+                      <span className="fee-coin">
+                        <CoinCell mint={c.mint} name={c.name} symbol={c.symbol} imageUrl={c.imageUrl} href={`/token/${c.mint}`} />
+                        <span className="source-kind">{c.stage === "graduated" ? copy.graduated : c.stage === "bonding" ? copy.bonding : copy.migrating}{c.configAllowsTail ? ` · ${copy.canTail}` : ""}</span>
+                      </span>
+                      <span className="fee-main"><span className="micro">{mainLabel}</span><Money lamports={main} /></span>
+                    </summary>
+                    <dl className="detail-list">
+                      <div><dt>{copy.launchpad}</dt><dd>{c.ours ? <Badge tone="gold">{copy.ours}</Badge> : c.launchpad ? <CopyAddress address={c.launchpad} label={copy.wallet} /> : "—"}</dd></div>
+                      {c.creatorFeePct !== null && <div><dt>{copy.creatorShare}</dt><dd>{c.creatorFeePct}%</dd></div>}
+                      <div><dt>{copy.last24h}</dt><dd className="money"><Money lamports={c.creatorLast24hEstimateLamports} />{c.last24hWindowHours < 24 ? <span className="micro"> {copy.window(c.last24hWindowHours)}</span> : null}</dd></div>
+                      <div><dt>{copy.lifetime}</dt><dd className="money"><Money lamports={c.creatorLifetimeEstimateLamports} /><p className="micro">{c.noneClaimed ? copy.noneClaimed : <>{c.lifetimeExact ? copy.claimed : copy.claimedAtMost} <Money lamports={c.creatorClaimedAtMostLamports} /></>}</p></dd></div>
+                      <div><dt>{copy.claimable}</dt><dd className="money"><Money lamports={c.claimableLamports} /></dd></div>
+                      <div><dt>{copy.tail}</dt><dd>
+                        <span className={`source-availability ${c.configAllowsTail ? "source-sellable" : ""}`} title={c.configAllowsTail ? copy.tailNote : c.reasons.join("; ")}>{c.configAllowsTail ? copy.canTail : copy.cannotTail}</span>
+                        {!c.configAllowsTail && c.reasons.length > 0 && <p className="micro">{c.reasons[0]}</p>}
+                      </dd></div>
+                    </dl>
+                    {me && c.creator === me && c.configAllowsTail && <p className="fee-sell"><Link className="button button-gold button-full" href={`/sell?pool=${c.pool}`}>{copy.sell} ↗</Link></p>}
+                  </details>
+                </li>
+              );
+            })}
+          </ul>
           {more && <button type="button" className="button button-secondary mt-4" disabled={paging} onClick={() => void loadMore()}>{copy.more}</button>}
-          <p className="micro mt-3">{copy.estimateNote} {copy.tailNote}</p>
+          <details className="glass-details">
+            <summary>{copy.details}</summary>
+            <Coverage c={coverage} />
+            <p>{copy.estimateNote} {copy.tailNote}</p>
+          </details>
         </div>
       )}
     </>
@@ -185,12 +198,20 @@ export default function FeeIndexPage() {
   const [tab, setTab] = useState<"coins" | "launchpads">("coins");
   return (
     <Shell wide>
-      <PageHeader eyebrow={copy.eyebrow} title={copy.title} body={copy.body}>
-        <Link className="button button-secondary" href="/tails">{copy.tails} ↗</Link>
-      </PageHeader>
-      <div className="market-switch mt-2" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "coins"} aria-pressed={tab === "coins"} onClick={() => setTab("coins")}>{copy.coins}</button>
-        <button type="button" role="tab" aria-selected={tab === "launchpads"} aria-pressed={tab === "launchpads"} onClick={() => setTab("launchpads")}>{copy.launchpads}</button>
+      <div className="simple-heading">
+        <div>
+          <h1>{copy.title}</h1>
+          <p>{copy.short}</p>
+        </div>
+      </div>
+      <details className="glass-details">
+        <summary>{copy.about}</summary>
+        <p>{copy.body}</p>
+        <p><Link className="text-link" href="/tails">{copy.tails} ↗</Link></p>
+      </details>
+      <div className="feed-tabs" role="tablist" aria-label={copy.title}>
+        <button type="button" role="tab" aria-selected={tab === "coins"} onClick={() => setTab("coins")}>{copy.coins}</button>
+        <button type="button" role="tab" aria-selected={tab === "launchpads"} onClick={() => setTab("launchpads")}>{copy.launchpads}</button>
       </div>
       <section className="mt-4">{tab === "coins" ? <Coins /> : <Launchpads />}</section>
     </Shell>
