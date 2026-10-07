@@ -3,7 +3,7 @@
 // with search and four tabs. Reads the same /api/tokens list the old directory did and pages it by
 // cursor; "About to graduate" reads every coin still on its curve (bounded) and orders them by progress.
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { API_URL, CLUSTER, OFFICIAL_MINT, isListed, isOfficial } from "@/lib/addresses";
 import { useMarket, normalizeToken, rawUnits, type MarketEnvelope, type MarketToken, type TokenList } from "@/lib/market";
 import { quoteAsset, quoteRate } from "@/lib/quotes";
@@ -131,6 +131,8 @@ function PagedList({ tab, search }: { tab: Exclude<Tab, "soon">; search: string 
   // could otherwise push a coin across the page boundary and lose it); newer data waits behind Show updates
   const [frozen, setFrozen] = useState<MarketEnvelope<TokenList> | null>(null);
   const [paging, setPaging] = useState<"idle" | "busy" | "error">("idle");
+  // Show updates starts a new generation: a page read begun before it never lands on the new head
+  const generation = useRef(0);
   const data = frozen ?? live;
   const firstObserved = frozen ? frozen.generatedAtMs : error ? 0 : live?.generatedAtMs ?? 0;
   const updated = !!(frozen && live && JSON.stringify(live.data) !== JSON.stringify(frozen.data));
@@ -139,15 +141,17 @@ function PagedList({ tab, search }: { tab: Exclude<Tab, "soon">; search: string 
     if (!cursor || paging === "busy" || !data) return;
     // freeze the head this cursor came from now, so a poll landing while the page is in flight cannot move it
     if (!frozen) setFrozen(data);
+    const g = generation.current;
     setPaging("busy");
     try {
       const p = await readPage(listPath(sort, stage, search, PAGE, cursor));
       // an appended Trending page must carry the same comparable ranking as the first
       if (tab === "trending" && p.envelope.data.volumeRanking?.basis !== "quote-usd-v1") throw new Error("Incompatible ranking");
+      if (g !== generation.current) return;
       setOlder((o) => [...o, p]); setPaging("idle");
-    } catch { setPaging("error"); }
+    } catch { if (g === generation.current) setPaging("error"); }
   };
-  const showUpdates = () => { setOlder([]); setFrozen(null); setPaging("idle"); };
+  const showUpdates = () => { if (paging === "busy") return; generation.current++; setOlder([]); setFrozen(null); setPaging("idle"); };
   if (data && tab === "trending" && data.data?.volumeRanking?.basis !== "quote-usd-v1") return <DataState compact title={copy.trendingOff} body={copy.emptyBody} />;
   if (!data) return <DataState compact kind={error ? "error" : "loading"} title={error ? market.failed : market.loading} body={error ? market.failedBody : market.loadingBody} onRetry={error ? reload : undefined} />;
   // rows in order, each with the observation time of the read it came from; a coin seen on an earlier page is not repeated
@@ -166,7 +170,7 @@ function PagedList({ tab, search }: { tab: Exclude<Tab, "soon">; search: string 
   return (
     <>
       {tab === "trending" && <p className="feed-note">{copy.trendingNote}</p>}
-      {updated && <button type="button" className="market-update feed-update" onClick={showUpdates}>{market.dataUpdated} <strong>{market.refresh} ↻</strong></button>}
+      {updated && <button type="button" className="market-update feed-update" disabled={paging === "busy"} onClick={showUpdates}>{market.dataUpdated} <strong>{market.refresh} ↻</strong></button>}
       {(pin || shown.length > 0) ? (
         <div className="coin-list">
           {pin && <CoinCard token={pin.token} observedAt={pin.observedAt} official />}
