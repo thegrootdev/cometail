@@ -47,11 +47,14 @@ export interface EventRow {
   data: any;
 }
 
-async function get<T>(path: string): Promise<T | null> {
+/** How long a Fee Index text search may take before the page reports it as failed. */
+export const FEE_SEARCH_TIMEOUT_MS = 30_000;
+
+async function get<T>(path: string, timeoutMs = 12_000): Promise<T | null> {
   try {
     const r = await fetch(`${API_URL}${path}`, {
       cache: "no-store",
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!r.ok) return null;
     return (await r.json()) as T;
@@ -98,10 +101,11 @@ export interface BurnView {
 export const api = {
   burn: () => get<BurnView>("/api/burn"),
   burnPage: (before: string) => get<{ total: number; items: BurnRow[]; nextCursor: string | null }>(`/api/burn/burns?limit=50&before=${encodeURIComponent(before)}`),
+  /** A text search reads every coin on the server and can take far longer than a listing: it waits up to 30 s. */
   feeCoins: (q: { sort: string; stage: string; eligible: boolean; creator?: string | null; q?: string; offset?: number; limit?: number }) => {
     const p = new URLSearchParams({ sort: q.sort, stage: q.stage, limit: String(q.limit ?? 50), offset: String(q.offset ?? 0) });
     if (q.eligible) p.set("eligible", "1"); if (q.creator) p.set("creator", q.creator); if (q.q) p.set("q", q.q);
-    return get<{ coverage: FeeCoverage; coins: FeeCoin[]; offset: number; limit: number }>(`/api/fees/coins?${p}`);
+    return get<{ coverage: FeeCoverage; coins: FeeCoin[]; offset: number; limit: number }>(`/api/fees/coins?${p}`, q.q ? FEE_SEARCH_TIMEOUT_MS : undefined);
   },
   /** One coin from the Fee Index; "missing" only for a real 404, "error" for an outage or a network failure. */
   feeCoin: async (mint: string): Promise<{ state: "ok"; coin: FeeCoin } | { state: "missing" } | { state: "error" }> => {

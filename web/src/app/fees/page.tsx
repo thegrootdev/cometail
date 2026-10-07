@@ -94,8 +94,8 @@ function Coins() {
         <label><input type="checkbox" checked={eligible} onChange={(e) => setEligible(e.target.checked)} /> {copy.eligibleOnly}</label>
         {me && <label><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> {copy.mine}</label>}
       </div>
-      {state === "loading" && <DataState kind="loading" compact />}
-      {state === "error" && <DataState kind="error" compact title={copy.unavailable} onRetry={() => { setState("loading"); void load(0); }} />}
+      {state === "loading" && (search ? <DataState kind="loading" compact title={copy.searching} body={copy.searchingBody} /> : <DataState kind="loading" compact />)}
+      {state === "error" && <DataState kind="error" compact title={search ? copy.searchFailed : copy.unavailable} body={search ? copy.searchFailedBody : undefined} onRetry={() => { setState("loading"); void load(0); }} />}
       {state === "ok" && rows.length === 0 && <DataState title={copy.empty} body={copy.emptyBody} />}
       {state === "ok" && rows.length > 0 && (
         <div className="mt-4">
