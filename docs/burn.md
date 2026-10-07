@@ -112,13 +112,11 @@ logs) stops the pass and is retried. Burn events live in their own table.
 1. Deploy the program from the verifiable build with a program-data account the size of the binary; hand the
    upgrade authority to the owner's wallet.
 2. The owner signs `setup` on `/admin/burn` (the page checks the pool first).
-   Verification of the burn program is a separate, pending step: `/admin/verify` is the vault's page and stays as
-   it is. After the deploy: re-add the build user to the docker group, rebuild in the verifiable image at the
-   deployed commit (`--library-name cometail_burn --base-image solanafoundation/solana-verifiable-build:3.1.10
-   --cargo-build-sbf-args="--tools-version v1.57"`), compare its hash with the deployed program, then build and
-   review a burn-specific verification page (the record's arguments name this program, its library, the commit and
-   the deploy slot) for the owner to sign, and submit the public rebuild job. Until then the program is reported as
-   not verified.
+   Verification: the verifiable-image rebuild of the deployed commit 5895634 (`--library-name cometail_burn
+   --base-image solanafoundation/solana-verifiable-build:3.1.10 --cargo-build-sbf-args="--tools-version v1.57"`)
+   gives 8ead5d24..., the deployed program's hash. `/admin/verify/burn` embeds the record the verifier tool
+   exported for that commit and the deploy slot 454166757; the upgrade authority signs it there, then the public
+   rebuild job is submitted. Until the public verifier has rebuilt it, the program is reported as not verified.
 3. Create the four new configs (`tests/mainnet/burn-configs.ts`, dry run first): each is byte-identical to today's
    preset except the fee claimer, checked before and after.
 4. Worker: add the new configs to `COMETAIL_BURN_CONFIGS`, `COMETAIL_MIGRATE_CONFIGS` and `COMETAIL_SKY_CONFIGS`
