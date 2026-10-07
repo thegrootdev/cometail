@@ -57,10 +57,12 @@ export interface Store {
   getCursor(): Promise<string | null>;
   setCursor(signature: string): Promise<void>;
   insertEvents(rows: EventRow[], cursor: string): Promise<void>;
-  /** Events of another program (the burn program), with that program's own cursor kept in meta, atomically. */
-  insertEventsWithCursor(rows: EventRow[], metaKey: string, cursor: string): Promise<void>;
-  /** The newest events with these names, newest first. */
-  listEventsByName(names: string[], limit: number): Promise<EventRow[]>;
+  /** The burn program's events, in their own table (no collision with vault events of the same transaction),
+   *  with the burn index's cursor (JSON) in meta, atomically; idempotent on (signature, idx). */
+  insertBurnEvents(rows: EventRow[], cursorJson: string): Promise<void>;
+  /** One kind of burn event, newest first, strictly older than `before` when given. */
+  listBurnEvents(name: string, limit: number, before?: { slot: number; idx: number; signature: string } | null): Promise<EventRow[]>;
+  countBurnEvents(name: string): Promise<number>;
   /** The trade index's cursor per pool, separate from the program cursor. */
   getPoolCursor(key: string): Promise<PoolCursor | null>;
   setPoolCursor(key: string, cursor: PoolCursor): Promise<void>;
@@ -178,6 +180,8 @@ class PgStore implements Store {
       create table if not exists trades (signature text not null, idx int not null, slot bigint not null, block_time bigint, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy boolean not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
       create table if not exists tokens (mint text primary key, data jsonb not null, volume24h numeric not null, updated_at bigint not null);
+      create table if not exists burn_events (signature text not null, idx int not null, slot bigint not null, block_time bigint, name text not null, data jsonb not null, primary key (signature, idx));
+      create index if not exists burn_events_name on burn_events (name, slot desc, idx desc);
       create table if not exists feed (seq bigserial primary key, slot bigint not null, ordinal int not null, signature text not null, type text not null, vault text, mint text, data jsonb not null, provenance jsonb not null, at bigint not null, unique (type, signature, ordinal));`);
     if (have !== SCHEMA_VERSION) {
       const f = await this.pool.query("select value from meta where key = 'feed_seq_floor'");
@@ -194,19 +198,22 @@ class PgStore implements Store {
     const r = await this.pool.query("select * from events where name = any($1) and block_time >= $2 order by slot asc, idx asc", [names, sinceUnix]);
     return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
   }
-  async insertEventsWithCursor(rows: EventRow[], metaKey: string, cursor: string) {
+  async insertBurnEvents(rows: EventRow[], cursorJson: string) {
     const c = await this.pool.connect();
     try {
       await c.query("begin");
-      for (const r of rows) await c.query("insert into events (signature, idx, slot, block_time, name, vault, data) values ($1,$2,$3,$4,$5,$6,$7) on conflict do nothing", [r.signature, r.idx, r.slot, r.blockTime, r.name, r.vault, r.data]);
-      await c.query("insert into meta (key, value) values ($1, $2) on conflict (key) do update set value = $2", [metaKey, cursor]);
+      for (const r of rows) await c.query("insert into burn_events (signature, idx, slot, block_time, name, data) values ($1,$2,$3,$4,$5,$6) on conflict do nothing", [r.signature, r.idx, r.slot, r.blockTime, r.name, r.data]);
+      await c.query("insert into meta (key, value) values ('burn_cursor', $1) on conflict (key) do update set value = $1", [cursorJson]);
       await c.query("commit");
     } catch (e) { await c.query("rollback"); throw e; } finally { c.release(); }
   }
-  async listEventsByName(names: string[], limit: number) {
-    const r = await this.pool.query("select * from events where name = any($1) order by slot desc, idx desc limit $2", [names, limit]);
-    return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
+  async listBurnEvents(name: string, limit: number, before?: { slot: number; idx: number; signature: string } | null) {
+    const r = before
+      ? await this.pool.query("select * from burn_events where name = $1 and (slot, idx, signature) < ($2, $3, $4) order by slot desc, idx desc, signature desc limit $5", [name, before.slot, before.idx, before.signature, limit])
+      : await this.pool.query("select * from burn_events where name = $1 order by slot desc, idx desc, signature desc limit $2", [name, limit]);
+    return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: null, data: x.data }));
   }
+  async countBurnEvents(name: string) { const r = await this.pool.query("select count(*)::int as n from burn_events where name = $1", [name]); return Number(r.rows[0].n); }
   async getCursor() { const r = await this.pool.query("select signature from cursor where id = 1"); return r.rows[0]?.signature ?? null; }
   async getPoolCursor(key: string) { const r = await this.pool.query("select head, tail, target, new_head, status from cursors where key = $1", [key]); return r.rows[0] ? { head: r.rows[0].head, tail: r.rows[0].tail, target: r.rows[0].target, newHead: r.rows[0].new_head, status: r.rows[0].status } : null; }
   async setPoolCursor(key: string, c: PoolCursor) { await this.pool.query("insert into cursors (key, head, tail, target, new_head, status) values ($1,$2,$3,$4,$5,$6) on conflict (key) do update set head = $2, tail = $3, target = $4, new_head = $5, status = $6", [key, c.head, c.tail, c.target, c.newHead, c.status]); }
@@ -319,6 +326,8 @@ class SqliteStore implements Store {
       create table if not exists trades (signature text not null, idx integer not null, slot integer not null, block_time integer, pool text not null, vault text not null, trader text not null, trader_kind text not null, buy integer not null, amount_in text not null, amount_out text not null, venue text, base_amount text, quote_amount text, price text, primary key (signature, idx, pool));
       create index if not exists trades_pool_idx on trades (pool, slot desc, idx desc);
       create table if not exists tokens (mint text primary key, data text not null, volume24h text not null, updated_at integer not null);
+      create table if not exists burn_events (signature text not null, idx integer not null, slot integer not null, block_time integer, name text not null, data text not null, primary key (signature, idx));
+      create index if not exists burn_events_name on burn_events (name, slot desc, idx desc);
       create table if not exists feed (seq integer primary key autoincrement, slot integer not null, ordinal integer not null, signature text not null, type text not null, vault text, mint text, data text not null, provenance text not null, at integer not null, unique (type, signature, ordinal));`);
     if (have !== SCHEMA_VERSION) {
       const f: any = this.db.prepare("select value from meta where key = 'feed_seq_floor'").get();
@@ -344,19 +353,22 @@ class SqliteStore implements Store {
     const rows = this.db.prepare(`select * from events where name in (${names.map(() => "?").join(",")}) and block_time >= ? order by slot asc, idx asc`).all(...names, sinceUnix);
     return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
   }
-  async insertEventsWithCursor(rows: EventRow[], metaKey: string, cursor: string) {
+  async insertBurnEvents(rows: EventRow[], cursorJson: string) {
     this.db.exec("begin");
     try {
-      const ins = this.db.prepare("insert or ignore into events (signature, idx, slot, block_time, name, vault, data) values (?,?,?,?,?,?,?)");
-      for (const r of rows) ins.run(r.signature, r.idx, r.slot, r.blockTime, r.name, r.vault, JSON.stringify(r.data));
-      this.db.prepare("insert into meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value").run(metaKey, cursor);
+      const ins = this.db.prepare("insert or ignore into burn_events (signature, idx, slot, block_time, name, data) values (?,?,?,?,?,?)");
+      for (const r of rows) ins.run(r.signature, r.idx, r.slot, r.blockTime, r.name, JSON.stringify(r.data));
+      this.db.prepare("insert into meta (key, value) values ('burn_cursor', ?) on conflict (key) do update set value = excluded.value").run(cursorJson);
       this.db.exec("commit");
     } catch (e) { this.db.exec("rollback"); throw e; }
   }
-  async listEventsByName(names: string[], limit: number) {
-    const rows = this.db.prepare(`select * from events where name in (${names.map(() => "?").join(",")}) order by slot desc, idx desc limit ?`).all(...names, limit);
-    return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
+  async listBurnEvents(name: string, limit: number, before?: { slot: number; idx: number; signature: string } | null) {
+    const rows = before
+      ? this.db.prepare("select * from burn_events where name = ? and (slot < ? or (slot = ? and (idx < ? or (idx = ? and signature < ?)))) order by slot desc, idx desc, signature desc limit ?").all(name, before.slot, before.slot, before.idx, before.idx, before.signature, limit)
+      : this.db.prepare("select * from burn_events where name = ? order by slot desc, idx desc, signature desc limit ?").all(name, limit);
+    return rows.map((x: any) => ({ signature: x.signature, idx: Number(x.idx), slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: null, data: JSON.parse(x.data) }));
   }
+  async countBurnEvents(name: string) { const r: any = this.db.prepare("select count(*) as n from burn_events where name = ?").get(name); return Number(r.n); }
   async getCursor() { const r = this.db.prepare("select signature from cursor where id = 1").get(); return r ? r.signature : null; }
   async getPoolCursor(key: string) { const x = this.db.prepare("select head, tail, target, new_head, status from cursors where key = ?").get(key); return x ? { head: x.head, tail: x.tail, target: x.target, newHead: x.new_head, status: x.status } : null; }
   async setPoolCursor(key: string, c: PoolCursor) { this.db.prepare("insert into cursors (key, head, tail, target, new_head, status) values (?,?,?,?,?,?) on conflict (key) do update set head = excluded.head, tail = excluded.tail, target = excluded.target, new_head = excluded.new_head, status = excluded.status").run(key, c.head, c.tail, c.target, c.newHead, c.status); }

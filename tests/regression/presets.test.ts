@@ -130,3 +130,26 @@ describe("configs: economics through the live Customizable migration config (nat
     });
   }
 });
+
+// review 133: the burn configs' preflight compares today's presets with the plan before anything is sent
+import { todayMatchesPlan, sameExceptClaimer } from "../mainnet/burn-plan";
+import { Keypair as Kp } from "@solana/web3.js";
+describe("burn configs preflight (tests/mainnet/burn-plan.ts)", () => {
+  it("a today's preset whose parameters differ from the plan fails before any simulation; bytes differing outside the claimer fail", async () => {
+    const { startSvm, fund } = await import("../harness/svm");
+    const dbcH = await import("../harness/dbc");
+    const { NATIVE_MINT: W } = await import("@solana/spl-token");
+    const svm = startSvm({ withVaultProgram: false });
+    const payer = fund(svm);
+    const claimer = Kp.generate().publicKey, leftover = payer.publicKey;
+    const good = await dbcH.createConfig(svm, { payer, feeClaimer: payer.publicKey, leftoverReceiver: leftover, quoteMint: W, params: dbcH.configParams("plain") });
+    const p = dbcH.configParams("plain"); p.creatorTradingFeePercentage = 99;
+    const bad = await dbcH.createConfig(svm, { payer, feeClaimer: payer.publicKey, leftoverReceiver: leftover, quoteMint: W, params: p });
+    const fresh = await dbcH.createConfig(svm, { payer, feeClaimer: claimer, leftoverReceiver: leftover, quoteMint: W, params: dbcH.configParams("plain") });
+    expect(todayMatchesPlan(dbcH.getConfig(svm, good), "plain", payer.publicKey.toBase58(), leftover.toBase58())).deep.eq([]);
+    expect(todayMatchesPlan(dbcH.getConfig(svm, bad), "plain", payer.publicKey.toBase58(), leftover.toBase58()).length).gt(0);
+    const data = (k: any) => Buffer.from(svm.getAccount(k)!.data);
+    expect(sameExceptClaimer(data(good), data(fresh), claimer)).deep.eq([]);
+    expect(sameExceptClaimer(data(bad), data(fresh), claimer).length).gt(0);
+  });
+});

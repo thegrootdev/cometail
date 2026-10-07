@@ -13,13 +13,14 @@ import { PageHeader } from "@/components/Experience";
 import { CopyAddress } from "@/components/CopyAddress";
 import { useTx } from "@/lib/hooks";
 import { ADMIN, CLUSTER, EXPLORER } from "@/lib/addresses";
-import { buildProtocolClaim, burnShareOf, formatQuote, scanProtocolClaims, treasuryToBurnIx, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
+import { buildProtocolClaim, formatQuote, scanProtocolClaims, treasuryToBurnIx, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
 import { api, type BurnView } from "@/lib/api";
 import { parseAmount } from "@/lib/amounts";
 
 const KIND_LABEL: Record<ProtocolClaim["kind"], string> = {
   "dbc-partner-fee": "Partner trading fees on the curve",
   "dbc-partner-surplus": "Partner share of the curve's surplus",
+  "dbc-partner-creation-fee": "Partner share of the pool creation fee",
   "damm-position-fee": "Fees on the liquidity position",
 };
 const symbolOf = (mint: PublicKey) => (mint.toBase58() === "So11111111111111111111111111111111111111112" ? "SOL" : mint.toBase58().slice(0, 4) + "…");
@@ -48,12 +49,13 @@ export default function AdminFeesPage() {
   const build = useCallback(async (claim: ProtocolClaim) => {
     if (!publicKey) throw new Error("connect the wallet that owns this claim");
     if (!publicKey.equals(claim.claimer)) throw new Error(`this claim is signed by ${claim.claimer.toBase58()}, not the connected wallet`);
-    const { instructions, removedCloses } = await buildProtocolClaim(connection, claim, scan?.burn?.reserve ?? null);
+    if (!scan) throw new Error("the chain has not been read yet");
+    const { instructions, removedCloses } = await buildProtocolClaim(connection, claim, scan.burn);
     if (instructions.some((ix) => ix.data.length >= 1 && ix.data[0] === 9 && /Token/.test(ix.programId.toBase58()))) throw new Error("a close instruction survived; refusing");
     const tx = new Transaction().add(...instructions);
     tx.feePayer = publicKey;
     return { tx, removedCloses };
-  }, [connection, publicKey?.toBase58(), scan?.burn?.reserve.toBase58()]);
+  }, [connection, publicKey?.toBase58(), scan]);
 
   const simulate = async (claim: ProtocolClaim) => {
     setActive(claim.id);
@@ -89,10 +91,10 @@ export default function AdminFeesPage() {
   const [toBurnNote, setToBurnNote] = useState("");
   const toBurnLamports = parseAmount(toBurnInput, 9);
   const buildTreasurySend = async () => {
-    if (!publicKey || !scan?.burn || !treasury?.owner || !publicKey.equals(treasury.owner)) throw new Error("connect the treasury's owner (the admin wallet)");
+    if (!publicKey || scan?.burn.status !== "live" || !treasury?.owner || !publicKey.equals(treasury.owner)) throw new Error("connect the treasury's owner (the admin wallet), with the burn program live");
     if (!toBurnLamports || toBurnLamports <= 0n) throw new Error("enter an amount");
     if (treasury.lamports !== null && toBurnLamports > treasury.lamports) throw new Error("more than the treasury holds");
-    const tx = new Transaction().add(treasuryToBurnIx(treasury.address, publicKey, scan.burn.reserve, toBurnLamports));
+    const tx = new Transaction().add(treasuryToBurnIx(treasury.address, publicKey, (scan.burn as { reserve: PublicKey }).reserve, toBurnLamports));
     tx.feePayer = publicKey;
     return tx;
   };
@@ -133,9 +135,9 @@ export default function AdminFeesPage() {
         </p>
       </Card>
       <Card title="3. Send to the burn reserve (the tails' share and anything else owed)">
-        {!scan ? <p className="text-sm">{scanError ? `Could not read the chain: ${scanError}` : "Reading the chain."}</p> : !scan.burn ? <p className="text-sm">The burn program is not set up yet.</p> : <>
+        {!scan ? <p className="text-sm">{scanError ? `Could not read the chain: ${scanError}` : "Reading the chain."}</p> : scan.burn.status === "unavailable" ? <p className="text-sm wrap-anywhere">The burn program&apos;s state could not be read: {scan.burn.error}. Rescan.</p> : scan.burn.status === "absent" ? <p className="text-sm">The burn program is not set up yet.</p> : <>
           <ul className="text-sm space-y-1">
-            <li>reserve: <CopyAddress address={scan.burn.reserve.toBase58()} /></li>
+            <li>reserve: <CopyAddress address={scan.burn.reserve.toBase58()} label="Reserve" /></li>
             <li>tails&apos; protocol share received in the treasury (exact): {burnView?.commitment ? formatQuote(BigInt(burnView.commitment.tailsShareLamports), 9, "SOL") : "unknown"}; half of it: {burnView?.commitment ? formatQuote(BigInt(burnView.commitment.tailsShareLamports) / 2n, 9, "SOL") : "unknown"}</li>
             <li>sent to the reserve directly so far (exact, includes the halves sent with claims on this page): {burnView?.sentDirectLamports ? formatQuote(BigInt(burnView.sentDirectLamports), 9, "SOL") : "unknown"}</li>
           </ul>
@@ -162,7 +164,7 @@ export default function AdminFeesPage() {
                 <li>amount: {formatQuote(claim.amountQuote, claim.quoteDecimals, symbolOf(claim.quoteMint))}{claim.amountBase > 0n ? ` plus ${claim.amountBase.toString()} raw base tokens` : ""}{claim.note ? ` (${claim.note})` : ""}</li>
                 <li>pool: <CopyAddress address={claim.pool.toBase58()} />{claim.position ? <> · position <CopyAddress address={claim.position.toBase58()} /></> : null}</li>
                 <li>signed by: {claim.claimer.toBase58()}{mine(claim) ? " (connected)" : ""}</li>
-                {scan?.burn ? <li>to the burn reserve in the same transaction: {burnShareOf(claim, scan.burn.reserve) > 0n ? formatQuote(burnShareOf(claim, scan.burn.reserve), 9, "SOL (half of this claim)") : claim.quoteMint.equals(new PublicKey("So11111111111111111111111111111111111111112")) ? "nothing here (the program sets the amount); send half with card 3 after it lands" : "nothing (not paid in SOL; outside the 50% scope)"}</li> : <li>burn program not set up yet: nothing goes to a burn reserve</li>}
+                <li>{!claim.quoteMint.equals(new PublicKey("So11111111111111111111111111111111111111112")) ? "not paid in SOL: outside the 50% scope, claimed as before" : scan?.burn.status === "live" ? "through the burn program: it measures what this claim pays and sends exactly half to the burn reserve and half to your own wrapped-SOL account, in the same transaction" : scan?.burn.status === "unavailable" ? "BLOCKED: the burn program's state could not be read, so the 50% cannot be guaranteed; rescan" : "burn program not set up yet: claimed as before, nothing goes to a burn reserve"}</li>
                 <li>lands in: <CopyAddress address={claim.destination.toBase58()} /> ({claim.claimer.toBase58().slice(0, 4)}…&apos;s {symbolOf(claim.quoteMint) === "SOL" ? "wrapped-SOL" : "quote token"} account{claim.destinationExists ? "" : ", created by this claim"}){claim.amountBase > 0n ? "; base tokens in the claimer's token account for the base mint" : ""}</li>
               </ul>
               <div className="mt-2 flex flex-wrap gap-2">

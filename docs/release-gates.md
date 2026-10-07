@@ -49,4 +49,7 @@ repository currently has no CI workflow; retain the local per-file results with 
     fee, surplus and graduated-position fees each split exactly 50/50, with the totals equal to the event
     sums; migration with the claimer as fee claimer; buyback spends min(reserve, cap), burns exactly what it
     bought (supply delta), pays its caller nothing, waits ten minutes, refuses dust and a changed pool fee; a
-    sandwich around one buyback loses money at six sizes; no withdrawal path, pinned outputs.
+    sandwich around one buyback loses money at six sizes; no withdrawal path, pinned outputs; a claim reports only what it
+    paid (WSOL and lamport gifts reported as carried); owner claims on an older config and on a position split exactly half
+    of what they paid (more than an earlier scan) to the reserve and the rest only to the signer's own WSOL account,
+    leave carried funds alone, and refuse a stranger's destination or signature.

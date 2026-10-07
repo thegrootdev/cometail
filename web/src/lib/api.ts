@@ -78,21 +78,25 @@ export interface Tail {
   burnedStRaw: string; unwindOpensAtSec: number | null;
 }
 /** /api/burn (worker burnview.ts, docs/burn.md). Exact counters are strings of raw units; null is unknown, never zero. */
+export type BurnRow = { signature: string; slot: number; idx: number; blockTime: number | null; spentLamports: string; receivedRaw: string; burnedRaw: string; minOutRaw: string };
 export interface BurnView {
-  program: string; claimer: string; sharePct: number; status: "live" | "not-set-up" | "unavailable";
+  program: string; claimer: string; sharePct: number; status: "live" | "not-set-up" | "unavailable"; observedSlot?: number;
   coverage: { status: "complete" | "partial" | "unavailable"; atMs: number | null };
   setup?: { pool: string; cometailMint: string; treasury: string; reserve: string; inbox: string; setupBy: string; feeNumerator: string };
-  totals?: { claimedThroughProgramLamports: string; toReserveLamports: string; toTreasuryLamports: string; spentLamports: string; burnedRaw: string; buybacks: number; lastBuyAtSec: number | null };
+  totals?: { splitLamports: string; toReserveLamports: string; toOtherLamports: string; spentLamports: string; burnedRaw: string; buybacks: number; lastBuyAtSec: number | null };
+  provenance?: { claimedByProgramLamports: string | null; claimedByOwnersLamports: string | null; carriedLamports: string | null; basis: string };
   reserve?: { lamports: string } | null; sentDirectLamports?: string | null;
   nextBuyback?: { amountLamports: string; dueAtSec: number; due: boolean } | null;
   cometail?: { mint: string; supplyRaw: string; decimals: number } | null;
   claimableNow?: { programConfigsLamports: string | null; olderConfigsLamports: string | null; basis: string };
-  commitment?: { tailsShareLamports: string; olderConfigClaimsLamports: string | null; basis: string };
-  burns?: { signature: string; slot: number; blockTime: number | null; spentLamports: string; receivedRaw: string; burnedRaw: string; minOutRaw: string }[];
-  splits?: { signature: string; slot: number; blockTime: number | null; source: string; pool: string | null; amountLamports: string; toReserveLamports: string; toTreasuryLamports: string }[];
+  commitment?: { tailsShareLamports: string; tailsShareAsOfMs: number | null; olderConfigClaimsLamports: string | null; basis: string };
+  burns?: BurnRow[]; burnsTotal?: number; burnsNextCursor?: string | null;
+  splits?: { signature: string; slot: number; blockTime: number | null; source: string; pool: string | null; claimant: string | null; claimedLamports: string; carriedLamports: string; toReserveLamports: string; toOtherLamports: string; other: string }[];
+  splitsTotal?: number; splitsNextCursor?: string | null;
 }
 export const api = {
   burn: () => get<BurnView>("/api/burn"),
+  burnPage: (before: string) => get<{ total: number; items: BurnRow[]; nextCursor: string | null }>(`/api/burn/burns?limit=50&before=${encodeURIComponent(before)}`),
   feeCoins: (q: { sort: string; stage: string; eligible: boolean; creator?: string | null; q?: string; offset?: number; limit?: number }) => {
     const p = new URLSearchParams({ sort: q.sort, stage: q.stage, limit: String(q.limit ?? 50), offset: String(q.offset ?? 0) });
     if (q.eligible) p.set("eligible", "1"); if (q.creator) p.set("creator", q.creator); if (q.q) p.set("q", q.q);

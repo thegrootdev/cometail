@@ -67,33 +67,34 @@ export class BurnClient {
   private common(state: BurnState) {
     return { burnState: this.a.burnState, claimer: this.a.claimer, inbox: state.inbox, placeholder: state.placeholder, reserve: state.reserve, treasury: state.treasury, wsolMint: NATIVE_MINT, tokenProgram: TOKEN_PROGRAM_ID };
   }
+  /** Owner claims: the signer's own WSOL account receives the other half. */
+  private ownerCommon(state: BurnState, owner: PublicKey, ownerWsol: PublicKey) {
+    return { burnState: this.a.burnState, inbox: state.inbox, placeholder: state.placeholder, reserve: state.reserve, owner, ownerWsol, wsolMint: NATIVE_MINT, tokenProgram: TOKEN_PROGRAM_ID };
+  }
+  private curve(a: CurveArgs) {
+    return { config: a.config, pool: a.pool, dbcPoolAuthority: DBC_POOL_AUTHORITY, baseVault: a.baseVault, quoteVault: a.quoteVault, baseMint: a.baseMint, baseTokenProgram: a.baseTokenProgram ?? TOKEN_PROGRAM_ID, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY };
+  }
+  private creation(a: { config: PublicKey; pool: PublicKey }) { return { config: a.config, pool: a.pool, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY }; }
+  private surplus(a: { config: PublicKey; pool: PublicKey; quoteVault: PublicKey }) {
+    return { config: a.config, pool: a.pool, dbcPoolAuthority: DBC_POOL_AUTHORITY, quoteVault: a.quoteVault, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY };
+  }
+  private position(a: PositionArgs) {
+    return { pool: a.pool, position: a.position, positionNftAccount: a.positionNftAccount, poolAuthority: DAMM_POOL_AUTHORITY, tokenAVault: a.tokenAVault, tokenBVault: a.tokenBVault, tokenAMint: a.tokenAMint, tokenAProgram: a.tokenAProgram ?? TOKEN_PROGRAM_ID, cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: DAMM_EVENT_AUTHORITY };
+  }
 
-  /** DBC partner trading fees of `pool` (on a config whose fee claimer is our claimer). */
-  claimCurveFees(a: { state: BurnState; config: PublicKey; pool: PublicKey; baseVault: PublicKey; quoteVault: PublicKey; baseMint: PublicKey; baseTokenProgram?: PublicKey }): Promise<TransactionInstruction> {
-    return this.program.methods.claimCurveFees().accountsPartial({
-      common: this.common(a.state), config: a.config, pool: a.pool, dbcPoolAuthority: DBC_POOL_AUTHORITY, baseVault: a.baseVault, quoteVault: a.quoteVault,
-      baseMint: a.baseMint, baseTokenProgram: a.baseTokenProgram ?? TOKEN_PROGRAM_ID, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY,
-    } as any).instruction();
-  }
-  claimCreationFee(a: { state: BurnState; config: PublicKey; pool: PublicKey }): Promise<TransactionInstruction> {
-    return this.program.methods.claimCreationFee().accountsPartial({
-      common: this.common(a.state), config: a.config, pool: a.pool, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY,
-    } as any).instruction();
-  }
-  claimSurplus(a: { state: BurnState; config: PublicKey; pool: PublicKey; quoteVault: PublicKey }): Promise<TransactionInstruction> {
-    return this.program.methods.claimSurplus().accountsPartial({
-      common: this.common(a.state), config: a.config, pool: a.pool, dbcPoolAuthority: DBC_POOL_AUTHORITY, quoteVault: a.quoteVault, dbcProgram: DBC_PROGRAM_ID, dbcEventAuthority: DBC_EVENT_AUTHORITY,
-    } as any).instruction();
-  }
-  /** The partner's locked position on a graduated pool; `positionNftAccount` is owned by the claimer. */
-  claimPositionFees(a: { state: BurnState; pool: PublicKey; position: PublicKey; positionNftAccount: PublicKey; tokenAVault: PublicKey; tokenBVault: PublicKey; tokenAMint: PublicKey; tokenAProgram?: PublicKey }): Promise<TransactionInstruction> {
-    return this.program.methods.claimPositionFees().accountsPartial({
-      common: this.common(a.state), pool: a.pool, position: a.position, positionNftAccount: a.positionNftAccount, poolAuthority: DAMM_POOL_AUTHORITY,
-      tokenAVault: a.tokenAVault, tokenBVault: a.tokenBVault, tokenAMint: a.tokenAMint, tokenAProgram: a.tokenAProgram ?? TOKEN_PROGRAM_ID,
-      cpAmmProgram: DAMM_V2_PROGRAM_ID, cpAmmEventAuthority: DAMM_EVENT_AUTHORITY,
-    } as any).instruction();
-  }
-  sweepInbox(a: { state: BurnState }): Promise<TransactionInstruction> {
-    return this.program.methods.sweepInbox().accountsPartial({ common: this.common(a.state) } as any).instruction();
-  }
+  /** Program claims: fees owed to the claimer PDA (configs naming it); the whole inbox splits to reserve and treasury. */
+  claimCurveFees(a: { state: BurnState } & CurveArgs) { return this.program.methods.claimCurveFees().accountsPartial({ common: this.common(a.state), meteora: this.curve(a) } as any).instruction(); }
+  claimCreationFee(a: { state: BurnState; config: PublicKey; pool: PublicKey }) { return this.program.methods.claimCreationFee().accountsPartial({ common: this.common(a.state), meteora: this.creation(a) } as any).instruction(); }
+  claimSurplus(a: { state: BurnState; config: PublicKey; pool: PublicKey; quoteVault: PublicKey }) { return this.program.methods.claimSurplus().accountsPartial({ common: this.common(a.state), meteora: this.surplus(a) } as any).instruction(); }
+  claimPositionFees(a: { state: BurnState } & PositionArgs) { return this.program.methods.claimPositionFees().accountsPartial({ common: this.common(a.state), meteora: this.position(a) } as any).instruction(); }
+  sweepInbox(a: { state: BurnState }) { return this.program.methods.sweepInbox().accountsPartial({ common: this.common(a.state) } as any).instruction(); }
+
+  /** Owner claims (the older configs' fee claimer, or a position's holder, signs): exactly half of what the claim pays to the reserve, half to `ownerWsol`. */
+  ownerClaimCurveFees(a: { state: BurnState; owner: PublicKey; ownerWsol: PublicKey } & CurveArgs) { return this.program.methods.ownerClaimCurveFees().accountsPartial({ common: this.ownerCommon(a.state, a.owner, a.ownerWsol), meteora: this.curve(a) } as any).instruction(); }
+  ownerClaimCreationFee(a: { state: BurnState; owner: PublicKey; ownerWsol: PublicKey; config: PublicKey; pool: PublicKey }) { return this.program.methods.ownerClaimCreationFee().accountsPartial({ common: this.ownerCommon(a.state, a.owner, a.ownerWsol), meteora: this.creation(a) } as any).instruction(); }
+  ownerClaimSurplus(a: { state: BurnState; owner: PublicKey; ownerWsol: PublicKey; config: PublicKey; pool: PublicKey; quoteVault: PublicKey }) { return this.program.methods.ownerClaimSurplus().accountsPartial({ common: this.ownerCommon(a.state, a.owner, a.ownerWsol), meteora: this.surplus(a) } as any).instruction(); }
+  ownerClaimPositionFees(a: { state: BurnState; owner: PublicKey; ownerWsol: PublicKey } & PositionArgs) { return this.program.methods.ownerClaimPositionFees().accountsPartial({ common: this.ownerCommon(a.state, a.owner, a.ownerWsol), meteora: this.position(a) } as any).instruction(); }
 }
+
+type CurveArgs = { config: PublicKey; pool: PublicKey; baseVault: PublicKey; quoteVault: PublicKey; baseMint: PublicKey; baseTokenProgram?: PublicKey };
+type PositionArgs = { pool: PublicKey; position: PublicKey; positionNftAccount: PublicKey; tokenAVault: PublicKey; tokenBVault: PublicKey; tokenAMint: PublicKey; tokenAProgram?: PublicKey };

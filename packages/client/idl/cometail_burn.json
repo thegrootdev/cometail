@@ -162,18 +162,23 @@
           ]
         },
         {
-          "name": "config"
-        },
-        {
-          "name": "pool",
-          "writable": true
-        },
-        {
-          "name": "dbc_program",
-          "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
-        },
-        {
-          "name": "dbc_event_authority"
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "config"
+            },
+            {
+              "name": "pool",
+              "writable": true
+            },
+            {
+              "name": "dbc_program",
+              "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+            },
+            {
+              "name": "dbc_event_authority"
+            }
+          ]
         }
       ],
       "args": []
@@ -257,36 +262,41 @@
           ]
         },
         {
-          "name": "config"
-        },
-        {
-          "name": "pool",
-          "writable": true
-        },
-        {
-          "name": "dbc_pool_authority",
-          "address": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
-        },
-        {
-          "name": "base_vault",
-          "writable": true
-        },
-        {
-          "name": "quote_vault",
-          "writable": true
-        },
-        {
-          "name": "base_mint"
-        },
-        {
-          "name": "base_token_program"
-        },
-        {
-          "name": "dbc_program",
-          "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
-        },
-        {
-          "name": "dbc_event_authority"
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "config"
+            },
+            {
+              "name": "pool",
+              "writable": true
+            },
+            {
+              "name": "dbc_pool_authority",
+              "address": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+            },
+            {
+              "name": "base_vault",
+              "writable": true
+            },
+            {
+              "name": "quote_vault",
+              "writable": true
+            },
+            {
+              "name": "base_mint"
+            },
+            {
+              "name": "base_token_program"
+            },
+            {
+              "name": "dbc_program",
+              "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+            },
+            {
+              "name": "dbc_event_authority"
+            }
+          ]
         }
       ],
       "args": []
@@ -370,42 +380,44 @@
           ]
         },
         {
-          "name": "pool"
-        },
-        {
-          "name": "position",
-          "writable": true
-        },
-        {
-          "name": "position_nft_account",
-          "docs": [
-            "The position NFT's token account: Meteora's migration sets its owner to the fee claimer."
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "pool"
+            },
+            {
+              "name": "position",
+              "writable": true
+            },
+            {
+              "name": "position_nft_account"
+            },
+            {
+              "name": "pool_authority",
+              "address": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC"
+            },
+            {
+              "name": "token_a_vault",
+              "writable": true
+            },
+            {
+              "name": "token_b_vault",
+              "writable": true
+            },
+            {
+              "name": "token_a_mint"
+            },
+            {
+              "name": "token_a_program"
+            },
+            {
+              "name": "cp_amm_program",
+              "address": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
+            },
+            {
+              "name": "cp_amm_event_authority"
+            }
           ]
-        },
-        {
-          "name": "pool_authority",
-          "address": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC"
-        },
-        {
-          "name": "token_a_vault",
-          "writable": true
-        },
-        {
-          "name": "token_b_vault",
-          "writable": true
-        },
-        {
-          "name": "token_a_mint"
-        },
-        {
-          "name": "token_a_program"
-        },
-        {
-          "name": "cp_amm_program",
-          "address": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
-        },
-        {
-          "name": "cp_amm_event_authority"
         }
       ],
       "args": []
@@ -489,26 +501,442 @@
           ]
         },
         {
-          "name": "config"
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "config"
+            },
+            {
+              "name": "pool",
+              "writable": true
+            },
+            {
+              "name": "dbc_pool_authority",
+              "address": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+            },
+            {
+              "name": "quote_vault",
+              "writable": true
+            },
+            {
+              "name": "dbc_program",
+              "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+            },
+            {
+              "name": "dbc_event_authority"
+            }
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "owner_claim_creation_fee",
+      "discriminator": [
+        115,
+        93,
+        37,
+        146,
+        62,
+        113,
+        191,
+        48
+      ],
+      "accounts": [
+        {
+          "name": "common",
+          "accounts": [
+            {
+              "name": "burn_state",
+              "writable": true,
+              "pda": {
+                "seeds": [
+                  {
+                    "kind": "const",
+                    "value": [
+                      98,
+                      117,
+                      114,
+                      110
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "inbox",
+              "writable": true
+            },
+            {
+              "name": "placeholder",
+              "writable": true
+            },
+            {
+              "name": "reserve",
+              "writable": true
+            },
+            {
+              "name": "owner",
+              "docs": [
+                "The fee claimer of the config (DBC checks it) or the holder of the position NFT (checked here)."
+              ],
+              "signer": true
+            },
+            {
+              "name": "owner_wsol",
+              "docs": [
+                "The signer's own WSOL account: the only place the other half can go."
+              ],
+              "writable": true
+            },
+            {
+              "name": "wsol_mint",
+              "address": "So11111111111111111111111111111111111111112"
+            },
+            {
+              "name": "token_program",
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            }
+          ]
         },
         {
-          "name": "pool",
-          "writable": true
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "config"
+            },
+            {
+              "name": "pool",
+              "writable": true
+            },
+            {
+              "name": "dbc_program",
+              "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+            },
+            {
+              "name": "dbc_event_authority"
+            }
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "owner_claim_curve_fees",
+      "discriminator": [
+        212,
+        15,
+        182,
+        34,
+        45,
+        28,
+        10,
+        74
+      ],
+      "accounts": [
+        {
+          "name": "common",
+          "accounts": [
+            {
+              "name": "burn_state",
+              "writable": true,
+              "pda": {
+                "seeds": [
+                  {
+                    "kind": "const",
+                    "value": [
+                      98,
+                      117,
+                      114,
+                      110
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "inbox",
+              "writable": true
+            },
+            {
+              "name": "placeholder",
+              "writable": true
+            },
+            {
+              "name": "reserve",
+              "writable": true
+            },
+            {
+              "name": "owner",
+              "docs": [
+                "The fee claimer of the config (DBC checks it) or the holder of the position NFT (checked here)."
+              ],
+              "signer": true
+            },
+            {
+              "name": "owner_wsol",
+              "docs": [
+                "The signer's own WSOL account: the only place the other half can go."
+              ],
+              "writable": true
+            },
+            {
+              "name": "wsol_mint",
+              "address": "So11111111111111111111111111111111111111112"
+            },
+            {
+              "name": "token_program",
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            }
+          ]
         },
         {
-          "name": "dbc_pool_authority",
-          "address": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "config"
+            },
+            {
+              "name": "pool",
+              "writable": true
+            },
+            {
+              "name": "dbc_pool_authority",
+              "address": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+            },
+            {
+              "name": "base_vault",
+              "writable": true
+            },
+            {
+              "name": "quote_vault",
+              "writable": true
+            },
+            {
+              "name": "base_mint"
+            },
+            {
+              "name": "base_token_program"
+            },
+            {
+              "name": "dbc_program",
+              "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+            },
+            {
+              "name": "dbc_event_authority"
+            }
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "owner_claim_position_fees",
+      "discriminator": [
+        235,
+        161,
+        151,
+        254,
+        217,
+        247,
+        121,
+        248
+      ],
+      "accounts": [
+        {
+          "name": "common",
+          "accounts": [
+            {
+              "name": "burn_state",
+              "writable": true,
+              "pda": {
+                "seeds": [
+                  {
+                    "kind": "const",
+                    "value": [
+                      98,
+                      117,
+                      114,
+                      110
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "inbox",
+              "writable": true
+            },
+            {
+              "name": "placeholder",
+              "writable": true
+            },
+            {
+              "name": "reserve",
+              "writable": true
+            },
+            {
+              "name": "owner",
+              "docs": [
+                "The fee claimer of the config (DBC checks it) or the holder of the position NFT (checked here)."
+              ],
+              "signer": true
+            },
+            {
+              "name": "owner_wsol",
+              "docs": [
+                "The signer's own WSOL account: the only place the other half can go."
+              ],
+              "writable": true
+            },
+            {
+              "name": "wsol_mint",
+              "address": "So11111111111111111111111111111111111111112"
+            },
+            {
+              "name": "token_program",
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            }
+          ]
         },
         {
-          "name": "quote_vault",
-          "writable": true
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "pool"
+            },
+            {
+              "name": "position",
+              "writable": true
+            },
+            {
+              "name": "position_nft_account"
+            },
+            {
+              "name": "pool_authority",
+              "address": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC"
+            },
+            {
+              "name": "token_a_vault",
+              "writable": true
+            },
+            {
+              "name": "token_b_vault",
+              "writable": true
+            },
+            {
+              "name": "token_a_mint"
+            },
+            {
+              "name": "token_a_program"
+            },
+            {
+              "name": "cp_amm_program",
+              "address": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
+            },
+            {
+              "name": "cp_amm_event_authority"
+            }
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "owner_claim_surplus",
+      "discriminator": [
+        97,
+        45,
+        200,
+        204,
+        182,
+        42,
+        172,
+        163
+      ],
+      "accounts": [
+        {
+          "name": "common",
+          "accounts": [
+            {
+              "name": "burn_state",
+              "writable": true,
+              "pda": {
+                "seeds": [
+                  {
+                    "kind": "const",
+                    "value": [
+                      98,
+                      117,
+                      114,
+                      110
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "name": "inbox",
+              "writable": true
+            },
+            {
+              "name": "placeholder",
+              "writable": true
+            },
+            {
+              "name": "reserve",
+              "writable": true
+            },
+            {
+              "name": "owner",
+              "docs": [
+                "The fee claimer of the config (DBC checks it) or the holder of the position NFT (checked here)."
+              ],
+              "signer": true
+            },
+            {
+              "name": "owner_wsol",
+              "docs": [
+                "The signer's own WSOL account: the only place the other half can go."
+              ],
+              "writable": true
+            },
+            {
+              "name": "wsol_mint",
+              "address": "So11111111111111111111111111111111111111112"
+            },
+            {
+              "name": "token_program",
+              "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            }
+          ]
         },
         {
-          "name": "dbc_program",
-          "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
-        },
-        {
-          "name": "dbc_event_authority"
+          "name": "meteora",
+          "accounts": [
+            {
+              "name": "config"
+            },
+            {
+              "name": "pool",
+              "writable": true
+            },
+            {
+              "name": "dbc_pool_authority",
+              "address": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+            },
+            {
+              "name": "quote_vault",
+              "writable": true
+            },
+            {
+              "name": "dbc_program",
+              "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+            },
+            {
+              "name": "dbc_event_authority"
+            }
+          ]
         }
       ],
       "args": []
@@ -811,16 +1239,16 @@
       ]
     },
     {
-      "name": "FeesSplit",
+      "name": "ClaimSplit",
       "discriminator": [
+        171,
+        248,
+        28,
+        115,
+        247,
+        110,
         184,
-        151,
-        122,
-        249,
-        135,
-        3,
-        6,
-        129
+        171
       ]
     }
   ],
@@ -1100,6 +1528,51 @@
       }
     },
     {
+      "name": "ClaimSplit",
+      "docs": [
+        "One split. `claimed` is what this claim paid (measured on the inbox); `carried` what was already in the",
+        "inbox; program splits pay out both, owner splits only `claimed`. `claimant` is the default key for",
+        "program claims and the signer for owner claims; `other` received `to_other` (treasury, or the owner's WSOL)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "source",
+            "type": "u8"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "claimant",
+            "type": "pubkey"
+          },
+          {
+            "name": "claimed",
+            "type": "u64"
+          },
+          {
+            "name": "carried",
+            "type": "u64"
+          },
+          {
+            "name": "to_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "to_other",
+            "type": "u64"
+          },
+          {
+            "name": "other",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
       "name": "DynamicFeeStruct",
       "serialization": "bytemuck",
       "repr": {
@@ -1164,34 +1637,6 @@
           {
             "name": "volatility_reference",
             "type": "u128"
-          }
-        ]
-      }
-    },
-    {
-      "name": "FeesSplit",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "source",
-            "type": "u8"
-          },
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "to_reserve",
-            "type": "u64"
-          },
-          {
-            "name": "to_treasury",
-            "type": "u64"
           }
         ]
       }

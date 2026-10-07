@@ -113,8 +113,8 @@ describe("gate 20: burn program", () => {
     expect(balance(w.svm, w.client.a.reserve).sub(r0).toString()).eq(half.toString());
     expect(balance(w.svm, w.treasury).sub(t0).toString()).eq(owed.sub(half).toString());
     expect(balance(w.svm, w.client.a.inbox).toString()).eq("0");
-    const ev = events(res.logs).find((e) => e.name === "FeesSplit")!;
-    expect(ev.data.amount.toString()).eq(owed.toString()); expect(ev.data.source).eq(0);
+    const ev = events(res.logs).find((e) => e.name === "ClaimSplit")!;
+    expect(ev.data.claimed.toString()).eq(owed.toString()); expect(ev.data.source).eq(0);
     // nothing left to claim: a second claim moves nothing
     w.svm.expireBlockhash();
     send(w.svm, [await w.client.claimCurveFees({ state: state(w), config: fresh, pool: newL.pool, baseVault: pn.baseVault, quoteVault: pn.quoteVault, baseMint: newL.mint })], [w.anyone]);
@@ -123,12 +123,12 @@ describe("gate 20: burn program", () => {
     // the partner's share of the creation fee
     const r1 = balance(w.svm, w.client.a.reserve), t1 = balance(w.svm, w.treasury);
     const cres = send(w.svm, [await w.client.claimCreationFee({ state: state(w), config: fresh, pool: newL.pool })], [w.anyone]);
-    const cev = events(cres.logs).find((e) => e.name === "FeesSplit")!;
+    const cev = events(cres.logs).find((e) => e.name === "ClaimSplit")!;
     expect(cev.data.source).eq(1);
-    expect(cev.data.amount.gtn(0)).eq(true);
+    expect(cev.data.claimed.gtn(0)).eq(true);
     expect(balance(w.svm, w.client.a.reserve).sub(r1).toString()).eq(cev.data.to_reserve.toString());
-    expect(balance(w.svm, w.treasury).sub(t1).toString()).eq(cev.data.to_treasury.toString());
-    expect(cev.data.to_reserve.toString()).eq(cev.data.amount.divn(2).toString());
+    expect(balance(w.svm, w.treasury).sub(t1).toString()).eq(cev.data.to_other.toString());
+    expect(cev.data.to_reserve.toString()).eq(cev.data.claimed.divn(2).toString());
 
     // fill and migrate on the new config (the claimer is a PDA and never signs a migration)
     const L = await launch(w, fresh, w.creator, true, 2);
@@ -144,8 +144,8 @@ describe("gate 20: burn program", () => {
     const before = balance(w.svm, w.client.a.reserve);
     const sres = send(w.svm, [await w.client.claimSurplus({ state: state(w), config: fresh, pool: L.pool, quoteVault: fp.quoteVault })], [w.anyone]);
     expect(Number(dbc.getPool(w.svm, L.pool).isPartnerWithdrawSurplus)).eq(1);
-    const sev = events(sres.logs).find((e) => e.name === "FeesSplit");
-    const surplusPaid = sev ? sev.data.amount : new BN(0);
+    const sev = events(sres.logs).find((e) => e.name === "ClaimSplit");
+    const surplusPaid = sev ? sev.data.claimed : new BN(0);
     if (sev) { expect(sev.data.source).eq(2); expect(balance(w.svm, w.client.a.reserve).sub(before).toString()).eq(sev.data.to_reserve.toString()); }
     else expect(balance(w.svm, w.client.a.reserve).sub(before).toString()).eq("0");
     // eslint-disable-next-line no-console
@@ -156,12 +156,12 @@ describe("gate 20: burn program", () => {
     const coin = ensureAta(w.svm, w.buyer, L.mint, w.buyer.publicKey);
     send(w.svm, [await damm.swapIx(w.svm, { pool: L.dammPool!, payer: w.buyer.publicKey, inputAccount: q, outputAccount: coin, amountIn: new BN(2_000_000_000) })], [w.buyer]);
     const pres = send(w.svm, [await w.client.claimPositionFees({ state: state(w), pool: L.dammPool!, position: mine!.position, positionNftAccount: mine!.nftAccount, tokenAVault: dp.tokenAVault, tokenBVault: dp.tokenBVault, tokenAMint: L.mint })], [w.anyone]);
-    const pev = events(pres.logs).find((e) => e.name === "FeesSplit")!;
-    expect(pev.data.source).eq(3); expect(pev.data.amount.gtn(0)).eq(true);
-    expect(pev.data.to_reserve.add(pev.data.to_treasury).toString()).eq(pev.data.amount.toString());
+    const pev = events(pres.logs).find((e) => e.name === "ClaimSplit")!;
+    expect(pev.data.source).eq(3); expect(pev.data.claimed.gtn(0)).eq(true);
+    expect(pev.data.to_reserve.add(pev.data.to_other).toString()).eq(pev.data.claimed.toString());
     expect(balance(w.svm, w.client.a.placeholder).toString()).eq("0");
     const s = state(w);
-    expect(s.splitTotal.toString()).eq(owed.add(cev.data.amount).add(surplusPaid).add(pev.data.amount).toString());
+    expect(s.splitTotal.toString()).eq(owed.add(cev.data.claimed).add(surplusPaid).add(pev.data.claimed).toString());
     expect(new BN(s.splitToReserve.toString()).add(new BN(s.splitToTreasury.toString())).toString()).eq(s.splitTotal.toString());
     // a position the claimer does not hold is refused before any CPI
     const theirs = damm.findPositionOwnedBy(w.svm, L.positions!, w.creator.publicKey)!;
@@ -243,7 +243,7 @@ describe("gate 20: burn program", () => {
     await doSetup(w);
     fundReserve(w, new BN(1_000_000_000));
     const names = (BURN_IDL as any).instructions.map((i: any) => i.name).sort();
-    expect(names).deep.eq(["buyback", "claim_creation_fee", "claim_curve_fees", "claim_position_fees", "claim_surplus", "setup", "sweep_inbox"]);
+    expect(names).deep.eq(["buyback", "claim_creation_fee", "claim_curve_fees", "claim_position_fees", "claim_surplus", "owner_claim_creation_fee", "owner_claim_curve_fees", "owner_claim_position_fees", "owner_claim_surplus", "setup", "sweep_inbox"]);
     for (const ix of (BURN_IDL as any).instructions) expect(ix.args.length, ix.name).eq(0);
     const sink = ensureAta(w.svm, w.attacker, NATIVE_MINT, w.attacker.publicKey);
     expectFail(w.svm, [createTransferInstruction(w.client.a.reserve, sink, w.owner.publicKey, 1n)], [w.owner], "owner does not match");
@@ -258,5 +258,94 @@ describe("gate 20: burn program", () => {
     const t = inboxIx.keys.findIndex((x) => x.pubkey.equals(w.treasury));
     const redirected = { ...inboxIx, keys: inboxIx.keys.map((x, i) => (i === t ? { ...x, pubkey: sink } : x)) };
     expectFail(w.svm, [redirected as any], [w.anyone], "AccountMismatch");
+  });
+
+  it("provenance: a claim reports only what it paid; funds already in the inbox are reported as carried (review 133)", async () => {
+    const w = await world();
+    await doSetup(w);
+    const fresh = await dbc.createConfig(w.svm, { payer: w.owner, feeClaimer: w.client.a.claimer, leftoverReceiver: w.owner.publicKey, quoteMint: NATIVE_MINT, params: dbc.configParams("plain") });
+    const L = await launch(w, fresh, w.creator, false);
+    const owed = new BN(dbc.getPool(w.svm, L.pool).partnerQuoteFee.toString());
+    // a WSOL gift and a raw-lamport gift to the inbox before the claim
+    const gift = wrapSol(w.svm, w.attacker, new BN(12_000_000));
+    send(w.svm, [createTransferInstruction(gift, w.client.a.inbox, w.attacker.publicKey, 10_000_000n)], [w.attacker]);
+    const { SystemProgram } = await import("@solana/web3.js");
+    send(w.svm, [SystemProgram.transfer({ fromPubkey: w.attacker.publicKey, toPubkey: w.client.a.inbox, lamports: 3_000_000 })], [w.attacker]);
+    const r0 = balance(w.svm, w.client.a.reserve);
+    const p = dbc.getPool(w.svm, L.pool);
+    const res = send(w.svm, [await w.client.claimCurveFees({ state: state(w), config: fresh, pool: L.pool, baseVault: p.baseVault, quoteVault: p.quoteVault, baseMint: L.mint })], [w.anyone]);
+    const ev = events(res.logs).find((e) => e.name === "ClaimSplit")!;
+    expect(ev.data.claimed.toString()).eq(owed.toString());
+    expect(ev.data.carried.toString()).eq("13000000");
+    const total = owed.addn(13_000_000);
+    expect(balance(w.svm, w.client.a.reserve).sub(r0).toString()).eq(total.divn(2).toString());
+    expect(ev.data.to_reserve.add(ev.data.to_other).toString()).eq(total.toString());
+    // a sweep pays only carried funds
+    send(w.svm, [createTransferInstruction(gift, w.client.a.inbox, w.attacker.publicKey, 1_000_000n)], [w.attacker]);
+    const sw = events(send(w.svm, [await w.client.sweepInbox({ state: state(w) })], [w.anyone]).logs).find((e) => e.name === "ClaimSplit")!;
+    expect([sw.data.source, sw.data.claimed.toString(), sw.data.carried.toString()]).deep.eq([4, "0", "1000000"]);
+  });
+
+  it("owner claims on an older config and position: exactly half of what the claim paid, the rest to the signer's own account; carried funds stay", async () => {
+    const w = await world();
+    await doSetup(w);
+    // something already in the inbox: an owner claim must not touch it
+    const gift = wrapSol(w.svm, w.attacker, new BN(2_000_000));
+    send(w.svm, [createTransferInstruction(gift, w.client.a.inbox, w.attacker.publicKey, 2_000_000n)], [w.attacker]);
+    // the older config's open launch: curve fees and the creation fee, claimed by its fee claimer (the owner)
+    const L = await launch(w, w.legacy, w.creator, false);
+    const p = dbc.getPool(w.svm, L.pool);
+    const owed = new BN(p.partnerQuoteFee.toString());
+    const r0 = balance(w.svm, w.client.a.reserve), o0 = balance(w.svm, w.treasury);
+    const res = send(w.svm, [await w.client.ownerClaimCurveFees({ state: state(w), owner: w.owner.publicKey, ownerWsol: w.treasury, config: w.legacy, pool: L.pool, baseVault: p.baseVault, quoteVault: p.quoteVault, baseMint: L.mint })], [w.owner]);
+    const ev = events(res.logs).find((e) => e.name === "ClaimSplit")!;
+    expect(ev.data.claimed.toString()).eq(owed.toString());
+    expect(ev.data.claimant.equals(w.owner.publicKey)).eq(true);
+    expect(balance(w.svm, w.client.a.reserve).sub(r0).toString()).eq(owed.divn(2).toString());
+    expect(balance(w.svm, w.treasury).sub(o0).toString()).eq(owed.sub(owed.divn(2)).toString());
+    expect(balance(w.svm, w.client.a.inbox).toString()).eq("2000000");
+    const cres = send(w.svm, [await w.client.ownerClaimCreationFee({ state: state(w), owner: w.owner.publicKey, ownerWsol: w.treasury, config: w.legacy, pool: L.pool })], [w.owner]);
+    const cev = events(cres.logs).find((e) => e.name === "ClaimSplit")!;
+    expect(cev.data.source).eq(1); expect(cev.data.claimed.gtn(0)).eq(true);
+    expect(cev.data.to_reserve.toString()).eq(cev.data.claimed.divn(2).toString());
+    expect(balance(w.svm, w.client.a.inbox).toString()).eq("2000000");
+    // the graduated $COMETAIL pool: the owner's partner position, uncapped claim; more trading after a "scan"
+    const mine = damm.findPositionOwnedBy(w.svm, w.cometail.positions, w.owner.publicKey)!;
+    const dp = damm.getPool(w.svm, w.cometail.dammPool);
+    const sol = wrapSol(w.svm, w.buyer, new BN(4_000_000_000));
+    const coin = ensureAta(w.svm, w.buyer, w.cometail.mint, w.buyer.publicKey);
+    send(w.svm, [await damm.swapIx(w.svm, { pool: w.cometail.dammPool, payer: w.buyer.publicKey, inputAccount: sol, outputAccount: coin, amountIn: new BN(1_000_000_000) })], [w.buyer]);
+    const { getUnClaimLpFee } = await import("@meteora-ag/cp-amm-sdk");
+    const scanned = new BN(getUnClaimLpFee(damm.getPool(w.svm, w.cometail.dammPool), damm.getPosition(w.svm, mine.position)).feeTokenB.toString());
+    w.svm.expireBlockhash();
+    send(w.svm, [await damm.swapIx(w.svm, { pool: w.cometail.dammPool, payer: w.buyer.publicKey, inputAccount: sol, outputAccount: coin, amountIn: new BN(1_000_000_000) })], [w.buyer]);
+    const r1 = balance(w.svm, w.client.a.reserve), o1 = balance(w.svm, w.treasury);
+    const pres = send(w.svm, [await w.client.ownerClaimPositionFees({ state: state(w), owner: w.owner.publicKey, ownerWsol: w.treasury, pool: w.cometail.dammPool, position: mine.position, positionNftAccount: mine.nftAccount, tokenAVault: dp.tokenAVault, tokenBVault: dp.tokenBVault, tokenAMint: w.cometail.mint })], [w.owner]);
+    const pev = events(pres.logs).find((e) => e.name === "ClaimSplit")!;
+    expect(pev.data.claimed.gt(scanned), "the claim paid more than the earlier scan").eq(true);
+    expect(balance(w.svm, w.client.a.reserve).sub(r1).toString()).eq(pev.data.claimed.divn(2).toString());
+    expect(balance(w.svm, w.treasury).sub(o1).toString()).eq(pev.data.claimed.sub(pev.data.claimed.divn(2)).toString());
+    expect(balance(w.svm, w.client.a.inbox).toString()).eq("2000000");
+  });
+
+  it("owner claims: the other half only to the signer's own WSOL account; only the real fee claimer or holder can sign", async () => {
+    const w = await world();
+    await doSetup(w);
+    const L = await launch(w, w.legacy, w.creator, false);
+    const p = dbc.getPool(w.svm, L.pool);
+    const args = { config: w.legacy, pool: L.pool, baseVault: p.baseVault, quoteVault: p.quoteVault, baseMint: L.mint };
+    const strangers = ensureAta(w.svm, w.attacker, NATIVE_MINT, w.attacker.publicKey);
+    expectFail(w.svm, [await w.client.ownerClaimCurveFees({ state: state(w), owner: w.owner.publicKey, ownerWsol: strangers, ...args })], [w.owner], "AccountMismatch");
+    // the keeper (or anyone) is not the config's fee claimer: Meteora refuses
+    const keeperWsol = ensureAta(w.svm, w.keeper, NATIVE_MINT, w.keeper.publicKey);
+    w.svm.expireBlockhash();
+    let refused = false;
+    try { send(w.svm, [await w.client.ownerClaimCurveFees({ state: state(w), owner: w.keeper.publicKey, ownerWsol: keeperWsol, ...args })], [w.keeper]); } catch { refused = true; }
+    expect(refused).eq(true);
+    expect(dbc.getPool(w.svm, L.pool).partnerQuoteFee.toString()).eq(p.partnerQuoteFee.toString());
+    // a position the signer does not hold
+    const mine = damm.findPositionOwnedBy(w.svm, w.cometail.positions, w.owner.publicKey)!;
+    const dp = damm.getPool(w.svm, w.cometail.dammPool);
+    expectFail(w.svm, [await w.client.ownerClaimPositionFees({ state: state(w), owner: w.keeper.publicKey, ownerWsol: keeperWsol, pool: w.cometail.dammPool, position: mine.position, positionNftAccount: mine.nftAccount, tokenAVault: dp.tokenAVault, tokenBVault: dp.tokenBVault, tokenAMint: w.cometail.mint })], [w.keeper], "NotOurConfig");
   });
 });

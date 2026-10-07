@@ -1,4 +1,4 @@
-import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade, FeedType, FeeCoin, FeeEnvelope, Launchpad, OurConfig, Tail, BurnView } from "./types.js";
+import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade, FeedType, FeeCoin, FeeEnvelope, Launchpad, OurConfig, Tail, BurnView, BurnRow, SplitRow } from "./types.js";
 import { array, compareCursors, decodeEnvelope, decodeFrame, isFeedEvent, evidence, number, object, parseCursor, ProtocolError, text, tradeQuote } from "./protocol.js";
 import { FeedSubscription } from "./feed.js";
 import type { FeedOptions } from "./feed.js";
@@ -160,6 +160,12 @@ export class CometailClient {
     const r = object(await this.get("/api/burn", options));
     if (!["live", "not-set-up", "unavailable"].includes(String(r.status))) throw new Error("unexpected burn status");
     return r as unknown as BurnView;
+  }
+
+  /** Every burn or every split, newest first, 1 to 100 per page; pass the previous page's `nextCursor`. */
+  async burnHistory(kind: "burns" | "splits", q: { before?: string | null; limit?: number } = {}, options?: RequestOptions): Promise<{ kind: "burns" | "splits"; total: number; items: (BurnRow | SplitRow)[]; nextCursor: string | null; coverage: BurnView["coverage"] }> {
+    const r = object(await this.get(`/api/burn/${kind}` + query({ before: q.before ?? undefined, limit: q.limit }, 100), options)); array(r.items); number(r.total);
+    return r as unknown as { kind: "burns" | "splits"; total: number; items: (BurnRow | SplitRow)[]; nextCursor: string | null; coverage: BurnView["coverage"] };
   }
 
   async launchpads(options?: RequestOptions): Promise<FeeEnvelope & { rankedBy: "last24h" | "lifetime"; historySinceMs: number; basis: Record<string, string>; launchpads: Launchpad[]; ourConfigs: OurConfig[] }> {

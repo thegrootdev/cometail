@@ -18,27 +18,18 @@ import { BurnClient, BURN_PROGRAM_ID } from "@cometail/client";
 import { dbcProgram } from "../harness/programs";
 import { configParams, PresetName } from "../harness/dbc";
 import { DBC_PROGRAM, GENESIS, compareConfig } from "./readback";
+import { sameExceptClaimer, todayMatchesPlan } from "./burn-plan";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const STATE = path.join(ROOT, "configs", "mainnet.json");
 const DRY = process.env.DRY_RUN === "1";
 const SET: PresetName[] = ["plain", "long", "flat", "exp"];
-const CLAIMER_AT = 40; // PoolConfig.fee_claimer after the discriminator and quote_mint
 const need = (k: string) => { const v = process.env[k]; if (!v) throw new Error(`${k} is required`); return v; };
 const dbcIdl = JSON.parse(fs.readFileSync(path.join(ROOT, "idls", "dynamic_bonding_curve.json"), "utf8")) as Idl;
 const coder = new BorshAccountsCoder(dbcIdl);
 const POOL_CONFIG = (dbcIdl.accounts ?? []).find((a) => /^poolconfig$/i.test(a.name))?.name ?? "PoolConfig";
 const results: { step: string; status: string; detail: string }[] = [];
 const note = (step: string, status: string, detail: string) => { results.push({ step, status, detail }); console.log(`${status.padEnd(7)} ${step}: ${detail}`); };
-
-/** Today's preset and the new one: every byte equal except the fee claimer, which is the burn claimer. */
-function sameExceptClaimer(today: Buffer, fresh: Buffer, claimer: PublicKey): string[] {
-  if (today.length !== fresh.length) return [`sizes differ (${today.length} vs ${fresh.length})`];
-  const diff = [...today.keys()].filter((i) => today[i] !== fresh[i] && (i < CLAIMER_AT || i >= CLAIMER_AT + 32));
-  const out = diff.length ? [`bytes differ outside the fee claimer at offsets ${diff.slice(0, 8).join(",")}${diff.length > 8 ? "…" : ""}`] : [];
-  if (!new PublicKey(fresh.subarray(CLAIMER_AT, CLAIMER_AT + 32)).equals(claimer)) out.push("fee claimer is not the burn claimer");
-  return out;
-}
 
 async function main() {
   const connection = new Connection(need("RPC"), "confirmed");
@@ -59,8 +50,12 @@ async function main() {
     const info = k ? await connection.getAccountInfo(new PublicKey(k)) : null;
     if (!info || !info.owner.equals(DBC_PROGRAM)) { note(`today's ${n}`, "FAIL", `${k ?? "not recorded"} is not a DBC config on chain`); continue; }
     today[n] = info.data;
-    leftover[n] = coder.decode(POOL_CONFIG, info.data).leftover_receiver ?? coder.decode(POOL_CONFIG, info.data).leftoverReceiver;
-    note(`today's ${n}`, "PASS", `${k}; leftover receiver ${leftover[n].toBase58()} (kept)`);
+    const decoded = coder.decode(POOL_CONFIG, info.data);
+    leftover[n] = decoded.leftover_receiver ?? decoded.leftoverReceiver;
+    const todayClaimer = (decoded.fee_claimer ?? decoded.feeClaimer).toBase58();
+    // today's preset must equal the plan in every immutable parameter, before anything is simulated or sent
+    const planProblems = todayMatchesPlan(decoded, n, todayClaimer, leftover[n].toBase58());
+    note(`today's ${n}`, planProblems.length ? "FAIL" : "PASS", planProblems.length ? `${k} differs from the planned parameters: ${planProblems.join("; ")}` : `${k} matches the planned parameters; leftover receiver ${leftover[n].toBase58()} (kept)`);
   }
   const pending = SET.filter((n) => !state.burnPresets[n]).length;
   const rent = await connection.getMinimumBalanceForRentExemption(1048);
@@ -88,8 +83,11 @@ async function main() {
     const tx = new Transaction().add(ix as TransactionInstruction);
     tx.feePayer = payer; tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
     if (DRY) {
-      const res = await connection.simulateTransaction(tx, undefined, false);
-      note(`burn ${n}`, res.value.err ? "FAIL" : "PASS", res.value.err ? JSON.stringify(res.value.err) : `simulated, ${res.value.unitsConsumed ?? "?"} CU; fee claimer ${claimer.toBase58()}, leftover ${leftover[n].toBase58()}`);
+      // the simulated account itself must be today's bytes with only the fee claimer changed
+      const res = await connection.simulateTransaction(tx, undefined, [config.publicKey]);
+      const acct = res.value.accounts?.[0];
+      const problems = res.value.err ? [JSON.stringify(res.value.err)] : !acct ? ["the simulation returned no account"] : sameExceptClaimer(today[n], Buffer.from(acct.data[0], "base64"), claimer);
+      note(`burn ${n}`, problems.length ? "FAIL" : "PASS", problems.length ? problems.join("; ") : `simulated, ${res.value.unitsConsumed ?? "?"} CU; the simulated account equals today's except the fee claimer (${claimer.toBase58()})`);
       continue;
     }
     const sig = await sendAndConfirmTransaction(connection, tx, [payerKeypair!, config], { commitment: "confirmed" });

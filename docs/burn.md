@@ -9,7 +9,8 @@ program is not changed by any of this.
 | Revenue source | How half of it reaches the burn | Enforced by |
 |---|---|---|
 | Protocol fees of the launch configs created for this program (Standard, Long, Flat, Exponential: the same parameters as today's presets, with the program's claimer as fee claimer) | The program claims them and splits 50/50 to the burn reserve and the protocol treasury in the same instruction | The program |
-| Today's launch configs (existing coins keep them, including $COMETAIL and TAIL), the fee-sale stream configs, and the two non-SOL presets | The owner claims them on `/admin/fees`; for a claim paid in SOL the same transaction moves half to the burn reserve | The owner's commitment, checked on the site |
+| Today's launch configs (existing coins keep them, including $COMETAIL and TAIL) and the fee-sale stream configs | The owner claims them on `/admin/fees` through the program's owner claims: the program measures what each claim pays and sends exactly half to the burn reserve and half back to the signer's own WSOL account, in the same instruction | The program, for every claim made through it; claims made elsewhere are the owner's commitment |
+| The two non-SOL presets (USDC, stock) | Claimed as before | Outside the 50% scope: the reserve spends SOL only |
 | The tails' 1/5 protocol share (paid by the vault program into the treasury) | The owner sends half from the treasury on `/admin/fees` (a plain transfer, never a close or an unwrap) | The owner's commitment, checked on the site |
 
 Meteora requires the config's fee claimer to sign every partner claim and a config's fee claimer can never
@@ -39,9 +40,14 @@ None takes an argument. Every account a transfer can reach is pinned in the stat
 | `claim_surplus` | anyone | The partner's share of a finished curve's surplus; split. On these presets the curve's last buy stops at the threshold, so this is usually zero. |
 | `claim_position_fees` | anyone | Fees of a graduated pool's position whose NFT the claimer holds (compounding pools pay in SOL only); split. |
 | `sweep_inbox` | anyone | Splits anything sent to the inbox directly. |
+| `owner_claim_curve_fees`, `owner_claim_creation_fee`, `owner_claim_surplus`, `owner_claim_position_fees` | the config's fee claimer (Meteora checks it) or the position NFT's holder (checked here) | The same Meteora claims, signed by their owner, into the inbox; only this claim's own measured amount is split: half to the reserve, half to the signer's own WSOL account (the only account the other half can reach). Funds already in the inbox are not touched. |
 | `buyback` | anyone | Buys and burns, within the bounds below. The keeper runs it; the caller only pays the network fee. |
 
-The split is `amount * 5000 / 10000` (rounded down) to the reserve and the rest to the treasury.
+Every claim syncs and reads the inbox before and after the Meteora call: `claimed` is what the claim paid,
+`carried` what was already there (sent to the inbox directly). A program claim splits the whole inbox and
+reports both; an owner claim splits only `claimed`. The split is `amount * 5000 / 10000` (rounded down) to the
+reserve and the rest to the treasury (program claims) or the signer (owner claims). Event: `ClaimSplit
+{ source, pool, claimant (default key for program claims), claimed, carried, to_reserve, to_other, other }`.
 
 ## Buyback bounds
 
@@ -68,18 +74,26 @@ form of MEV, and it does not mean the buyback pays a fair external price: it pay
 
 ## Accounting (`/api/burn`)
 
+One RPC read returns the program state, the reserve, the $COMETAIL mint and the pool at one slot
+(`observedSlot`), so the conservation figure never mixes snapshots.
+
 | Quantity | Meaning | Source |
 |---|---|---|
-| `totals.claimedThroughProgramLamports` | fees the program claimed and split | the program's counter (exact) |
-| `totals.toReserveLamports`, `totals.toTreasuryLamports` | the two halves | the program's counters (exact) |
-| `sentDirectLamports` | everything that reached the reserve outside the program's splits (the owner's commitment transfers, or anyone's) | reserve + spent − to-reserve (exact: the reserve's only exit is a buyback) |
-| `reserve.lamports` | waiting to buy | the chain (exact) |
+| `totals.splitLamports` | everything the program split (claims plus carried inbox funds) | the program's counter (exact, at `observedSlot`) |
+| `totals.toReserveLamports`, `totals.toOtherLamports` | the two halves (other = treasury for program claims, the signer for owner claims) | the program's counters (exact) |
+| `provenance.claimedByProgramLamports`, `claimedByOwnersLamports`, `carriedLamports` | what claims paid, by program configs and by owners, and what was carried | the indexed `ClaimSplit` events; null until the history is complete |
+| `sentDirectLamports` | everything that reached the reserve outside the program's splits (direct transfers from the owner or anyone) | reserve + spent − to-reserve, from the one read (exact: the reserve's only exit is a buyback) |
+| `reserve.lamports`, `cometail.supplyRaw` | waiting to buy; supply now | the one read (exact) |
 | `totals.spentLamports`, `totals.burnedRaw`, `totals.buybacks` | spent, burned, count | the program's counters (exact) |
-| `burns`, `splits` | every event with its signature, slot and time | the indexer; `coverage` says whether its history is complete |
-| `commitment.tailsShareLamports` | the tails' 1/5 share received by the treasury | the vaults' own counters (exact) |
-| `commitment.olderConfigClaimsLamports` | claims on the older configs | null: not tracked here (unknown, not zero) |
+| `burns` + `burnsTotal`, `splits` + `splitsTotal` | the newest 50 of each with signatures; `/api/burn/burns` and `/api/burn/splits` page through all of them by cursor | the indexed events, listed separately per kind |
+| `commitment.tailsShareLamports` | the tails' 1/5 share received by the treasury, as of `tailsShareAsOfMs` | the vaults' own counters, as last indexed |
+| `commitment.olderConfigClaimsLamports` | older-config claims made outside the program | null: not known here |
 | `claimableNow` | partner trading fees waiting in pools now | Fee Index snapshot; graduated-position fees not included |
-| `cometail.supplyRaw` | $COMETAIL supply now | the chain (exact) |
+
+The burn index keeps its own cursor (head, the open cycle's top and tail, its target): a cycle walks down from
+the newest transaction to the last completed head and only then moves the head, so a restart, a cap or downtime
+of any length never skips a transaction; an unreadable transaction stops the pass and is retried. Burn events
+live in their own table.
 
 ## Limits and risks
 
@@ -97,8 +111,14 @@ form of MEV, and it does not mean the buyback pays a fair external price: it pay
 
 1. Deploy the program from the verifiable build with a program-data account the size of the binary; hand the
    upgrade authority to the owner's wallet.
-2. The owner signs `setup` on `/admin/burn` (the page checks the pool first) and the verification record on
-   `/admin/verify`; the public rebuild must match.
+2. The owner signs `setup` on `/admin/burn` (the page checks the pool first).
+   Verification of the burn program is a separate, pending step: `/admin/verify` is the vault's page and stays as
+   it is. After the deploy: re-add the build user to the docker group, rebuild in the verifiable image at the
+   deployed commit (`--library-name cometail_burn --base-image solanafoundation/solana-verifiable-build:3.1.10
+   --cargo-build-sbf-args="--tools-version v1.57"`), compare its hash with the deployed program, then build and
+   review a burn-specific verification page (the record's arguments name this program, its library, the commit and
+   the deploy slot) for the owner to sign, and submit the public rebuild job. Until then the program is reported as
+   not verified.
 3. Create the four new configs (`tests/mainnet/burn-configs.ts`, dry run first): each is byte-identical to today's
    preset except the fee claimer, checked before and after.
 4. Worker: add the new configs to `COMETAIL_BURN_CONFIGS`, `COMETAIL_MIGRATE_CONFIGS` and `COMETAIL_SKY_CONFIGS`

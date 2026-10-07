@@ -27,10 +27,10 @@ import { keeperPass } from "../../worker/src/keeper";
 import { LookupTables } from "../../worker/src/lut";
 import { openStore } from "../../worker/src/store";
 import { burnParser, readBurnState } from "../../worker/src/burn";
-import { burnIndexPass } from "../../worker/src/burnindex";
+import { burnIndexPass, chainDeps } from "../../worker/src/burnindex";
 import { burnViewer } from "../../worker/src/burnview";
 import type { Config } from "../../worker/src/config";
-import { NATIVE_MINT, ata, ataIx, createConfigIx, curveBuyIx, dammPool, dammSwapIx, dbcConfig, dbcPool, deriveDammV2PoolAddress, log, migrateToDammV2, send, smallConfigParams, tokenBalance, wrapSolIxs, DAMM_V2_MIGRATION_CONFIG } from "./rpc";
+import { NATIVE_MINT, poolAddrs, ata, ataIx, createConfigIx, curveBuyIx, dammPool, dammSwapIx, dbcConfig, dbcPool, deriveDammV2PoolAddress, log, migrateToDammV2, send, smallConfigParams, tokenBalance, wrapSolIxs, DAMM_V2_MIGRATION_CONFIG } from "./rpc";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const KEYS = path.join(ROOT, "keys", "devnet");
@@ -88,6 +88,10 @@ describe("devnet end-to-end: burn program", () => {
     }
     const st = (await readBurnState(chain, client))!;
     expect(st.pool.equals(cometPool)).eq(true);
+    // this run's window: earlier runs on the same program left history (some from the first candidate, whose
+    // event format the indexer no longer reads), so the history checks below compare this run's changes only
+    const startSlot = await connection.getSlot("confirmed");
+    const s0 = st;
     step("burn state", { burnState: client.a.burnState.toBase58(), claimer: client.a.claimer.toBase58(), reserve: st.reserve.toBase58(), treasury: st.treasury.toBase58(), feeNumerator: st.feeNumerator.toString() });
 
     // 3. the new launch config and a fresh copy of today's preset with the same parameters
@@ -142,6 +146,30 @@ describe("devnet end-to-end: burn program", () => {
     expect(d(a5, b5, "splitTotal") > 0n).eq(true);
     step("position fees through the program", { paid: d(a5, b5, "splitTotal").toString(), splitTotal: b5.s.splitTotal.toString() });
 
+    // 5b. owner claims through the program: the devnet authority is the fee claimer of the stand-in's older config
+    //     and holds its partner position; exactly half of what each claim pays goes to the reserve, half back to it
+    const ownerWsol = treasury;
+    const legacyPool = await dbcPool(connection, L1pool(coin.publicKey, legacyCfg.publicKey));
+    const before5b = await snap();
+    const owedLegacy = BigInt(legacyPool.partnerQuoteFee.toString());
+    const inbox0 = BigInt((await tokenBalance(connection, st.inbox)).toString());
+    const ownerIxs = [];
+    if (owedLegacy > 0n) ownerIxs.push(await client.ownerClaimCurveFees({ state: st, owner: authority.publicKey, ownerWsol, config: legacyCfg.publicKey, pool: L1pool(coin.publicKey, legacyCfg.publicKey), baseVault: legacyPool.baseVault, quoteVault: legacyPool.quoteVault, baseMint: coin.publicKey }));
+    const partnerPos = await chain.positionsOwnedBy(cometPool, authority.publicKey);
+    const cpNow: any = await dammPool(connection, cometPool);
+    if (partnerPos.length) ownerIxs.push(await client.ownerClaimPositionFees({ state: st, owner: authority.publicKey, ownerWsol, pool: cometPool, position: partnerPos[0].position, positionNftAccount: partnerPos[0].nftAccount, tokenAVault: cpNow.tokenAVault, tokenBVault: cpNow.tokenBVault, tokenAMint: coin.publicKey }));
+    expect(ownerIxs.length).gte(1);
+    const ownerSig = await send(connection, ownerIxs, [authority], { cu: 600_000, label: "owner claims through the program" });
+    const ownerTx = await connection.getTransaction(ownerSig, { maxSupportedTransactionVersion: 0, commitment: "confirmed" });
+    const evs = [...burnParser.parseLogs(ownerTx?.meta?.logMessages ?? [])].filter((e) => e.name === "ClaimSplit");
+    const after5b = await snap();
+    const claimedOwner = evs.reduce((t, e: any) => t + BigInt(e.data.claimed.toString()), 0n);
+    expect(after5b.reserve - before5b.reserve).eq(evs.reduce((t, e: any) => t + BigInt(e.data.to_reserve.toString()), 0n));
+    for (const e of evs as any[]) { expect(BigInt(e.data.to_reserve.toString())).eq(BigInt(e.data.claimed.toString()) / 2n); expect(e.data.claimant.equals(authority.publicKey)).eq(true); }
+    expect(BigInt((await tokenBalance(connection, st.inbox)).toString())).eq(inbox0); // carried funds untouched
+    if (owedLegacy > 0n) expect(BigInt(evs[0].data.claimed.toString())).eq(owedLegacy);
+    step("owner claims through the program", { signature: ownerSig, claims: evs.length, claimed: claimedOwner.toString(), toReserve: (after5b.reserve - before5b.reserve).toString() });
+
     // 6. a direct deposit from the treasury (the owner's commitment path): a plain transfer, never a close
     const direct = 2_000_000n;
     const a6 = await snap();
@@ -175,15 +203,19 @@ describe("devnet end-to-end: burn program", () => {
     // 8. the indexer's burn pass and the /api/burn view
     const store = openStore(`sqlite:${path.join(ROOT, ".local", `e2e-burn-store-${Date.now()}.sqlite`)}`); await store.init();
     // the public RPC rate-limits bursts: each pass retries, and the history must end complete
-    for (let i = 0; i < 12; i++) { try { await burnIndexPass(chain, store); } catch (e) { log("burn index pass retry", { error: String((e as Error).message ?? e).slice(0, 120) }); } await sleep(5_000); }
-    const view: any = await burnViewer(chain, store, { cluster: "devnet", burnConfigs: [burnCfg.publicKey.toBase58()], legacyConfigs: [legacyCfg.publicKey.toBase58()], feeIndex: null })(50);
+    for (let i = 0; i < 12; i++) { try { await burnIndexPass(chainDeps(chain.connection), store); } catch (e) { log("burn index pass retry", { error: String((e as Error).message ?? e).slice(0, 120) }); } await sleep(5_000); }
+    const view: any = await burnViewer(chain, store, { cluster: "devnet", burnConfigs: [burnCfg.publicKey.toBase58()], legacyConfigs: [legacyCfg.publicKey.toBase58()], feeIndex: null })();
     expect(view.status).eq("live");
-    expect(view.totals.burnedRaw).eq(burned.toString());
-    expect(view.burns.length).eq(Number(s7.buybacks.toString()));
-    expect(view.burns.reduce((t: bigint, b: any) => t + BigInt(b.burnedRaw), 0n)).eq(burned);
-    expect(view.splits.reduce((t: bigint, s: any) => t + BigInt(s.amountLamports), 0n)).eq(BigInt(s7.splitTotal.toString()));
-    expect(BigInt(view.sentDirectLamports) >= direct).eq(true); // this run's deposit, plus any from earlier runs on the same program
     expect(view.coverage.status).eq("complete");
+    expect(view.totals.burnedRaw).eq(burned.toString());
+    // this run's events against this run's counter changes
+    const runBurns = view.burns.filter((b: any) => b.slot >= startSlot), runSplits = view.splits.filter((x: any) => x.slot >= startSlot);
+    expect(BigInt(runBurns.length)).eq(BigInt(s7.buybacks.toString()) - BigInt(s0.buybacks.toString()));
+    expect(runBurns.reduce((t: bigint, b: any) => t + BigInt(b.burnedRaw), 0n)).eq(burned - BigInt(s0.burnedTotal.toString()));
+    expect(runSplits.reduce((t: bigint, x: any) => t + BigInt(x.toReserveLamports) + BigInt(x.toOtherLamports), 0n)).eq(BigInt(s7.splitTotal.toString()) - BigInt(s0.splitTotal.toString()));
+    expect(runSplits.filter((x: any) => x.claimant).length).eq(evs.length);
+    expect(view.provenance.claimedByOwnersLamports !== null).eq(true);
+    expect(BigInt(view.sentDirectLamports) >= direct).eq(true); // this run's deposit, plus any from earlier runs on the same program
     step("indexed view", { coverage: view.coverage.status, burns: view.burns.map((b: any) => b.signature), splits: view.splits.length, sentDirect: view.sentDirectLamports });
     fs.writeFileSync(out.replace(".json", "-view.json"), JSON.stringify(view, null, 2));
     await store.close();
@@ -192,6 +224,7 @@ describe("devnet end-to-end: burn program", () => {
   });
 });
 
+function L1pool(mint: PublicKey, config: PublicKey): PublicKey { return poolAddrs(config, mint, NATIVE_MINT).pool; }
 function keeperCfg(keeper: Keypair, migrate: PublicKey[], burn: PublicKey[]): Config {
   return { rpcUrl: RPC, mode: "once", migrateConfigs: migrate, burnConfigs: burn, burnMinClaimLamports: 10_000n, pollMs: 0, keeper, dustLamports: 100_000n, minRouteLamports: 5_000_000n, maxRouteLamports: 5_000_000_000n, ladderBins: 3, ladderNearBps: 200, ladderFarBps: 2000, ladderDecay: 0.85, staleOrderSeconds: 86_400, databaseUrl: null, apiPort: 0, skyConfigs: [], skyEveryPasses: 1, dryRun: false, cuPriceMicroLamports: 0 } as any;
 }

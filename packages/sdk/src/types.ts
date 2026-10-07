@@ -152,20 +152,24 @@ export interface Tail {
 export interface RequestOptions { signal?: AbortSignal }
 export interface TokenQuery { sort?: "volume24h" | "newest"; stage?: "bonding" | "graduated" | "all"; q?: string; limit?: number; cursor?: string }
 
-/** /api/burn: the $COMETAIL buyback and burn (docs/burn.md). Totals are the burn program's own counters;
- *  `sentDirectLamports` = reserve + spent - to-reserve; null is unknown, never zero. */
+/** /api/burn: the $COMETAIL buyback and burn (docs/burn.md). `totals` are the burn program's own counters,
+ *  read in one snapshot with the reserve (`observedSlot`); `sentDirectLamports` = reserve + spent - to-reserve;
+ *  `provenance` sums the indexed events and is null until the history is complete. Null is unknown, never zero. */
+export interface BurnRow { signature: string; slot: number; idx: number; blockTime: number | null; spentLamports: RawAmount; receivedRaw: RawAmount; burnedRaw: RawAmount; minOutRaw: RawAmount }
+export interface SplitRow { signature: string; slot: number; idx: number; blockTime: number | null; source: string; pool: Address | null; claimant: Address | null; claimedLamports: RawAmount; carriedLamports: RawAmount; toReserveLamports: RawAmount; toOtherLamports: RawAmount; other: Address }
 export interface BurnView {
-  schemaVersion: 1; cluster: string; generatedAtMs: number; program: Address; claimer: Address; sharePct: number;
+  schemaVersion: 1; cluster: string; generatedAtMs: number; program: Address; claimer: Address; sharePct: number; observedSlot?: number;
   status: "live" | "not-set-up" | "unavailable";
   coverage: { status: "complete" | "partial" | "unavailable"; atMs: number | null };
   setup?: { pool: Address; cometailMint: Address; treasury: Address; reserve: Address; inbox: Address; setupBy: Address; feeNumerator: RawAmount };
-  totals?: { claimedThroughProgramLamports: RawAmount; toReserveLamports: RawAmount; toTreasuryLamports: RawAmount; spentLamports: RawAmount; burnedRaw: RawAmount; buybacks: number; lastBuyAtSec: number | null };
+  totals?: { splitLamports: RawAmount; toReserveLamports: RawAmount; toOtherLamports: RawAmount; spentLamports: RawAmount; burnedRaw: RawAmount; buybacks: number; lastBuyAtSec: number | null };
+  provenance?: { claimedByProgramLamports: RawAmount | null; claimedByOwnersLamports: RawAmount | null; carriedLamports: RawAmount | null; basis: string };
   reserve?: { lamports: RawAmount } | null;
   sentDirectLamports?: RawAmount | null;
   nextBuyback?: { amountLamports: RawAmount; dueAtSec: number; due: boolean } | null;
   cometail?: { mint: Address; supplyRaw: RawAmount; decimals: number } | null;
   claimableNow?: { programConfigsLamports: RawAmount | null; olderConfigsLamports: RawAmount | null; basis: string };
-  commitment?: { tailsShareLamports: RawAmount; olderConfigClaimsLamports: RawAmount | null; basis: string };
-  burns?: { signature: string; slot: number; blockTime: number | null; spentLamports: RawAmount; receivedRaw: RawAmount; burnedRaw: RawAmount; minOutRaw: RawAmount }[];
-  splits?: { signature: string; slot: number; blockTime: number | null; source: string; pool: Address | null; amountLamports: RawAmount; toReserveLamports: RawAmount; toTreasuryLamports: RawAmount }[];
+  commitment?: { tailsShareLamports: RawAmount; tailsShareAsOfMs: number | null; olderConfigClaimsLamports: RawAmount | null; basis: string };
+  burns?: BurnRow[]; burnsTotal?: number; burnsNextCursor?: string | null;
+  splits?: SplitRow[]; splitsTotal?: number; splitsNextCursor?: string | null;
 }

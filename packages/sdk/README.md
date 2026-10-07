@@ -36,7 +36,8 @@ Keep raw amounts as strings or convert them to `BigInt`; never use `Number` for 
 | `metrics(options?)` | `/api/metrics` | Independent/demo/unattributed metrics with completeness notes |
 | `prices(options?)` | `/api/prices` | SOL/USD, provider and observation time |
 | `health(options?)` | `/api/health` | Service status |
-| `burn(options?)` | `/api/burn` | $COMETAIL buyback and burn: the burn program's counters, the reserve, the next buyback, the newest burns and splits with signatures (unknown is null) |
+| `burn(options?)` | `/api/burn` | $COMETAIL buyback and burn: the burn program's counters and reserve (one snapshot), provenance, the next buyback, the newest 50 burns and splits with signatures (unknown is null) |
+| `burnHistory(kind, query?, options?)` | `/api/burn/burns`, `/api/burn/splits` | Every burn or split, newest first, paged by cursor |
 | `replay(query?, options?)` | `/api/feed` | Oldest-first feed page and next cursor |
 | `replayAll(since?, options?)` | `/api/feed` | Async iterator over replay pages |
 | `feed(options)` | `/api/feed` WebSocket | Subscription with delivered cursor and `close()` |

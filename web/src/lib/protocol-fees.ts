@@ -7,19 +7,21 @@
 // admin's wrapped-SOL account is the protocol treasury the vault program pays into.
 import { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import BN from "bn.js";
-import { createTransferInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
-import { BurnClient } from "@cometail/client";
+import { createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { BurnClient, type BurnState } from "@cometail/client";
 import { CpAmm, getUnClaimLpFee, getTokenProgram } from "@meteora-ag/cp-amm-sdk";
 import { ADDRESSES, LEGACY_CONFIGS } from "./addresses";
 import { dbcClient, mintDecimals, MigrationProgress } from "./dbc";
 
-export type ClaimKind = "dbc-partner-fee" | "dbc-partner-surplus" | "damm-position-fee";
+export type ClaimKind = "dbc-partner-fee" | "dbc-partner-surplus" | "dbc-partner-creation-fee" | "damm-position-fee";
 
 export interface ProtocolClaim {
   id: string;
   kind: ClaimKind;
   /** Which config or pool this belongs to, for the list. */
   configLabel: string;
+  /** The DBC config (curve claims). */
+  config?: PublicKey;
   pool: PublicKey;
   baseMint: PublicKey;
   /** DAMM position claims only. */
@@ -47,18 +49,22 @@ export interface ProtocolScan {
   claimerLamports: Record<string, bigint>;
   /** The protocol treasury token account the vault program pays into: owner and balance. */
   treasury: { address: PublicKey; owner: PublicKey | null; lamports: bigint | null; exists: boolean };
-  /** The burn program, once set up: its reserve receives half of every SOL claim made here. */
-  burn: { reserve: PublicKey; claimer: PublicKey } | null;
+  /** The burn program: live (SOL claims go through it and it splits half of what each pays to its reserve),
+   *  absent (not set up: claims as before), or unavailable (its state could not be read: SOL claims are blocked). */
+  burn: BurnStatus;
   warnings: string[];
 }
 
-/** The burn program's reserve and claimer, or null before its setup. */
-export async function readBurn(connection: Connection): Promise<{ reserve: PublicKey; claimer: PublicKey } | null> {
+export type BurnStatus = { status: "live"; reserve: PublicKey; claimer: PublicKey; state: BurnState } | { status: "absent" } | { status: "unavailable"; error: string };
+/** The burn program's state: live, absent (no state account: not set up), or unavailable (the read failed). Never guessed. */
+export async function readBurn(connection: Connection): Promise<BurnStatus> {
   const client = new BurnClient(connection);
-  const info = await connection.getAccountInfo(client.a.burnState, "confirmed");
-  if (!info) return null;
-  const s = client.decodeState(info.data);
-  return { reserve: s.reserve, claimer: client.a.claimer };
+  try {
+    const info = await connection.getAccountInfo(client.a.burnState, "confirmed");
+    if (!info) return { status: "absent" };
+    const state = client.decodeState(info.data);
+    return { status: "live", reserve: state.reserve, claimer: client.a.claimer, state };
+  } catch (e) { return { status: "unavailable", error: String((e as Error).message ?? e) }; }
 }
 
 const U64_MAX = new BN("18446744073709551615");
@@ -92,7 +98,7 @@ export async function scanProtocolClaims(connection: Connection): Promise<Protoc
     return decimalsCache.get(k)!;
   };
   const dbc = dbcClient(connection);
-  const burn = await readBurn(connection).catch(() => null);
+  const burn = await readBurn(connection);
   const burnClaimer = new BurnClient(connection).a.claimer;
   for (const { label, config } of ourConfigs()) {
     let cfg: any;
@@ -116,14 +122,18 @@ export async function scanProtocolClaims(connection: Connection): Promise<Protoc
       const partnerQuote = BigInt(String(state.partnerQuoteFee ?? 0)), partnerBase = BigInt(String(state.partnerBaseFee ?? 0));
       const tag = `${label} · ${baseMint.toBase58().slice(0, 4)}…${baseMint.toBase58().slice(-4)}`;
       if (partnerQuote > 0n || partnerBase > 0n) {
-        claims.push({ id: `fee:${pool.toBase58()}`, kind: "dbc-partner-fee", configLabel: tag, pool, baseMint, claimer: feeClaimer, quoteMint, quoteDecimals, amountQuote: partnerQuote, amountBase: partnerBase, destination, destinationExists });
+        claims.push({ id: `fee:${pool.toBase58()}`, kind: "dbc-partner-fee", configLabel: tag, config, pool, baseMint, claimer: feeClaimer, quoteMint, quoteDecimals, amountQuote: partnerQuote, amountBase: partnerBase, destination, destinationExists });
+      }
+      // the partner's share of the pool creation fee, once per pool (DBC creation_fee_bits & 0b10)
+      if (Number(cfg.poolCreationFee ?? 0) > 0 && (Number(state.creationFeeBits ?? 0) & 0b10) === 0) {
+        claims.push({ id: `creation:${pool.toBase58()}`, kind: "dbc-partner-creation-fee", configLabel: tag, config, pool, baseMint, claimer: feeClaimer, quoteMint: NATIVE_MINT, quoteDecimals: 9, amountQuote: null, amountBase: 0n, destination: getAssociatedTokenAddressSync(NATIVE_MINT, feeClaimer), destinationExists: true, note: "the partner's share of the pool creation fee, paid in SOL; the program measures it" });
       }
       const migrated = Number(state.migrationProgress) === MigrationProgress.CreatedPool;
       const surplusDone = Number(state.isPartnerWithdrawSurplus ?? 0) === 1;
       const threshold = BigInt(String(cfg.migrationQuoteThreshold ?? 0)), reserve = BigInt(String(state.quoteReserve ?? 0));
       const surplusTotal = reserve > threshold ? reserve - threshold : 0n;
       if (migrated && !surplusDone && surplusTotal > 0n) {
-        claims.push({ id: `surplus:${pool.toBase58()}`, kind: "dbc-partner-surplus", configLabel: tag, pool, baseMint, claimer: feeClaimer, quoteMint, quoteDecimals, amountQuote: null, amountBase: 0n, destination, destinationExists, note: `the curve ended ${surplusTotal.toString()} raw quote units above its target; the program pays the partner's share of that` });
+        claims.push({ id: `surplus:${pool.toBase58()}`, kind: "dbc-partner-surplus", configLabel: tag, config, pool, baseMint, claimer: feeClaimer, quoteMint, quoteDecimals, amountQuote: null, amountBase: 0n, destination, destinationExists, note: `the curve ended ${surplusTotal.toString()} raw quote units above its target; the program pays the partner's share of that` });
       }
     }
   }
@@ -171,8 +181,37 @@ function isCloseAccount(ix: TransactionInstruction): boolean {
   return (ix.programId.equals(TOKEN_PROGRAM_ID) || ix.programId.equals(TOKEN_2022_PROGRAM_ID)) && ix.data.length >= 1 && ix.data[0] === 9;
 }
 
-/** The claim's instructions for the claimer to sign, with every CloseAccount removed and counted. */
-export async function buildProtocolClaim(connection: Connection, claim: ProtocolClaim, burnReserve: PublicKey | null = null): Promise<{ instructions: TransactionInstruction[]; removedCloses: number; toBurn: bigint }> {
+/** The claim's instructions for the claimer to sign.
+ *  - A SOL claim while the burn program is live goes through the program's owner claim: the program measures what
+ *    the claim pays and sends exactly half to the burn reserve and half to the signer's own WSOL account, in the
+ *    same instruction (no amount is taken from this page's scan).
+ *  - While the program is absent (not set up), or for a claim not paid in SOL, the Meteora SDK builds the claim
+ *    as before, with every CloseAccount removed (the WSOL accounts stay open).
+ *  - While the program's state cannot be read, a SOL claim is refused: the 50% cannot be guaranteed. */
+export async function buildProtocolClaim(connection: Connection, claim: ProtocolClaim, burn: BurnStatus): Promise<{ instructions: TransactionInstruction[]; removedCloses: number; throughBurn: boolean }> {
+  const sol = claim.quoteMint.equals(NATIVE_MINT);
+  if (sol && burn.status === "unavailable") throw new Error(`the burn program's state could not be read (${burn.error}); a SOL claim is not built until it can be, so the 50% to the burn reserve is never skipped`);
+  if (sol && burn.status === "live") {
+    const client = new BurnClient(connection);
+    const ownerWsol = getAssociatedTokenAddressSync(NATIVE_MINT, claim.claimer);
+    const pre = [createAssociatedTokenAccountIdempotentInstruction(claim.claimer, ownerWsol, claim.claimer, NATIVE_MINT)];
+    const base = { state: burn.state, owner: claim.claimer, ownerWsol };
+    let ix: TransactionInstruction;
+    if (claim.kind === "damm-position-fee") {
+      if (!claim.position || !claim.positionNftAccount) throw new Error("position claim without a position");
+      const poolState: any = await new CpAmm(connection).fetchPoolState(claim.pool);
+      if (!poolState.tokenBMint.equals(NATIVE_MINT) || Number(poolState.collectFeeMode) !== 2) throw new Error("this position's pool does not pay its fees in SOL only (token B, compounding): the burn program cannot split it; claim it elsewhere and send half to the reserve with card 3");
+      ix = await client.ownerClaimPositionFees({ ...base, pool: claim.pool, position: claim.position, positionNftAccount: claim.positionNftAccount, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault, tokenAMint: poolState.tokenAMint, tokenAProgram: getTokenProgram(poolState.tokenAFlag) });
+    } else {
+      if (!claim.config) throw new Error("claim without its config");
+      const p: any = (await dbcClient(connection).state.getPool(claim.pool)) as any;
+      const ps = p?.poolState ?? p;
+      if (claim.kind === "dbc-partner-fee") ix = await client.ownerClaimCurveFees({ ...base, config: claim.config, pool: claim.pool, baseVault: ps.baseVault, quoteVault: ps.quoteVault, baseMint: ps.baseMint, baseTokenProgram: await tokenProgramOf(connection, ps.baseMint) });
+      else if (claim.kind === "dbc-partner-surplus") ix = await client.ownerClaimSurplus({ ...base, config: claim.config, pool: claim.pool, quoteVault: ps.quoteVault });
+      else ix = await client.ownerClaimCreationFee({ ...base, config: claim.config, pool: claim.pool });
+    }
+    return { instructions: [...pre, ix], removedCloses: 0, throughBurn: true };
+  }
   let instructions: TransactionInstruction[];
   if (claim.kind === "dbc-partner-fee") {
     const tx = await dbcClient(connection).partner.claimPartnerTradingFee({
@@ -183,6 +222,9 @@ export async function buildProtocolClaim(connection: Connection, claim: Protocol
     instructions = tx.instructions;
   } else if (claim.kind === "dbc-partner-surplus") {
     const tx = await dbcClient(connection).partner.partnerWithdrawSurplus({ feeClaimer: claim.claimer, pool: claim.pool });
+    instructions = tx.instructions;
+  } else if (claim.kind === "dbc-partner-creation-fee") {
+    const tx = await dbcClient(connection).partner.claimPartnerPoolCreationFee({ pool: claim.pool, feeReceiver: claim.claimer });
     instructions = tx.instructions;
   } else {
     if (!claim.position || !claim.positionNftAccount) throw new Error("position claim without a position");
@@ -196,17 +238,7 @@ export async function buildProtocolClaim(connection: Connection, claim: Protocol
     instructions = tx.instructions;
   }
   const kept = instructions.filter((ix) => !isCloseAccount(ix));
-  // the 50% commitment: half of a claim paid in SOL moves to the burn reserve in the same transaction,
-  // a plain token transfer out of the claimer's wrapped-SOL account (never a close)
-  const toBurn = burnShareOf(claim, burnReserve);
-  if (burnReserve && toBurn > 0n) kept.push(createTransferInstruction(claim.destination, burnReserve, claim.claimer, toBurn));
-  return { instructions: kept, removedCloses: instructions.length - kept.length, toBurn };
-}
-
-/** Half of what a SOL claim pays (rounded down); 0 when the amount is set by the program (surplus) or the quote is not SOL. */
-export function burnShareOf(claim: ProtocolClaim, burnReserve: PublicKey | null): bigint {
-  if (!burnReserve || !claim.quoteMint.equals(NATIVE_MINT) || claim.amountQuote === null) return 0n;
-  return claim.amountQuote / 2n;
+  return { instructions: kept, removedCloses: instructions.length - kept.length, throughBurn: false };
 }
 
 /** A transfer of wrapped SOL from the owner's treasury account to the burn reserve (never a close or an unwrap). */

@@ -58,9 +58,12 @@
   this is not a claim of general MEV resistance or of a fair external price.
 - Meteora can upgrade its programs and an operator can change a pool's fees: the program then refuses to buy.
   If the pool stops working, the reserve waits; after the authority is removed it could be stranded.
-- The 50% on configs the program does not claim (today's presets, the stream configs) and on the tails' share is
-  the owner's commitment, not code; `/admin/fees` sends half of a SOL claim to the reserve in the same transaction,
-  and the site shows what reached the reserve.
+- Owner claims (older configs and positions) are signed by their owner; the program measures what the claim pays
+  and sends exactly half to the reserve and half only to the signer's own WSOL account. `/admin/fees` claims SOL
+  through them while the program is live and refuses to build a SOL claim while the program's state cannot be read.
+  Claims made elsewhere, and the tails' share, are the owner's commitment; the site shows what reached the reserve.
+- Burn-program verification (a public reproducible-build record) is pending until after its deploy; the vault's
+  record is not touched.
 
 ## Threats considered
 

@@ -22,7 +22,7 @@ import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed"
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: ((limit: number) => Promise<unknown>) | null }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -458,8 +458,14 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       }
       if (url.pathname === "/api/burn") {
         if (!opts.burnView) return send(503, { error: "burn view not enabled on this server" }, { "access-control-allow-origin": "*" });
-        try { return send(200, await opts.burnView(50), { "access-control-allow-origin": "*", "cache-control": "public, max-age=15" }); }
+        try { return send(200, await opts.burnView(), { "access-control-allow-origin": "*", "cache-control": "public, max-age=15" }); }
         catch (e) { log("burn view failed", { error: String((e as Error).message ?? e) }); return send(503, { error: "burn view unavailable" }, { "access-control-allow-origin": "*" }); }
+      }
+      if (url.pathname === "/api/burn/burns" || url.pathname === "/api/burn/splits") {
+        const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=15" };
+        if (!opts.burnHistory) return send(503, { error: "burn view not enabled on this server" }, any);
+        const page = await opts.burnHistory(url.pathname.endsWith("burns") ? "burns" : "splits", url.searchParams.get("before"), Math.min(100, limit));
+        return page === "invalid" ? send(400, { error: "bad cursor" }, any) : send(200, { schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), ...(page as object) }, any);
       }
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {

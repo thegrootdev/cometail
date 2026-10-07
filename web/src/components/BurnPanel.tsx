@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card } from "./Shell";
 import { Money } from "./Money";
-import { api, type BurnView } from "@/lib/api";
+import { api, type BurnRow, type BurnView } from "@/lib/api";
 import { EXPLORER } from "@/lib/addresses";
 import { short, units } from "@/lib/format";
 import { burnPanel as copy } from "@/content/cometail";
@@ -15,6 +15,15 @@ const when = (sec: number | null) => (sec ? new Date(sec * 1000).toLocaleString(
 
 export function BurnPanel({ compact = false }: { compact?: boolean }) {
   const [data, setData] = useState<BurnView | null | undefined>(undefined);
+  const [older, setOlder] = useState<BurnRow[]>([]);
+  const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined);
+  const [paging, setPaging] = useState(false);
+  const more = async () => {
+    const cursor = olderCursor === undefined ? data?.burnsNextCursor : olderCursor;
+    if (!cursor || paging) return;
+    setPaging(true);
+    try { const p = await api.burnPage(cursor); if (p) { setOlder((o) => [...o, ...p.items]); setOlderCursor(p.nextCursor); } } finally { setPaging(false); }
+  };
   useEffect(() => {
     let live = true;
     const load = () => void api.burn().then((r) => { if (live) setData(r); });
@@ -42,9 +51,11 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
           <p className="micro mt-3">{data.nextBuyback ? (data.nextBuyback.due ? copy.dueNow(units(data.nextBuyback.amountLamports, 9)) : BigInt(data.nextBuyback.amountLamports) < 1_000_000n ? copy.waitingForFunds : copy.dueAt(when(data.nextBuyback.dueAtSec))) : copy.nextUnknown}</p>
           {!compact && <>
             <dl className="outside-facts mt-4">
-              <div><dt>{copy.claimedThroughProgram}</dt><dd><Money lamports={data.totals?.claimedThroughProgramLamports ?? null} /></dd></div>
+              <div><dt>{copy.claimedThroughProgram}</dt><dd>{data.provenance?.claimedByProgramLamports ? <Money lamports={data.provenance.claimedByProgramLamports} /> : copy.unknown}</dd></div>
+              <div><dt>{copy.claimedByOwners}</dt><dd>{data.provenance?.claimedByOwnersLamports ? <Money lamports={data.provenance.claimedByOwnersLamports} /> : copy.unknown}</dd></div>
+              <div><dt>{copy.carried}</dt><dd>{data.provenance?.carriedLamports ? <Money lamports={data.provenance.carriedLamports} /> : copy.unknown}</dd></div>
               <div><dt>{copy.toReserve}</dt><dd><Money lamports={data.totals?.toReserveLamports ?? null} /></dd></div>
-              <div><dt>{copy.toTreasury}</dt><dd><Money lamports={data.totals?.toTreasuryLamports ?? null} /></dd></div>
+              <div><dt>{copy.toTreasury}</dt><dd><Money lamports={data.totals?.toOtherLamports ?? null} /></dd></div>
               <div><dt>{copy.sentDirect}</dt><dd>{data.sentDirectLamports ? <Money lamports={data.sentDirectLamports} /> : copy.unknown}</dd></div>
               <div><dt>{copy.tailsShare}</dt><dd>{data.commitment ? <Money lamports={data.commitment.tailsShareLamports} /> : copy.unknown}</dd></div>
               <div><dt>{copy.olderClaims}</dt><dd>{data.commitment?.olderConfigClaimsLamports ? <Money lamports={data.commitment.olderConfigClaimsLamports} /> : copy.unknown}</dd></div>
@@ -53,11 +64,11 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
             </dl>
             <p className="micro mt-3">{copy.accountingNote}</p>
           </>}
-          <h3 className="burn-list-title mt-4">{copy.listTitle}</h3>
+          <h3 className="burn-list-title mt-4">{copy.listTitle(Math.min((data.burns ?? []).length + older.length, compact ? 5 : Infinity), data.burnsTotal ?? 0)}</h3>
           {data.coverage.status !== "complete" && <p className="micro">{data.coverage.status === "partial" ? copy.historyPartial : copy.historyUnavailable}</p>}
           {(data.burns ?? []).length === 0 ? <p className="micro">{copy.noBurns}</p> : (
             <ul className="burn-list">
-              {(data.burns ?? []).slice(0, compact ? 5 : 50).map((b) => (
+              {[...(data.burns ?? []), ...(compact ? [] : older)].slice(0, compact ? 5 : undefined).map((b) => (
                 <li key={b.signature}>
                   <span><strong>{units(b.burnedRaw, d)}</strong> <span className="micro">$COMETAIL for</span> <Money lamports={b.spentLamports} /></span>
                   <span className="micro">{when(b.blockTime)} · <a className="text-link" href={EXPLORER("tx", b.signature)} target="_blank" rel="noreferrer">{short(b.signature, 6)} ↗</a></span>
@@ -65,6 +76,7 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
               ))}
             </ul>
           )}
+          {!compact && (olderCursor === undefined ? data.burnsNextCursor : olderCursor) && <button type="button" className="button button-secondary mt-3" disabled={paging} onClick={() => void more()}>{copy.showMore}</button>}
           <p className="micro mt-3"><a className="text-link" href={EXPLORER("address", data.program)} target="_blank" rel="noreferrer">{copy.program} {short(data.program)} ↗</a>{compact && data.cometail ? <> · <Link className="text-link" href={`/token/${data.cometail.mint}`}>{copy.more} ↗</Link></> : null}</p>
         </>}
     </Card>
