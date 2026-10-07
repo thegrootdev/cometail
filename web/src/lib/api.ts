@@ -81,6 +81,7 @@ export interface Tail {
 export type BurnRow = { signature: string; slot: number; idx: number; blockTime: number | null; spentLamports: string; receivedRaw: string; burnedRaw: string; minOutRaw: string };
 export interface BurnView {
   program: string; claimer: string; sharePct: number; status: "live" | "not-set-up" | "unavailable"; observedSlot?: number;
+  history?: { reconciled: boolean; indexedSplitLamports: string; indexedBurnedRaw: string; indexedBuybacks: number };
   coverage: { status: "complete" | "partial" | "unavailable"; atMs: number | null };
   setup?: { pool: string; cometailMint: string; treasury: string; reserve: string; inbox: string; setupBy: string; feeNumerator: string };
   totals?: { splitLamports: string; toReserveLamports: string; toOtherLamports: string; spentLamports: string; burnedRaw: string; buybacks: number; lastBuyAtSec: number | null };

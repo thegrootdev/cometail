@@ -81,7 +81,7 @@ One RPC read returns the program state, the reserve, the $COMETAIL mint and the 
 |---|---|---|
 | `totals.splitLamports` | everything the program split (claims plus carried inbox funds) | the program's counter (exact, at `observedSlot`) |
 | `totals.toReserveLamports`, `totals.toOtherLamports` | the two halves (other = treasury for program claims, the signer for owner claims) | the program's counters (exact) |
-| `provenance.claimedByProgramLamports`, `claimedByOwnersLamports`, `carriedLamports` | what claims paid, by program configs and by owners, and what was carried | the indexed `ClaimSplit` events; null until the history is complete |
+| `provenance.claimedByProgramLamports`, `claimedByOwnersLamports`, `carriedLamports` | what claims paid, by program configs and by owners, and what was carried | the indexed `ClaimSplit` events; null unless the indexed history reconciles exactly with the counters of the same snapshot (`history.reconciled`: every split's halves sum to the split counter, every burn to the burn counter and count) |
 | `sentDirectLamports` | everything that reached the reserve outside the program's splits (direct transfers from the owner or anyone) | reserve + spent − to-reserve, from the one read (exact: the reserve's only exit is a buyback) |
 | `reserve.lamports`, `cometail.supplyRaw` | waiting to buy; supply now | the one read (exact) |
 | `totals.spentLamports`, `totals.burnedRaw`, `totals.buybacks` | spent, burned, count | the program's counters (exact) |
@@ -92,8 +92,8 @@ One RPC read returns the program state, the reserve, the $COMETAIL mint and the 
 
 The burn index keeps its own cursor (head, the open cycle's top and tail, its target): a cycle walks down from
 the newest transaction to the last completed head and only then moves the head, so a restart, a cap or downtime
-of any length never skips a transaction; an unreadable transaction stops the pass and is retried. Burn events
-live in their own table.
+of any length never skips a transaction; an unreadable transaction (missing, without its logs, or with truncated
+logs) stops the pass and is retried. Burn events live in their own table.
 
 ## Limits and risks
 

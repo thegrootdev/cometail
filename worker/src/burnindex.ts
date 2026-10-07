@@ -44,7 +44,13 @@ export function chainDeps(connection: Connection): BurnIndexDeps {
   const state = new BurnClient(connection).a.burnState;
   return {
     getSignatures: (o) => connection.getSignaturesForAddress(state, { limit: o.limit, before: o.before, until: o.until }, "confirmed") as Promise<Sig[]>,
-    readLogs: async (sig) => { const tx: any = await readTx(connection, sig); return tx ? { logs: tx.meta?.logMessages ?? [], blockTime: tx.blockTime ?? null } : null; },
+    // a transaction without its log messages, or with truncated logs, is unreadable (retried, never read as empty)
+    readLogs: async (sig) => {
+      const tx: any = await readTx(connection, sig);
+      const logs = tx?.meta?.logMessages;
+      if (!tx || !Array.isArray(logs) || logs.some((l: string) => /Log truncated/i.test(l))) return null;
+      return { logs, blockTime: tx.blockTime ?? null };
+    },
   };
 }
 

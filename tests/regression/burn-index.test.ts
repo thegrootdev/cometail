@@ -160,3 +160,45 @@ describe("burn view: state and reserve from one read", () => {
     expect(view.provenance.claimedByProgramLamports).eq(null); // history not indexed: unknown, not zero
   });
 });
+
+import { chainDeps } from "../../worker/src/burnindex";
+describe("burn index and view: missing logs and stale completion (review 135)", () => {
+  it("a transaction without its logs (or with truncated logs) is unreadable: the pass stops at it and resumes when it can be read", async () => {
+    const c = chain(5);
+    let logsMissing = true;
+    const connection: any = {
+      getSignaturesForAddress: async (_a: any, o: any) => c.deps.getSignatures({ before: o.before, until: o.until, limit: o.limit }),
+      getTransaction: async (sig: string) => {
+        const r = await c.deps.readLogs(sig);
+        if (sig === sigOf(3) && logsMissing) return { slot: 1, blockTime: 1, meta: {}, transaction: {} };
+        if (sig === sigOf(2)) return { slot: 1, blockTime: 1, meta: { logMessages: [...r!.logs, "Log truncated"] }, transaction: {} };
+        return { slot: 1, blockTime: r!.blockTime, meta: { logMessages: r!.logs }, transaction: {} };
+      },
+    };
+    const store = await freshStore();
+    const deps = chainDeps(connection);
+    await burnIndexPass(deps, store, 100);
+    expect(await coverage(store)).eq("partial");
+    expect(await store.countBurnEvents(BURN_EVENT_NAMES.ClaimSplit)).eq(2); // 5 and 4, then stopped at 3
+    logsMissing = false;
+    await burnIndexPass(deps, store, 100);
+    expect(await coverage(store)).eq("partial"); // 3 read, stopped at 2 (truncated logs)
+    expect(await store.countBurnEvents(BURN_EVENT_NAMES.ClaimSplit)).eq(3);
+    expect((await readCursor(store)).head).eq(null);
+  });
+  it("a completed index behind newer counters is not trusted: provenance is unknown and history.reconciled is false", async () => {
+    const client = new BurnClient();
+    const k = () => Keypair.generate().publicKey;
+    const st: any = { setupBy: k(), cometailMint: k(), pool: k(), treasury: k(), reserve: k(), inbox: k(), placeholder: k(), bought: k(), baseFeeInfo: Array(32).fill(0), compoundingFeeBps: 5000, feeNumerator: new AnchorBN(10_000_000),
+      splitTotal: new AnchorBN(100), splitToReserve: new AnchorBN(50), splitToTreasury: new AnchorBN(50), spentTotal: new AnchorBN(0), burnedTotal: new AnchorBN(0), buybacks: new AnchorBN(0), lastBuyTs: new AnchorBN(0), bump: 255, claimerBump: 255 };
+    const stateData = await client.program.coder.accounts.encode("burnState", st);
+    const connection: any = { getMultipleAccountsInfoAndContext: async (keys: PublicKey[]) => ({ context: { slot: 7 }, value: keys.map((key) => key.equals(client.a.burnState) ? { data: stateData } : null) }) };
+    const store = await freshStore();
+    // the index completed over an empty history before the claim landed
+    await store.setMeta("burn_coverage", JSON.stringify({ status: "complete", atMs: 1 }));
+    const view: any = await burnViewer({ connection, damm: { coder: { accounts: { decode: () => null } } } } as any, store, { cluster: "test", burnConfigs: [], legacyConfigs: [], feeIndex: null })();
+    expect(view.history.reconciled).eq(false);
+    expect([view.provenance.claimedByProgramLamports, view.provenance.claimedByOwnersLamports, view.provenance.carriedLamports]).deep.eq([null, null, null]);
+    expect(view.totals.splitLamports).eq("100");
+  });
+});

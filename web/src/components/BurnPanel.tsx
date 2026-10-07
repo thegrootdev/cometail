@@ -65,7 +65,7 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
             <p className="micro mt-3">{copy.accountingNote}</p>
           </>}
           <h3 className="burn-list-title mt-4">{copy.listTitle(Math.min((data.burns ?? []).length + older.length, compact ? 5 : Infinity), data.burnsTotal ?? 0)}</h3>
-          {data.coverage.status !== "complete" && <p className="micro">{data.coverage.status === "partial" ? copy.historyPartial : copy.historyUnavailable}</p>}
+          {(data.coverage.status !== "complete" || data.history?.reconciled === false) && <p className="micro">{data.coverage.status === "unavailable" ? copy.historyUnavailable : copy.historyPartial}</p>}
           {(data.burns ?? []).length === 0 ? <p className="micro">{copy.noBurns}</p> : (
             <ul className="burn-list">
               {[...(data.burns ?? []), ...(compact ? [] : older)].slice(0, compact ? 5 : undefined).map((b) => (

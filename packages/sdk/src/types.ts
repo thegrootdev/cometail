@@ -159,6 +159,8 @@ export interface BurnRow { signature: string; slot: number; idx: number; blockTi
 export interface SplitRow { signature: string; slot: number; idx: number; blockTime: number | null; source: string; pool: Address | null; claimant: Address | null; claimedLamports: RawAmount; carriedLamports: RawAmount; toReserveLamports: RawAmount; toOtherLamports: RawAmount; other: Address }
 export interface BurnView {
   schemaVersion: 1; cluster: string; generatedAtMs: number; program: Address; claimer: Address; sharePct: number; observedSlot?: number;
+  /** Whether the indexed history equals the program's counters at observedSlot; provenance is null when it does not. */
+  history?: { reconciled: boolean; indexedSplitLamports: RawAmount; indexedBurnedRaw: RawAmount; indexedBuybacks: number };
   status: "live" | "not-set-up" | "unavailable";
   coverage: { status: "complete" | "partial" | "unavailable"; atMs: number | null };
   setup?: { pool: Address; cometailMint: Address; treasury: Address; reserve: Address; inbox: Address; setupBy: Address; feeNumerator: RawAmount };

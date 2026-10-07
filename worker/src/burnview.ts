@@ -74,9 +74,18 @@ export function burnViewer(chain: Chain, store: Store, opts: { cluster: string; 
       if (!opts.feeIndex || !configs.length) return null;
       try { return String(opts.feeIndex.db.db.prepare(`select coalesce(sum(partner_fee), 0) as t from fi_pools where config in (${configs.map(() => "?").join(",")})`).get(...configs).t); } catch { return null; }
     };
-    const complete = coverage.status === "complete";
+    // provenance is shown only when the indexed history reconciles exactly with the counters of this snapshot:
+    // every split's halves add up to split_total and every burn to burned_total; anything else (an index behind
+    // the chain, a stale completion flag, events of a format no longer read) is unknown, never a guess
+    const burnsAll = await store.listBurnEvents(BURN_EVENT_NAMES.BuybackBurned, 1_000_000, null);
+    const indexedSplit = splitsAll.reduce((t, e) => t + BigInt(String(e.data.to_reserve)) + BigInt(String(e.data.to_other)), 0n);
+    const indexedBurned = burnsAll.reduce((t, e) => t + BigInt(String(e.data.burned)), 0n);
+    const reconciled = indexedSplit === n(s.splitTotal) && indexedBurned === n(s.burnedTotal) && BigInt(burnsAll.length) === n(s.buybacks);
+    const complete = coverage.status === "complete" && reconciled;
     const value = {
       ...head, status: "live", coverage, observedSlot: one.context.slot,
+      // whether the indexed history equals the program's counters at observedSlot; false means "history incomplete"
+      history: { reconciled, indexedSplitLamports: indexedSplit.toString(), indexedBurnedRaw: indexedBurned.toString(), indexedBuybacks: burnsAll.length },
       setup: { pool: s.pool.toBase58(), cometailMint: s.cometailMint.toBase58(), treasury: s.treasury.toBase58(), reserve: s.reserve.toBase58(), inbox: s.inbox.toBase58(), setupBy: s.setupBy.toBase58(), feeNumerator: s.feeNumerator.toString() },
       // the program's own counters (exact, at observedSlot); split = claims plus carried inbox funds
       totals: {
@@ -88,7 +97,7 @@ export function burnViewer(chain: Chain, store: Store, opts: { cluster: string; 
         claimedByProgramLamports: complete ? sum(programClaims, "claimed").toString() : null,
         claimedByOwnersLamports: complete ? sum(ownerClaims, "claimed").toString() : null,
         carriedLamports: complete ? sum(programClaims, "carried").toString() : null,
-        basis: "claimed = what each claim paid, measured on the inbox before and after it; carried = what was already in the inbox (sent to it directly) and split with a program claim or a sweep. Owner claims split only their own amount.",
+        basis: "claimed = what each claim paid, measured on the inbox before and after it; carried = what was already in the inbox (sent to it directly) and split with a program claim or a sweep. Owner claims split only their own amount. Shown only while the indexed history reconciles exactly with the program's counters (history.reconciled); otherwise unknown.",
       },
       reserve: reserveBal === null ? null : { lamports: reserveBal.toString() },
       sentDirectLamports: reserveBal === null ? null : (reserveBal + spent - toReserve).toString(),

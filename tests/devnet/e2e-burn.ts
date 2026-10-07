@@ -214,7 +214,9 @@ describe("devnet end-to-end: burn program", () => {
     expect(runBurns.reduce((t: bigint, b: any) => t + BigInt(b.burnedRaw), 0n)).eq(burned - BigInt(s0.burnedTotal.toString()));
     expect(runSplits.reduce((t: bigint, x: any) => t + BigInt(x.toReserveLamports) + BigInt(x.toOtherLamports), 0n)).eq(BigInt(s7.splitTotal.toString()) - BigInt(s0.splitTotal.toString()));
     expect(runSplits.filter((x: any) => x.claimant).length).eq(evs.length);
-    expect(view.provenance.claimedByOwnersLamports !== null).eq(true);
+    // provenance is shown only when the whole indexed history reconciles with the counters (earlier runs on this
+    // program left first-candidate events the indexer no longer reads, so on such a program it stays unknown)
+    expect(view.provenance.claimedByOwnersLamports === null).eq(!view.history.reconciled);
     expect(BigInt(view.sentDirectLamports) >= direct).eq(true); // this run's deposit, plus any from earlier runs on the same program
     step("indexed view", { coverage: view.coverage.status, burns: view.burns.map((b: any) => b.signature), splits: view.splits.length, sentDirect: view.sentDirectLamports });
     fs.writeFileSync(out.replace(".json", "-view.json"), JSON.stringify(view, null, 2));
