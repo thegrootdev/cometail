@@ -83,7 +83,7 @@ export const feeIndex = {
   sell: "Sell these fees", empty: "No coins match.", emptyBody: "Clear the filters, or come back after the next update.",
   unavailable: "The Fee Index is not available on this server yet.", more: "Show more",
   searching: "Searching…", searchingBody: "Searching every coin can take up to half a minute.",
-  searchFailed: "The search took too long.", searchFailedBody: "The server is busy. Try again in a moment.",
+  searchFailed: "The search could not be completed.", searchFailedBody: "Try again in a moment.",
   lpTitle: "Launchpads ranked by what their creators earn",
   lpBody: "Grouped by each launchpad's fee-claiming wallet. The protocol's own configs are marked.",
   lpCoins: "Coins", lpEligible: "Tail-ready", lpDay: "Creators · 24 h (est.)", lpLife: "Creators · lifetime (est.)", lpClaimable: "Unclaimed",
