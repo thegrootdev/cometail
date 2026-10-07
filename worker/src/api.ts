@@ -22,7 +22,7 @@ import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed"
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: ((limit: number) => Promise<unknown>) | null }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -455,6 +455,11 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         if (source && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(source)) return send(400, { error: "bad source mint" });
         const offset = Math.max(0, Math.min(100_000, Number(url.searchParams.get("offset") ?? 0) || 0));
         return send(200, { schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), ...(await tailsRollup(store, opts.feeIndex ?? null, { limit: Math.min(100, limit), offset, source })) }, { "cache-control": "public, max-age=15" });
+      }
+      if (url.pathname === "/api/burn") {
+        if (!opts.burnView) return send(503, { error: "burn view not enabled on this server" }, { "access-control-allow-origin": "*" });
+        try { return send(200, await opts.burnView(50), { "access-control-allow-origin": "*", "cache-control": "public, max-age=15" }); }
+        catch (e) { log("burn view failed", { error: String((e as Error).message ?? e) }); return send(503, { error: "burn view unavailable" }, { "access-control-allow-origin": "*" }); }
       }
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {

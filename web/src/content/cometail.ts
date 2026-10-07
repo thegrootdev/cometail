@@ -85,6 +85,27 @@ export const feeIndex = {
   copy: "Copy", copied: "Copied", wallet: "Fee wallet", configLabel: "Config",
 } as const;
 
+/** $COMETAIL buyback and burn (components/BurnPanel.tsx, docs/burn.md). */
+export const burnPanel = {
+  title: "$COMETAIL buyback and burn",
+  body: "Half of the protocol's fees buy $COMETAIL on its pool and burn it, on chain. Anyone can check every burn below.",
+  loading: "Reading the burn program…",
+  unavailable: "The burn figures are not answering right now.",
+  notSetUp: "The burn program is not set up on this network yet.",
+  unknown: "unknown",
+  burned: "Burned", spent: "SOL spent", buybacks: "Buybacks", reserve: "Waiting to buy",
+  dueNow: (sol: string) => `A buyback of ${sol} SOL can run now; the keeper runs it within minutes, and anyone can.`,
+  dueAt: (t: string) => `Next buyback can run after ${t} (one every ten minutes at most).`,
+  waitingForFunds: "Waiting for the reserve to reach the 0.001 SOL minimum.",
+  nextUnknown: "The next buyback time is unknown right now.",
+  claimedThroughProgram: "Fees claimed by the program", toReserve: "Half to the burn reserve", toTreasury: "Half to the treasury",
+  sentDirect: "Sent to the reserve directly", tailsShare: "Tails' protocol share received", olderClaims: "Older configs' fees claimed",
+  claimableNow: "Waiting to be claimed (new configs)", supply: "$COMETAIL supply now",
+  accountingNote: "Exact: the program's own counters, the reserve, the supply and every event. The program splits 50/50 only the fees of the new launch configs; for the older configs and the tails' share the owner sends half to the reserve directly, shown as sent directly. Claims on the older configs before tracking began are unknown.",
+  listTitle: "Every burn", historyPartial: "History is still loading; some burns may be missing below.", historyUnavailable: "Burn history is not available right now.",
+  noBurns: "No burns yet.", program: "Burn program", more: "All burns",
+} as const;
+
 /** A coin from another launchpad on its token page: the Fee Index panel in place of the market panel. */
 export const outsideCoin = {
   title: "Creator fees · Fee Index",

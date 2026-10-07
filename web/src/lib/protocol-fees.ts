@@ -7,9 +7,10 @@
 // admin's wrapped-SOL account is the protocol treasury the vault program pays into.
 import { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import BN from "bn.js";
-import { getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { createTransferInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { BurnClient } from "@cometail/client";
 import { CpAmm, getUnClaimLpFee, getTokenProgram } from "@meteora-ag/cp-amm-sdk";
-import { ADDRESSES } from "./addresses";
+import { ADDRESSES, LEGACY_CONFIGS } from "./addresses";
 import { dbcClient, mintDecimals, MigrationProgress } from "./dbc";
 
 export type ClaimKind = "dbc-partner-fee" | "dbc-partner-surplus" | "damm-position-fee";
@@ -46,7 +47,18 @@ export interface ProtocolScan {
   claimerLamports: Record<string, bigint>;
   /** The protocol treasury token account the vault program pays into: owner and balance. */
   treasury: { address: PublicKey; owner: PublicKey | null; lamports: bigint | null; exists: boolean };
+  /** The burn program, once set up: its reserve receives half of every SOL claim made here. */
+  burn: { reserve: PublicKey; claimer: PublicKey } | null;
   warnings: string[];
+}
+
+/** The burn program's reserve and claimer, or null before its setup. */
+export async function readBurn(connection: Connection): Promise<{ reserve: PublicKey; claimer: PublicKey } | null> {
+  const client = new BurnClient(connection);
+  const info = await connection.getAccountInfo(client.a.burnState, "confirmed");
+  if (!info) return null;
+  const s = client.decodeState(info.data);
+  return { reserve: s.reserve, claimer: client.a.claimer };
 }
 
 const U64_MAX = new BN("18446744073709551615");
@@ -56,6 +68,7 @@ export function ourConfigs(): { label: string; config: PublicKey }[] {
   const out: { label: string; config: PublicKey }[] = [{ label: "Standard", config: ADDRESSES.plainConfig }];
   for (const [label, key] of Object.entries(ADDRESSES.presets)) if (key) out.push({ label, config: key });
   ADDRESSES.streamConfigs.forEach((config, i) => out.push({ label: ["stream-25", "stream-50", "stream-75"][i], config }));
+  out.push(...LEGACY_CONFIGS);
   const seen = new Set<string>();
   return out.filter((c) => { const k = c.config.toBase58(); if (seen.has(k)) return false; seen.add(k); return true; });
 }
@@ -79,11 +92,15 @@ export async function scanProtocolClaims(connection: Connection): Promise<Protoc
     return decimalsCache.get(k)!;
   };
   const dbc = dbcClient(connection);
+  const burn = await readBurn(connection).catch(() => null);
+  const burnClaimer = new BurnClient(connection).a.claimer;
   for (const { label, config } of ourConfigs()) {
     let cfg: any;
     try { cfg = await dbc.state.getPoolConfig(config); } catch (e) { warnings.push(`${label}: config unreadable (${String((e as Error).message ?? e)})`); continue; }
     if (!cfg) { warnings.push(`${label}: config ${config.toBase58()} not found on this cluster`); continue; }
     const feeClaimer: PublicKey = cfg.feeClaimer;
+    // the new launch configs name the burn program's claimer: the keeper claims them through the program, which splits them itself
+    if (feeClaimer.equals(burnClaimer)) { warnings.push(`${label}: claimed and split 50/50 by the burn program, not from this page`); continue; }
     claimers.set(feeClaimer.toBase58(), feeClaimer);
     const quoteMint: PublicKey = cfg.quoteMint;
     const quoteDecimals = await decimalsOf(quoteMint);
@@ -146,7 +163,7 @@ export async function scanProtocolClaims(connection: Connection): Promise<Protoc
   };
   const claimerLamports: Record<string, bigint> = {};
   for (const k of claimers.values()) claimerLamports[k.toBase58()] = BigInt(await connection.getBalance(k, "confirmed"));
-  return { claims, claimers: [...claimers.values()], claimerLamports, treasury, warnings };
+  return { claims, claimers: [...claimers.values()], claimerLamports, treasury, burn, warnings };
 }
 
 /** SPL Token CloseAccount is instruction 9 in both token programs. */
@@ -155,7 +172,7 @@ function isCloseAccount(ix: TransactionInstruction): boolean {
 }
 
 /** The claim's instructions for the claimer to sign, with every CloseAccount removed and counted. */
-export async function buildProtocolClaim(connection: Connection, claim: ProtocolClaim): Promise<{ instructions: TransactionInstruction[]; removedCloses: number }> {
+export async function buildProtocolClaim(connection: Connection, claim: ProtocolClaim, burnReserve: PublicKey | null = null): Promise<{ instructions: TransactionInstruction[]; removedCloses: number; toBurn: bigint }> {
   let instructions: TransactionInstruction[];
   if (claim.kind === "dbc-partner-fee") {
     const tx = await dbcClient(connection).partner.claimPartnerTradingFee({
@@ -179,7 +196,22 @@ export async function buildProtocolClaim(connection: Connection, claim: Protocol
     instructions = tx.instructions;
   }
   const kept = instructions.filter((ix) => !isCloseAccount(ix));
-  return { instructions: kept, removedCloses: instructions.length - kept.length };
+  // the 50% commitment: half of a claim paid in SOL moves to the burn reserve in the same transaction,
+  // a plain token transfer out of the claimer's wrapped-SOL account (never a close)
+  const toBurn = burnShareOf(claim, burnReserve);
+  if (burnReserve && toBurn > 0n) kept.push(createTransferInstruction(claim.destination, burnReserve, claim.claimer, toBurn));
+  return { instructions: kept, removedCloses: instructions.length - kept.length, toBurn };
+}
+
+/** Half of what a SOL claim pays (rounded down); 0 when the amount is set by the program (surplus) or the quote is not SOL. */
+export function burnShareOf(claim: ProtocolClaim, burnReserve: PublicKey | null): bigint {
+  if (!burnReserve || !claim.quoteMint.equals(NATIVE_MINT) || claim.amountQuote === null) return 0n;
+  return claim.amountQuote / 2n;
+}
+
+/** A transfer of wrapped SOL from the owner's treasury account to the burn reserve (never a close or an unwrap). */
+export function treasuryToBurnIx(treasury: PublicKey, owner: PublicKey, reserve: PublicKey, lamports: bigint): TransactionInstruction {
+  return createTransferInstruction(treasury, reserve, owner, lamports);
 }
 
 /** A short human line for an amount in the quote's units. */

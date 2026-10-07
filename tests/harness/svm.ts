@@ -60,7 +60,25 @@ export function installVaultProgram(svm: LiteSVM, upgradeAuthority: PublicKey) {
   svm.setAccount(id, { lamports: 1_000_000_000, data: new Uint8Array(prog), owner: UPGRADEABLE_LOADER, executable: true });
 }
 
-export function startSvm(opts: { withVaultProgram?: boolean; upgradeAuthority?: PublicKey } = {}): LiteSVM {
+/** The burn program id, from its built IDL. */
+export function burnProgramId(): PublicKey {
+  const idl = JSON.parse(fs.readFileSync(path.join(ROOT, "target", "idl", "cometail_burn.json"), "utf8"));
+  return new PublicKey(idl.address);
+}
+/** Install the burn program as a cluster deploy does, with `upgradeAuthority` in its ProgramData. */
+export function installBurnProgram(svm: LiteSVM, upgradeAuthority: PublicKey) {
+  const id = burnProgramId();
+  const programData = PublicKey.findProgramAddressSync([id.toBuffer()], UPGRADEABLE_LOADER)[0];
+  const elf = fs.readFileSync(path.join(ROOT, "target", "deploy", "cometail_burn.so"));
+  const hdr = Buffer.alloc(45);
+  hdr.writeUInt32LE(3, 0); hdr.writeBigUInt64LE(BigInt(0), 4); hdr.writeUInt8(1, 12); upgradeAuthority.toBuffer().copy(hdr, 13);
+  svm.setAccount(programData, { lamports: 10_000_000_000, data: new Uint8Array(Buffer.concat([hdr, elf])), owner: UPGRADEABLE_LOADER, executable: false });
+  const prog = Buffer.alloc(36);
+  prog.writeUInt32LE(2, 0); programData.toBuffer().copy(prog, 4);
+  svm.setAccount(id, { lamports: 1_000_000_000, data: new Uint8Array(prog), owner: UPGRADEABLE_LOADER, executable: true });
+}
+
+export function startSvm(opts: { withVaultProgram?: boolean; upgradeAuthority?: PublicKey; burnAuthority?: PublicKey } = {}): LiteSVM {
   const svm = new LiteSVM();
   const P = (f: string) => path.join(FIX, "programs", f);
   svm.addProgramFromFile(DBC_PROGRAM_ID, P("dbc_mainnet.so"));
@@ -74,6 +92,7 @@ export function startSvm(opts: { withVaultProgram?: boolean; upgradeAuthority?: 
     if (opts.upgradeAuthority) installVaultProgram(svm, opts.upgradeAuthority);
     else svm.addProgramFromFile(vaultProgramId(), path.join(ROOT, "target", "deploy", "cometail_vault.so"));
   }
+  if (opts.burnAuthority) installBurnProgram(svm, opts.burnAuthority);
   setClonedAccount(svm, DAMM_V2_MIGRATION_CONFIG.fixedBps25, "damm_v2_config_fixedbps25.json");
   setClonedAccount(svm, DAMM_V2_MIGRATION_CONFIG.customizable, "damm_v2_config_customizable.json");
   // native mint

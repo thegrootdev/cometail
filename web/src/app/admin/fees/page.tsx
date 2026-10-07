@@ -13,7 +13,9 @@ import { PageHeader } from "@/components/Experience";
 import { CopyAddress } from "@/components/CopyAddress";
 import { useTx } from "@/lib/hooks";
 import { ADMIN, CLUSTER, EXPLORER } from "@/lib/addresses";
-import { buildProtocolClaim, formatQuote, scanProtocolClaims, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
+import { buildProtocolClaim, burnShareOf, formatQuote, scanProtocolClaims, treasuryToBurnIx, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
+import { api, type BurnView } from "@/lib/api";
+import { parseAmount } from "@/lib/amounts";
 
 const KIND_LABEL: Record<ProtocolClaim["kind"], string> = {
   "dbc-partner-fee": "Partner trading fees on the curve",
@@ -46,12 +48,12 @@ export default function AdminFeesPage() {
   const build = useCallback(async (claim: ProtocolClaim) => {
     if (!publicKey) throw new Error("connect the wallet that owns this claim");
     if (!publicKey.equals(claim.claimer)) throw new Error(`this claim is signed by ${claim.claimer.toBase58()}, not the connected wallet`);
-    const { instructions, removedCloses } = await buildProtocolClaim(connection, claim);
+    const { instructions, removedCloses } = await buildProtocolClaim(connection, claim, scan?.burn?.reserve ?? null);
     if (instructions.some((ix) => ix.data.length >= 1 && ix.data[0] === 9 && /Token/.test(ix.programId.toBase58()))) throw new Error("a close instruction survived; refusing");
     const tx = new Transaction().add(...instructions);
     tx.feePayer = publicKey;
     return { tx, removedCloses };
-  }, [connection, publicKey?.toBase58()]);
+  }, [connection, publicKey?.toBase58(), scan?.burn?.reserve.toBase58()]);
 
   const simulate = async (claim: ProtocolClaim) => {
     setActive(claim.id);
@@ -80,6 +82,27 @@ export default function AdminFeesPage() {
   const MIN_LAMPORTS = 5_000_000n;
   const funded = (claim: ProtocolClaim) => (scan?.claimerLamports[claim.claimer.toBase58()] ?? 0n) >= MIN_LAMPORTS;
   const treasury = scan?.treasury;
+  // the tails' share and what already went to the reserve directly (/api/burn), for the owner's 50% transfer
+  const [burnView, setBurnView] = useState<BurnView | null>(null);
+  useEffect(() => { void api.burn().then(setBurnView); }, [scan]);
+  const [toBurnInput, setToBurnInput] = useState("");
+  const [toBurnNote, setToBurnNote] = useState("");
+  const toBurnLamports = parseAmount(toBurnInput, 9);
+  const buildTreasurySend = async () => {
+    if (!publicKey || !scan?.burn || !treasury?.owner || !publicKey.equals(treasury.owner)) throw new Error("connect the treasury's owner (the admin wallet)");
+    if (!toBurnLamports || toBurnLamports <= 0n) throw new Error("enter an amount");
+    if (treasury.lamports !== null && toBurnLamports > treasury.lamports) throw new Error("more than the treasury holds");
+    const tx = new Transaction().add(treasuryToBurnIx(treasury.address, publicKey, scan.burn.reserve, toBurnLamports));
+    tx.feePayer = publicKey;
+    return tx;
+  };
+  const sendToBurn = async () => {
+    setToBurnNote("");
+    try {
+      const sig = await run(buildTreasurySend, [], 100_000);
+      if (sig) { setToBurnNote(`Sent: ${sig}`); setToBurnInput(""); await refresh(); }
+    } catch (e: any) { setToBurnNote(`Failed: ${String(e?.message ?? e)}`); }
+  };
   const treasuryOwnerIsAdmin = !!(treasury?.owner && ADMIN && treasury.owner.equals(ADMIN));
 
   return (
@@ -109,7 +132,22 @@ export default function AdminFeesPage() {
           <strong>Never close this wrapped-SOL account.</strong> Every harvest transfers the protocol&apos;s share into it by address; a closed account makes every harvest fail until it is recreated. To take SOL out, transfer wrapped SOL to another account or unwrap from a copy, never &quot;close&quot; or &quot;unwrap&quot; this one in a wallet.
         </p>
       </Card>
-      <Card title="3. Claimable now">
+      <Card title="3. Send to the burn reserve (the tails' share and anything else owed)">
+        {!scan ? <p className="text-sm">{scanError ? `Could not read the chain: ${scanError}` : "Reading the chain."}</p> : !scan.burn ? <p className="text-sm">The burn program is not set up yet.</p> : <>
+          <ul className="text-sm space-y-1">
+            <li>reserve: <CopyAddress address={scan.burn.reserve.toBase58()} /></li>
+            <li>tails&apos; protocol share received in the treasury (exact): {burnView?.commitment ? formatQuote(BigInt(burnView.commitment.tailsShareLamports), 9, "SOL") : "unknown"}; half of it: {burnView?.commitment ? formatQuote(BigInt(burnView.commitment.tailsShareLamports) / 2n, 9, "SOL") : "unknown"}</li>
+            <li>sent to the reserve directly so far (exact, includes the halves sent with claims on this page): {burnView?.sentDirectLamports ? formatQuote(BigInt(burnView.sentDirectLamports), 9, "SOL") : "unknown"}</li>
+          </ul>
+          <div className="mt-2 flex flex-wrap gap-2 items-center">
+            <input className="input" inputMode="decimal" placeholder="SOL" value={toBurnInput} onChange={(e) => setToBurnInput(e.target.value)} aria-label="SOL to send to the burn reserve" />
+            <button className="pill" onClick={() => void sendToBurn()} disabled={!publicKey || !treasury?.owner || !publicKey.equals(treasury.owner) || !toBurnLamports || status.state === "sending"}>Send from the treasury</button>
+          </div>
+          <p className="mt-1 text-xs opacity-70">A plain transfer of wrapped SOL from the treasury account, signed by its owner. It never closes or unwraps the treasury. The burn reserve has no way out except a buyback that burns.</p>
+          {toBurnNote && <p className="mt-2 text-sm" role="status">{toBurnNote}</p>}
+        </>}
+      </Card>
+      <Card title="4. Claimable now">
         <div className="flex gap-2 items-center">
           <button className="pill" onClick={() => refresh()} disabled={scanning}>{scanning ? "Scanning the chain" : "Rescan"}</button>
           {scanError && <span className="text-sm">Could not read the chain: {scanError}</span>}
@@ -124,6 +162,7 @@ export default function AdminFeesPage() {
                 <li>amount: {formatQuote(claim.amountQuote, claim.quoteDecimals, symbolOf(claim.quoteMint))}{claim.amountBase > 0n ? ` plus ${claim.amountBase.toString()} raw base tokens` : ""}{claim.note ? ` (${claim.note})` : ""}</li>
                 <li>pool: <CopyAddress address={claim.pool.toBase58()} />{claim.position ? <> · position <CopyAddress address={claim.position.toBase58()} /></> : null}</li>
                 <li>signed by: {claim.claimer.toBase58()}{mine(claim) ? " (connected)" : ""}</li>
+                {scan?.burn ? <li>to the burn reserve in the same transaction: {burnShareOf(claim, scan.burn.reserve) > 0n ? formatQuote(burnShareOf(claim, scan.burn.reserve), 9, "SOL (half of this claim)") : claim.quoteMint.equals(new PublicKey("So11111111111111111111111111111111111111112")) ? "nothing here (the program sets the amount); send half with card 3 after it lands" : "nothing (not paid in SOL; outside the 50% scope)"}</li> : <li>burn program not set up yet: nothing goes to a burn reserve</li>}
                 <li>lands in: <CopyAddress address={claim.destination.toBase58()} /> ({claim.claimer.toBase58().slice(0, 4)}…&apos;s {symbolOf(claim.quoteMint) === "SOL" ? "wrapped-SOL" : "quote token"} account{claim.destinationExists ? "" : ", created by this claim"}){claim.amountBase > 0n ? "; base tokens in the claimer's token account for the base mint" : ""}</li>
               </ul>
               <div className="mt-2 flex flex-wrap gap-2">

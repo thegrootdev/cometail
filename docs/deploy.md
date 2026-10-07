@@ -86,3 +86,18 @@ Public RPC endpoints rate-limit the hundreds of write transactions a deploy send
 deploy leaves a buffer account holding rent; `solana program close <buffer> --recipient
 <authority>` returns it, and the deploy is run again. Sending the writes to the validator
 TPUs (the default, without `--use-rpc`) has been more reliable than `--use-rpc`.
+
+## The burn program
+
+`programs/cometail_burn` builds the same way (`anchor build --arch v0`, the workspace release profile; Anchor runs
+`cargo build-sbf --tools-version v1.57`). Adding it to the workspace leaves the vault's binary byte-identical
+(sha256 562475c1… before and after, measured 2026-10-07).
+
+| Build | Bytes | sha256 (raw ELF) |
+|---|---|---|
+| `opt-level = "z"`, 2026-10-07 | 363,824 | 899ae204591ac30f73a500ab042e03ed1eaf2c6fbf3a9fc95b5c1ecadc3c463d |
+
+Devnet: deployed 2026-10-07 at slot 508,351,514 with `--max-len 363824` (program-data rent 1.84910476 SOL on devnet;
+re-quote mainnet with `solana rent 363869 -um` on the day), the dump hashing to the build above.
+The verifiable rebuild for mainnet uses the vault's arguments with `--library-name cometail_burn`:
+`--base-image solanafoundation/solana-verifiable-build:3.1.10 --cargo-build-sbf-args="--tools-version v1.57"`.

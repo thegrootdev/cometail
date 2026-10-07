@@ -43,3 +43,10 @@ repository currently has no CI workflow; retain the local per-file results with 
     position cannot enter twice and its withdrawal requires and closes its index; stream
     configs with another migration option, token type or vesting are refused; an
     unrepresentable price cap is refused at vault creation.
+20. **Burn program** (`tests/gates/20-burn.test.ts`): setup only by the program's upgrade authority, once, and
+    only on a constant >=1% compounding $COMETAIL/SOL pool; the new launch configs byte-identical to today's
+    except the fee claimer, with the same curve state after the same launch and buys; curve fees, the creation
+    fee, surplus and graduated-position fees each split exactly 50/50, with the totals equal to the event
+    sums; migration with the claimer as fee claimer; buyback spends min(reserve, cap), burns exactly what it
+    bought (supply delta), pays its caller nothing, waits ten minutes, refuses dust and a changed pool fee; a
+    sandwich around one buyback loses money at six sizes; no withdrawal path, pinned outputs.

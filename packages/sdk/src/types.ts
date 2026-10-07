@@ -151,3 +151,21 @@ export interface Tail {
 }
 export interface RequestOptions { signal?: AbortSignal }
 export interface TokenQuery { sort?: "volume24h" | "newest"; stage?: "bonding" | "graduated" | "all"; q?: string; limit?: number; cursor?: string }
+
+/** /api/burn: the $COMETAIL buyback and burn (docs/burn.md). Totals are the burn program's own counters;
+ *  `sentDirectLamports` = reserve + spent - to-reserve; null is unknown, never zero. */
+export interface BurnView {
+  schemaVersion: 1; cluster: string; generatedAtMs: number; program: Address; claimer: Address; sharePct: number;
+  status: "live" | "not-set-up" | "unavailable";
+  coverage: { status: "complete" | "partial" | "unavailable"; atMs: number | null };
+  setup?: { pool: Address; cometailMint: Address; treasury: Address; reserve: Address; inbox: Address; setupBy: Address; feeNumerator: RawAmount };
+  totals?: { claimedThroughProgramLamports: RawAmount; toReserveLamports: RawAmount; toTreasuryLamports: RawAmount; spentLamports: RawAmount; burnedRaw: RawAmount; buybacks: number; lastBuyAtSec: number | null };
+  reserve?: { lamports: RawAmount } | null;
+  sentDirectLamports?: RawAmount | null;
+  nextBuyback?: { amountLamports: RawAmount; dueAtSec: number; due: boolean } | null;
+  cometail?: { mint: Address; supplyRaw: RawAmount; decimals: number } | null;
+  claimableNow?: { programConfigsLamports: RawAmount | null; olderConfigsLamports: RawAmount | null; basis: string };
+  commitment?: { tailsShareLamports: RawAmount; olderConfigClaimsLamports: RawAmount | null; basis: string };
+  burns?: { signature: string; slot: number; blockTime: number | null; spentLamports: RawAmount; receivedRaw: RawAmount; burnedRaw: RawAmount; minOutRaw: RawAmount }[];
+  splits?: { signature: string; slot: number; blockTime: number | null; source: string; pool: Address | null; amountLamports: RawAmount; toReserveLamports: RawAmount; toTreasuryLamports: RawAmount }[];
+}

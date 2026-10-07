@@ -8,9 +8,11 @@ skip-lint = false
 
 [programs.localnet]
 cometail_vault = "5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg"
+cometail_burn = "BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1"
 
 [programs.devnet]
 cometail_vault = "5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg"
+cometail_burn = "BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1"
 
 [provider]
 cluster = "localnet"

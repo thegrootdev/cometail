@@ -1,12 +1,12 @@
 {
   "name": "@cometail/client",
   "version": "0.1.0",
-  "description": "TypeScript client for the COMETAIL vault program: PDAs, instruction builders, account decoders.",
+  "description": "TypeScript client for the COMETAIL vault and burn programs: PDAs, instruction builders, account decoders.",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "sync-idl": "cp ../../target/idl/cometail_vault.json idl/cometail_vault.json"
+    "sync-idl": "cp ../../target/idl/cometail_vault.json idl/cometail_vault.json && cp ../../target/idl/cometail_burn.json idl/cometail_burn.json"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",

@@ -105,6 +105,15 @@ flowchart LR
 
 The program custodies fee rights under a program-derived vault, launches the fee token with the vault as the pool's creator, harvests income through CPI, and turns that income into DLMM limit orders that burn what they fill. The keeper's hot key has bounded power: it chooses when to harvest and where to place orders, never a destination it controls. The admin wallet signs nothing in day-to-day operation. See `docs/security.md`.
 
+### $COMETAIL buyback and burn
+
+Half of the protocol's revenue buys $COMETAIL on its pool and burns it, on chain, through a separate program
+(`programs/cometail_burn`). The launch configs created for it name the program as fee claimer: anyone can
+trigger the claim, and the program splits every claim 50/50 between its burn reserve and the protocol treasury.
+For today's configs and the tails' share, the owner sends half to the reserve. A buyback spends a bounded chunk
+at most every ten minutes and burns everything it bought in the same instruction. The site shows the total
+burned and every burn with its signature. Design, bounds and limits: `docs/burn.md`.
+
 ## On mainnet
 
 Program deployed and protocol initialized on October 4, 2026. The upgrade authority is the admin wallet. The deployed bytes are the reviewed release (`docs/deploy.md`). Every address below is from `configs/mainnet.json`.
@@ -171,6 +180,7 @@ The three vault-internal ratios are program constants (`programs/cometail_vault/
 | Path | What it is |
 |---|---|
 | `programs/cometail_vault` | The on-chain program (Anchor). Custodies fee rights under a program-derived vault, launches the fee token, harvests through CPI, places DLMM buy orders, burns fills, unwinds. |
+| `programs/cometail_burn` | The burn program: claims the new launch configs' protocol fees, splits them 50/50 (burn reserve, treasury), buys back $COMETAIL in bounded chunks and burns it. |
 | `packages/client` | `@cometail/client`: PDAs, instruction builders and account decoders for the program. Used by the site, the worker and the tests. |
 | `packages/sdk` | `@cometail/sdk`: typed read clients for the public API and a resumable event feed. No wallet, never signs. |
 | `web` | The site (Next.js 15). Every line of copy lives in `web/src/content/cometail.ts`. |
@@ -209,6 +219,7 @@ const api = new CometailClient({ baseUrl: "https://api.cometail.fun" });
 - [`docs/architecture.md`](docs/architecture.md): how a vault works end to end.
 - [`docs/economics.md`](docs/economics.md): every fee split with numbers.
 - [`docs/security.md`](docs/security.md): the authority model, the keys and what each can do.
+- [`docs/burn.md`](docs/burn.md): the $COMETAIL buyback and burn: what is enforced, the bounds, the accounting, the cutover.
 - [`docs/release-gates.md`](docs/release-gates.md): the tests that must pass before a release.
 - [`docs/deploy.md`](docs/deploy.md): the size build and the deployment record.
 - [`docs/worker.md`](docs/worker.md): the keeper and the indexer, configuration and behaviour.

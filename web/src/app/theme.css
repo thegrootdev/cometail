@@ -1928,3 +1928,15 @@ small, .caption {
 .outside-facts > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .outside-facts dt { color: var(--muted); font-size: 13px; font-weight: 700; }
 .outside-facts dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+
+/* $COMETAIL buyback and burn (2026-10-07). */
+.burn-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 761px) { .burn-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.burn-stats > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.burn-stats strong { font-size: 16px; font-weight: 800; overflow-wrap: anywhere; }
+.burn-list-title { font: 800 15px/1.3 Nunito, sans-serif; margin: 0 0 6px; }
+.burn-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.burn-list li { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--hairline, #ffffff14); overflow-wrap: anywhere; }
+.burn-compact { margin: 24px 0; }
+.wrap-anywhere, .wrap-anywhere li, .wrap-anywhere p { overflow-wrap: anywhere; }
+.burn-panel .burn-list-title { margin-top: 18px; }

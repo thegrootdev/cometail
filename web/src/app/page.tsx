@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Shell } from "@/components/Shell";
 import { HomeAtlas } from "@/components/Atlas";
 import { MarketDirectory } from "@/components/Market";
+import { BurnPanel } from "@/components/BurnPanel";
 import { experience as copy, hero, plainLaunch } from "@/content/cometail";
 export default function Home() {
   return (
@@ -39,6 +40,7 @@ export default function Home() {
         </div>
       </section>
       <MarketDirectory />
+      <BurnPanel compact />
       <HomeAtlas />
       <section className="chapter-grid">
         {copy.chapters.map((c, i) => (

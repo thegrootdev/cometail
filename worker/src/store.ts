@@ -57,6 +57,10 @@ export interface Store {
   getCursor(): Promise<string | null>;
   setCursor(signature: string): Promise<void>;
   insertEvents(rows: EventRow[], cursor: string): Promise<void>;
+  /** Events of another program (the burn program), with that program's own cursor kept in meta, atomically. */
+  insertEventsWithCursor(rows: EventRow[], metaKey: string, cursor: string): Promise<void>;
+  /** The newest events with these names, newest first. */
+  listEventsByName(names: string[], limit: number): Promise<EventRow[]>;
   /** The trade index's cursor per pool, separate from the program cursor. */
   getPoolCursor(key: string): Promise<PoolCursor | null>;
   setPoolCursor(key: string, cursor: PoolCursor): Promise<void>;
@@ -188,6 +192,19 @@ class PgStore implements Store {
   async listAllStreams() { const r = await this.pool.query("select stream, vault, data from streams"); return r.rows; }
   async listEventsSince(names: string[], sinceUnix: number) {
     const r = await this.pool.query("select * from events where name = any($1) and block_time >= $2 order by slot asc, idx asc", [names, sinceUnix]);
+    return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
+  }
+  async insertEventsWithCursor(rows: EventRow[], metaKey: string, cursor: string) {
+    const c = await this.pool.connect();
+    try {
+      await c.query("begin");
+      for (const r of rows) await c.query("insert into events (signature, idx, slot, block_time, name, vault, data) values ($1,$2,$3,$4,$5,$6,$7) on conflict do nothing", [r.signature, r.idx, r.slot, r.blockTime, r.name, r.vault, r.data]);
+      await c.query("insert into meta (key, value) values ($1, $2) on conflict (key) do update set value = $2", [metaKey, cursor]);
+      await c.query("commit");
+    } catch (e) { await c.query("rollback"); throw e; } finally { c.release(); }
+  }
+  async listEventsByName(names: string[], limit: number) {
+    const r = await this.pool.query("select * from events where name = any($1) order by slot desc, idx desc limit $2", [names, limit]);
     return r.rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: Number(x.slot), blockTime: x.block_time === null ? null : Number(x.block_time), name: x.name, vault: x.vault, data: x.data }));
   }
   async getCursor() { const r = await this.pool.query("select signature from cursor where id = 1"); return r.rows[0]?.signature ?? null; }
@@ -325,6 +342,19 @@ class SqliteStore implements Store {
   async listAllStreams() { return this.db.prepare("select stream, vault, data from streams").all().map((x: any) => ({ stream: x.stream, vault: x.vault, data: JSON.parse(x.data) })); }
   async listEventsSince(names: string[], sinceUnix: number) {
     const rows = this.db.prepare(`select * from events where name in (${names.map(() => "?").join(",")}) and block_time >= ? order by slot asc, idx asc`).all(...names, sinceUnix);
+    return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
+  }
+  async insertEventsWithCursor(rows: EventRow[], metaKey: string, cursor: string) {
+    this.db.exec("begin");
+    try {
+      const ins = this.db.prepare("insert or ignore into events (signature, idx, slot, block_time, name, vault, data) values (?,?,?,?,?,?,?)");
+      for (const r of rows) ins.run(r.signature, r.idx, r.slot, r.blockTime, r.name, r.vault, JSON.stringify(r.data));
+      this.db.prepare("insert into meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value").run(metaKey, cursor);
+      this.db.exec("commit");
+    } catch (e) { this.db.exec("rollback"); throw e; }
+  }
+  async listEventsByName(names: string[], limit: number) {
+    const rows = this.db.prepare(`select * from events where name in (${names.map(() => "?").join(",")}) order by slot desc, idx desc limit ?`).all(...names, limit);
     return rows.map((x: any) => ({ signature: x.signature, idx: x.idx, slot: x.slot, blockTime: x.block_time, name: x.name, vault: x.vault, data: JSON.parse(x.data) }));
   }
   async getCursor() { const r = this.db.prepare("select signature from cursor where id = 1").get(); return r ? r.signature : null; }

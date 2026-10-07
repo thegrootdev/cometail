@@ -1,4 +1,4 @@
-import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade, FeedType, FeeCoin, FeeEnvelope, Launchpad, OurConfig, Tail } from "./types.js";
+import type { Address, Envelope, EstimateLabel, Evidence, FeedEvent, FeedReplay, Health, Metrics, Prices, RequestOptions, SkyStream, Stream, Token, TokenList, TokenQuery, Trade, Vault, VaultDetail, VaultEvent, VaultTrade, FeedType, FeeCoin, FeeEnvelope, Launchpad, OurConfig, Tail, BurnView } from "./types.js";
 import { array, compareCursors, decodeEnvelope, decodeFrame, isFeedEvent, evidence, number, object, parseCursor, ProtocolError, text, tradeQuote } from "./protocol.js";
 import { FeedSubscription } from "./feed.js";
 import type { FeedOptions } from "./feed.js";
@@ -155,6 +155,13 @@ export class CometailClient {
     return r as unknown as { schemaVersion: 1; cluster: string; generatedAtMs: number; total: number; offset: number; limit: number; tails: Tail[] };
   }
   /** Launchpads (fee claimers) ranked by what their creators earn, and the protocol's own configs. */
+  /** The $COMETAIL buyback and burn: the program's counters, the reserve, and the newest 50 burns and splits with signatures. */
+  async burn(options?: RequestOptions): Promise<BurnView> {
+    const r = object(await this.get("/api/burn", options));
+    if (!["live", "not-set-up", "unavailable"].includes(String(r.status))) throw new Error("unexpected burn status");
+    return r as unknown as BurnView;
+  }
+
   async launchpads(options?: RequestOptions): Promise<FeeEnvelope & { rankedBy: "last24h" | "lifetime"; historySinceMs: number; basis: Record<string, string>; launchpads: Launchpad[]; ourConfigs: OurConfig[] }> {
     const r = object(await this.get("/api/fees/launchpads", options)); array(r.launchpads); return r as unknown as FeeEnvelope & { rankedBy: "last24h" | "lifetime"; historySinceMs: number; basis: Record<string, string>; launchpads: Launchpad[]; ourConfigs: OurConfig[] };
   }

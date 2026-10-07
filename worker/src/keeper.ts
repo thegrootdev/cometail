@@ -19,6 +19,7 @@ import { log, sendTx, simulateEvents } from "./tx";
 import { LookupTables } from "./lut";
 import { alert } from "./alert";
 import { bootstrapPair, ensureBinArrays, migratePlainLaunches } from "./bootstrap";
+import { burnPass } from "./burn";
 import { dlmmBinArray } from "@cometail/client";
 
 export interface KeeperContext { chain: Chain; cfg: Config; keeper: Keypair; luts: LookupTables }
@@ -36,6 +37,8 @@ export async function keeperPass(ctx: KeeperContext): Promise<void> {
   log("keeper pass", { vaults: vaults.length, pausedRouting: protocol.pausedRouting });
   // plain launches on the protocol's configs graduate without anyone's help
   try { await migratePlainLaunches(ctx, (pool, state) => migrate(ctx, pool, state)); } catch (e) { log("plain-launch migration pass failed", { error: String((e as Error).message ?? e) }); }
+  // the burn program's claims and buyback: separate from the vaults, never fatal to the pass
+  try { await burnPass(ctx); } catch (e) { log("burn pass failed", { error: String((e as Error).message ?? e) }); }
   for (const v of vaults) {
     try {
       await vaultPass(ctx, protocol, v);

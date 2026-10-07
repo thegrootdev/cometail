@@ -41,6 +41,12 @@ export const ADDRESSES = {
     stock: presetKey(process.env.NEXT_PUBLIC_QUOTE_STOCK, "BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN"),
   },
 };
+/** $COMETAIL's graduated DAMM v2 pool: the pool the burn program buys on (set at its setup; empty until known). */
+export const COMETAIL_POOL = presetKey(process.env.NEXT_PUBLIC_COMETAIL_POOL, "");
+/** Launch configs from before the burn program (their fees are claimed on /admin/fees with the 50% transfer). */
+export const LEGACY_CONFIGS: { label: string; config: PublicKey }[] = (process.env.NEXT_PUBLIC_LEGACY_CONFIGS ?? "").split(",").map((x) => x.trim()).filter(Boolean)
+  .map((entry) => { const [label, key] = entry.includes("=") ? entry.split("=") : ["older", entry]; try { return { label: `${label} (older)`, config: new PublicKey(key) }; } catch { return null; } })
+  .filter((x): x is { label: string; config: PublicKey } => !!x);
 /** The protocol's own token, pinned at the top of Explore and the home page once it is live (empty until then). */
 export const OFFICIAL_MINT = presetKey(process.env.NEXT_PUBLIC_OFFICIAL_MINT, "");
 /** Mints kept out of the Explore list and the home page, and out of every count and total those pages

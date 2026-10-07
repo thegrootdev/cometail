@@ -39,6 +39,29 @@
   balance before it returns (tokens sent to the vault between settlements wait for the
   next one).
 
+## The burn program
+
+`programs/cometail_burn` is a separate program; the vault program is unchanged by it (`docs/burn.md`).
+
+- Its upgrade authority is the owner's wallet, kept through a review period; removing it is the owner's later
+  decision, for this program only. Until then, "no withdrawal" is a property of the current code.
+- Setup can run once, signed by that upgrade authority (bound through the program's own ProgramData). It pins
+  the $COMETAIL mint, its DAMM v2 pool and that pool's fee settings, and the protocol treasury.
+- There is no admin and no withdrawal instruction. No instruction takes an argument. Every transfer goes to a
+  pinned or derived account: the reserve, the treasury, the pool's vaults in a swap, a burn.
+- Every instruction is permissionless. The keeper runs them with its hot key and only pays network fees; no
+  instruction pays its caller or takes a destination, so the hot key can never send funds anywhere it controls.
+- The program never closes or unwraps the protocol treasury: it only transfers wrapped SOL into it.
+- A buyback spends min(reserve, cap) with cap = pool SOL reserve x fee / 5, at most once every ten minutes, at
+  least 0.001 SOL, with the program's own minimum out, and only while the pool's fee settings equal those at
+  setup. In the constant-product model a sandwich around one buyback loses money (gate 20 measures six sizes);
+  this is not a claim of general MEV resistance or of a fair external price.
+- Meteora can upgrade its programs and an operator can change a pool's fees: the program then refuses to buy.
+  If the pool stops working, the reserve waits; after the authority is removed it could be stranded.
+- The 50% on configs the program does not claim (today's presets, the stream configs) and on the tails' share is
+  the owner's commitment, not code; `/admin/fees` sends half of a SOL claim to the reserve in the same transaction,
+  and the site shows what reached the reserve.
+
 ## Threats considered
 
 Vault drain, keeper misuse, fee-token drain through swaps, harvest-then-withdraw stranding,

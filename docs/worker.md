@@ -30,6 +30,8 @@ COMETAIL_API_RATE_PER_MINUTE=120
 COMETAIL_SKY_CONFIGS=                 # comma-separated DBC configs the pool scan is limited to (empty = every pool)
 COMETAIL_SKY_EVERY_PASSES=4           # scan the pool map every N indexer passes
 COMETAIL_MIGRATE_CONFIGS=             # keeper mode: DBC configs whose completed curves the keeper migrates (the launch presets)
+COMETAIL_BURN_CONFIGS=                # keeper and indexer: the launch configs whose fee claimer is the burn program's claimer; the keeper claims their protocol fees through the program (split 50/50) and runs buybacks; the indexer reads the program's events for /api/burn. Empty = off. These configs must also be in COMETAIL_MIGRATE_CONFIGS and COMETAIL_SKY_CONFIGS
+COMETAIL_BURN_MIN_CLAIM_LAMPORTS=2000000  # keeper: a claim waits until it is worth at least this (the network fee would eat a smaller one)
 COMETAIL_USDC_MINTS=                  # mints treated as dollar quotes
 COMETAIL_DEMO_ACTORS=                 # indexer mode: team and demo wallets, reported apart from independent actors by /api/metrics
 COMETAIL_FEE_INDEX_DB=                # indexer mode: the Fee Index's own SQLite file, sqlite:/path like DATABASE_URL or a plain path (empty = off); needs an RPC with getProgramAccountsV2. If it cannot be opened the worker logs "fee index disabled" and runs without it

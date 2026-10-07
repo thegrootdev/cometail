@@ -13,6 +13,8 @@ import { SocialLinks } from "@/components/SocialLinks";
 import { metadataLinks, tickerText } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
 import { OutsideCoinFees, type FeeCoinResult } from "@/components/OutsideCoin";
+import { BurnPanel } from "@/components/BurnPanel";
+import { isOfficial } from "@/lib/addresses";
 import { ourConfigs } from "@/lib/protocol-fees";
 import { creatorClaims } from "@/lib/creator-fees";
 // Token page: the curve while bonding, the graduated pool after, the tail's income meter,
@@ -282,6 +284,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
         )}
       </div>
       <TailLink mint={mintStr} />
+      {isOfficial(mintStr) && <BurnPanel />}
       {outside ? <OutsideCoinFees result={feeResult} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} onRetry={reloadFee} /> : <TokenMarket mint={mintStr} onChain={!!view} />}
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
