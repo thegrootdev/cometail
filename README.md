@@ -126,7 +126,7 @@ Program deployed and protocol initialized on October 4, 2026. The upgrade author
 | Launch treasury (fee claimer of the six launch presets) | [`3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL`](https://solscan.io/account/3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL) |
 | Protocol treasury (admin's WSOL account) | [`3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD`](https://solscan.io/account/3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD) |
 | Keeper | [`Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7`](https://solscan.io/account/Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7) |
-| Config: Standard (plain) | [`GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr`](https://solscan.io/account/GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr) |
+| Config: Standard (plain; coins before 2026-10-07) | [`GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr`](https://solscan.io/account/GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr) |
 | Config: Long curve | [`CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f`](https://solscan.io/account/CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f) |
 | Config: Flat curve | [`25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6`](https://solscan.io/account/25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6) |
 | Config: Exponential | [`BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ`](https://solscan.io/account/BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ) |
@@ -135,6 +135,10 @@ Program deployed and protocol initialized on October 4, 2026. The upgrade author
 | Config: fee sale, take 25% | [`3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk`](https://solscan.io/account/3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk) |
 | Config: fee sale, take 50% | [`6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L`](https://solscan.io/account/6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L) |
 | Config: fee sale, take 75% | [`D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na`](https://solscan.io/account/D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na) |
+| Burn program ($COMETAIL buyback and burn; upgrade authority: admin wallet) | [`BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1`](https://solscan.io/account/BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1) |
+| Burn claimer (fee claimer of the four burn configs) | [`FsA7AFz9xNE72zpGA5XSHPuXe7e4EwDx7wHZxABTVp3U`](https://solscan.io/account/FsA7AFz9xNE72zpGA5XSHPuXe7e4EwDx7wHZxABTVp3U) |
+| Burn reserve | [`79DaKJLNKKyKGJHAsjHTwK4ygjt9Xfv2gdeZq1LH5ojM`](https://solscan.io/account/79DaKJLNKKyKGJHAsjHTwK4ygjt9Xfv2gdeZq1LH5ojM) |
+| Launch configs since 2026-10-07 (fees split 50/50 by the burn program): Standard, Long, Flat, Exponential | [`CRvUbHQV…`](https://solscan.io/account/CRvUbHQVzNSQV5wKanxzba1NYYP1AcZCF6RLT56yJGxf) · [`Bv2qDDbY…`](https://solscan.io/account/Bv2qDDbYk52FhXxsmrxnNTEnmnhx84RJsu3ZAU5RSJKJ) · [`4LWPPcTc…`](https://solscan.io/account/4LWPPcTcu6CaZriCrn2o13P9jPo4VGDxstkKLsKF6Mk8) · [`F2DmGKBW…`](https://solscan.io/account/F2DmGKBWQ1PyH7ZxjK4X2uxtPAgbMvzMYvzAm5fK7efA) |
 | Quote mints | USDC [`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`](https://solscan.io/account/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v) · NVDAx [`Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh`](https://solscan.io/account/Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh) |
 
 ## Presets
