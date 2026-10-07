@@ -3,7 +3,7 @@
 // with search and four tabs. Reads the same /api/tokens list the old directory did and pages it by
 // cursor; "About to graduate" reads every coin still on its curve (bounded) and orders them by progress.
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { API_URL, CLUSTER, OFFICIAL_MINT, isListed, isOfficial } from "@/lib/addresses";
 import { useMarket, normalizeToken, rawUnits, type MarketEnvelope, type MarketToken, type TokenList } from "@/lib/market";
 import { quoteAsset, quoteRate } from "@/lib/quotes";
@@ -77,8 +77,17 @@ export function CoinCard({ token: t, observedAt, official = false }: { token: Ma
 
 type Page = { tokens: MarketToken[]; next: string | null; observedAt: number; envelope: MarketEnvelope<TokenList> };
 /** One list page outside the polling hook (older pages and the bonding sweep), validated like useMarket's. */
-async function readPage(path: string, signal?: AbortSignal): Promise<Page> {
-  const r = await fetch(`${API_URL}${path}`, { cache: "no-store", signal: signal ?? AbortSignal.timeout(12_000) });
+async function readPage(path: string, teardown?: AbortSignal): Promise<Page> {
+  // every read times out after 12 s, and also stops when its caller tears down
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  const stop = () => controller.abort();
+  if (teardown?.aborted) controller.abort(); else teardown?.addEventListener("abort", stop, { once: true });
+  try { return await readPageOnce(path, controller.signal); }
+  finally { clearTimeout(timer); teardown?.removeEventListener("abort", stop); }
+}
+async function readPageOnce(path: string, signal: AbortSignal): Promise<Page> {
+  const r = await fetch(`${API_URL}${path}`, { cache: "no-store", signal });
   if (!r.ok) throw new Error("Market read failed");
   const env = await r.json() as MarketEnvelope<TokenList>;
   if (env.schemaVersion !== 1 || env.cluster !== CLUSTER || !env.coverage || !env.data || !Array.isArray(env.data.tokens)) throw new Error("Invalid token list");
@@ -116,17 +125,29 @@ function PagedList({ tab, search }: { tab: Exclude<Tab, "soon">; search: string 
   const officialMint = OFFICIAL_MINT && isOfficial(OFFICIAL_MINT.toBase58()) ? OFFICIAL_MINT.toBase58() : null;
   const pinned = !!officialMint && tab === "new" && !search;
   const official = useMarket<MarketToken>(pinned && officialMint ? `/api/tokens/${encodeURIComponent(officialMint)}` : null);
-  const { data, error, reload } = useMarket<TokenList>(listPath(sort, stage, search, PAGE));
+  const { data: live, error, reload } = useMarket<TokenList>(listPath(sort, stage, search, PAGE));
   const [older, setOlder] = useState<Page[]>([]);
+  // once older pages hang off the first page's cursor, the first page is frozen at that snapshot (a refresh
+  // could otherwise push a coin across the page boundary and lose it); newer data waits behind Show updates
+  const [frozen, setFrozen] = useState<MarketEnvelope<TokenList> | null>(null);
   const [paging, setPaging] = useState<"idle" | "busy" | "error">("idle");
-  const firstObserved = error ? 0 : data?.generatedAtMs ?? 0;
+  const data = frozen ?? live;
+  const firstObserved = frozen ? frozen.generatedAtMs : error ? 0 : live?.generatedAtMs ?? 0;
+  const updated = !!(frozen && live && JSON.stringify(live.data) !== JSON.stringify(frozen.data));
   const cursor = older.length ? older[older.length - 1].next : data?.data?.nextCursor ?? null;
   const more = async () => {
-    if (!cursor || paging === "busy") return;
+    if (!cursor || paging === "busy" || !data) return;
+    // freeze the head this cursor came from now, so a poll landing while the page is in flight cannot move it
+    if (!frozen) setFrozen(data);
     setPaging("busy");
-    try { const p = await readPage(listPath(sort, stage, search, PAGE, cursor)); setOlder((o) => [...o, p]); setPaging("idle"); }
-    catch { setPaging("error"); }
+    try {
+      const p = await readPage(listPath(sort, stage, search, PAGE, cursor));
+      // an appended Trending page must carry the same comparable ranking as the first
+      if (tab === "trending" && p.envelope.data.volumeRanking?.basis !== "quote-usd-v1") throw new Error("Incompatible ranking");
+      setOlder((o) => [...o, p]); setPaging("idle");
+    } catch { setPaging("error"); }
   };
+  const showUpdates = () => { setOlder([]); setFrozen(null); setPaging("idle"); };
   if (data && tab === "trending" && data.data?.volumeRanking?.basis !== "quote-usd-v1") return <DataState compact title={copy.trendingOff} body={copy.emptyBody} />;
   if (!data) return <DataState compact kind={error ? "error" : "loading"} title={error ? market.failed : market.loading} body={error ? market.failedBody : market.loadingBody} onRetry={error ? reload : undefined} />;
   // rows in order, each with the observation time of the read it came from; a coin seen on an earlier page is not repeated
@@ -145,6 +166,7 @@ function PagedList({ tab, search }: { tab: Exclude<Tab, "soon">; search: string 
   return (
     <>
       {tab === "trending" && <p className="feed-note">{copy.trendingNote}</p>}
+      {updated && <button type="button" className="market-update feed-update" onClick={showUpdates}>{market.dataUpdated} <strong>{market.refresh} ↻</strong></button>}
       {(pin || shown.length > 0) ? (
         <div className="coin-list">
           {pin && <CoinCard token={pin.token} observedAt={pin.observedAt} official />}
@@ -167,12 +189,14 @@ function SoonList({ search }: { search: string }) {
   const [failed, setFailed] = useState(false);
   const [count, setCount] = useState(PAGE);
   const [tick, setTick] = useState(0);
-  const live = useRef(true);
   useEffect(() => {
-    live.current = true;
+    // per run: a search change, a retry or unmount ends this run, cancels its reads and voids its late results
+    let alive = true;
     const controller = new AbortController();
+    let busy = false, latest = 0;
     const sweep = async () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || busy) return;
+      busy = true; const seq = ++latest;
       try {
         const tokens: MarketToken[] = []; let cursor: string | null = null, pages = 0, observedAt = Date.now(), partial = false;
         do {
@@ -180,12 +204,13 @@ function SoonList({ search }: { search: string }) {
           tokens.push(...p.tokens); cursor = p.next; pages++; observedAt = Math.min(observedAt, p.observedAt);
           if (p.envelope.coverage.status !== "complete") partial = true;
         } while (cursor && pages < SWEEP_PAGES);
-        if (live.current) { setState({ tokens, observedAt, truncated: !!cursor, partial }); setFailed(false); }
-      } catch { if (live.current && !controller.signal.aborted) setFailed(true); }
+        if (alive && seq === latest) { setState({ tokens, observedAt, truncated: !!cursor, partial }); setFailed(false); }
+      } catch { if (alive && seq === latest) setFailed(true); }
+      finally { busy = false; }
     };
     void sweep();
     const t = setInterval(() => void sweep(), 60_000);
-    return () => { live.current = false; controller.abort(); clearInterval(t); };
+    return () => { alive = false; controller.abort(); clearInterval(t); };
   }, [search, tick]);
   if (!state) return <DataState compact kind={failed ? "error" : "loading"} title={failed ? market.failed : market.loading} body={failed ? market.failedBody : market.loadingBody} onRetry={failed ? () => setTick((n) => n + 1) : undefined} />;
   const seen = new Set<string>();
