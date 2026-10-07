@@ -92,22 +92,26 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
 
 /** The home page's live line: how much $COMETAIL the burn program has burned, linking to its page. Hidden until the program reports. */
 export function BurnStat() {
-  const [data, setData] = useState<BurnView | null | undefined>(undefined);
+  const [data, setData] = useState<BurnView | null>(null);
+  // false once a read fails or the program reports a non-live status: the last figure stays, marked last known
+  const [fresh, setFresh] = useState(false);
   useEffect(() => {
     let live = true;
-    const load = () => void api.burn().then((r) => { if (live && r) setData(r); });
+    const load = () => void api.burn().then((r) => {
+      if (!live) return;
+      if (r && r.status === "live" && r.totals?.burnedRaw && r.cometail) { setData(r); setFresh(true); } else setFresh(false);
+    });
     load();
     const t = setInterval(load, 30_000);
     return () => { live = false; clearInterval(t); };
   }, []);
-  const raw = data?.status === "live" ? data.totals?.burnedRaw : null;
-  if (!data || !raw || !data.cometail) return null;
+  if (!data?.totals?.burnedRaw || !data.cometail) return null;
   return (
-    <Link className="burn-stat" href={`/token/${data.cometail.mint}`}>
+    <Link className={`burn-stat ${fresh ? "" : "is-last-known"}`} href={`/token/${data.cometail.mint}`} title={fresh ? undefined : homeCopy.burnedLastKnown}>
       <span className="burn-flame" aria-hidden="true" />
-      <strong>{units(raw, data.cometail.decimals ?? 6, 0)}</strong>
+      <strong>{units(data.totals.burnedRaw, data.cometail.decimals ?? 6, 0)}</strong>
       <span>{homeCopy.burned}</span>
-      <span className="burn-live" aria-hidden="true" />
+      {fresh ? <span className="burn-live" aria-hidden="true" /> : <span className="burn-stale">{homeCopy.lastKnown}</span>}
     </Link>
   );
 }

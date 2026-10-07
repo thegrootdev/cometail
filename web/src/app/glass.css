@@ -377,3 +377,14 @@ h3 { font-size: 19px; }
 .burn-panel .burn-stats > div { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: #ffffff08; border: 1px solid #ffffff14; min-width: 0; }
 .burn-panel .burn-stats strong { font-size: 16px; font-weight: 800; overflow-wrap: anywhere; }
 .burn-more > summary { cursor: pointer; display: flex; align-items: center; min-height: 44px; font-weight: 800; font-size: 14px; color: var(--ion); }
+
+/* Status notes beside the compact figures (review 142): last known, partial, stale, the FDV basis. */
+.quick-stat small { font-size: 11px; font-weight: 700; color: #8a96b8; }
+.coin-age abbr { text-decoration: none; cursor: help; }
+.coin-card.is-last-known .coin-cap strong { color: #aab4d0; }
+.coin-card.is-last-known .coin-age { color: var(--dust); }
+.chart-stale { margin: 6px 0 0; font-size: 12px; color: var(--dust); }
+.burn-stat.is-last-known { background: #ffffff0a; border-color: var(--glass-line); }
+.burn-stat.is-last-known strong { color: #c9d3ee; }
+.burn-stale { font-size: 11px; font-weight: 700; color: var(--dust); }
+.fee-window { color: var(--dust) !important; }

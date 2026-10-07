@@ -1,12 +1,13 @@
 "use client";
-// The home feed: every launch as a simple card (image, name, ticker, market cap, progress to
-// graduation), with search and three tabs. Reads the same /api/tokens list the old directory did;
-// "About to graduate" orders the coins still on their curve by progress, closest first.
+// The home feed: every launch as a compact row (image, name, ticker, FDV, progress to graduation),
+// with search and four tabs. Reads the same /api/tokens list the old directory did and pages it by
+// cursor; "About to graduate" reads every coin still on its curve (bounded) and orders them by progress.
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { OFFICIAL_MINT, isListed, isOfficial } from "@/lib/addresses";
-import { useMarket, rawUnits, type MarketToken, type TokenList } from "@/lib/market";
-import { quoteAsset } from "@/lib/quotes";
+import { useEffect, useRef, useState } from "react";
+import { API_URL, CLUSTER, OFFICIAL_MINT, isListed, isOfficial } from "@/lib/addresses";
+import { useMarket, normalizeToken, rawUnits, type MarketEnvelope, type MarketToken, type TokenList } from "@/lib/market";
+import { quoteAsset, quoteRate } from "@/lib/quotes";
+import { usdValue } from "@/lib/usd";
 import { tickerText } from "@/lib/token-display";
 import { short } from "@/lib/format";
 import { home as copy, market } from "@/content/cometail";
@@ -21,15 +22,17 @@ export function compactUsd(value: string | number | null | undefined): string | 
   if (!Number.isFinite(n) || n < 0) return null;
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: n >= 1000 ? "compact" : "standard", maximumFractionDigits: n >= 1000 ? 1 : 0 }).format(n);
 }
-/** Market cap: the worker's USD figure; without a USD rate, price × supply in the quote token. */
-export function marketCap(t: MarketToken): string {
-  const usd = compactUsd(t.marketCapUsd ?? t.fdvUsd);
-  if (usd) return usd;
+/** FDV: current price × total supply (the worker reports no circulating supply, so this is not a
+ *  circulating market cap). USD only through a fresh quote rate observed with the data; otherwise the
+ *  quote-token figure. A stale or missing price gives no figure at all. */
+export function fdvValue(t: MarketToken, observedAt: number): { text: string; usd: boolean } {
+  const price = t.priceStatus === "stale" || t.priceStatus === "unavailable" ? null : t.priceQuote;
   const supply = rawUnits(t.totalSupplyRaw, t.decimals);
-  if (supply === null || t.priceQuote === null) return "—";
-  const n = Number(supply) * Number(t.priceQuote);
-  if (!Number.isFinite(n)) return "—";
-  return `${n.toLocaleString("en-US", { maximumFractionDigits: n >= 100 ? 0 : 2 })} ${quoteAsset(t.quoteMint, t.quoteDecimals).symbol}`;
+  const quote = supply !== null && price !== null ? Number(supply) * Number(price) : null;
+  if (quote === null || !Number.isFinite(quote)) return { text: "—", usd: false };
+  const usd = compactUsd(usdValue(quote, quoteRate(t.quoteUsd, observedAt)));
+  if (usd) return { text: usd, usd: true };
+  return { text: `${quote.toLocaleString("en-US", { maximumFractionDigits: quote >= 100 ? 0 : 2 })} ${quoteAsset(t.quoteMint, t.quoteDecimals).symbol}`, usd: false };
 }
 export function progressOf(t: MarketToken): number | null {
   const stage = t.migrationStage ?? t.stage;
@@ -42,12 +45,15 @@ function age(ms: number | null): string {
   return s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
 }
 
-export function CoinCard({ token: t, official = false }: { token: MarketToken; official?: boolean }) {
+/** One row. observedAt is when its data was read (0 when the read behind it is failing: last known). */
+export function CoinCard({ token: t, observedAt, official = false }: { token: MarketToken; observedAt: number; official?: boolean }) {
   const stage = t.migrationStage ?? t.stage;
   const progress = progressOf(t);
   const done = stage === "graduated";
+  const fdv = fdvValue(t, observedAt);
+  const lastKnown = !observedAt;
   return (
-    <Link className={`coin-card ${official ? "coin-official" : ""}`} href={`/token/${t.mint}`} aria-label={`${market.view} ${t.name || short(t.mint)}`}>
+    <Link className={`coin-card ${official ? "coin-official" : ""} ${lastKnown ? "is-last-known" : ""}`} href={`/token/${t.mint}`} aria-label={`${market.view} ${t.name || short(t.mint)}`}>
       <TokenAvatar seed={t.mint} image={t.imageUrl || undefined} />
       <span className="coin-main">
         <span className="coin-title">
@@ -62,34 +68,30 @@ export function CoinCard({ token: t, official = false }: { token: MarketToken; o
         </span>
       </span>
       <span className="coin-side">
-        <span className="coin-cap"><span className="sr-only">{copy.marketCap} </span><strong>{marketCap(t)}</strong></span>
-        <span className="coin-age">{t.createdAtMs ? age(t.createdAtMs) : ""}</span>
+        <span className="coin-cap"><strong>{fdv.text}</strong></span>
+        <span className="coin-age"><abbr title={copy.fdvTitle}>{copy.fdv}</abbr>{lastKnown ? ` · ${copy.lastKnown}` : t.createdAtMs ? ` · ${age(t.createdAtMs)}` : ""}</span>
       </span>
     </Link>
   );
 }
 
+type Page = { tokens: MarketToken[]; next: string | null; observedAt: number; envelope: MarketEnvelope<TokenList> };
+/** One list page outside the polling hook (older pages and the bonding sweep), validated like useMarket's. */
+async function readPage(path: string, signal?: AbortSignal): Promise<Page> {
+  const r = await fetch(`${API_URL}${path}`, { cache: "no-store", signal: signal ?? AbortSignal.timeout(12_000) });
+  if (!r.ok) throw new Error("Market read failed");
+  const env = await r.json() as MarketEnvelope<TokenList>;
+  if (env.schemaVersion !== 1 || env.cluster !== CLUSTER || !env.coverage || !env.data || !Array.isArray(env.data.tokens)) throw new Error("Invalid token list");
+  const tokens = (env.data.tokens as unknown[]).map(normalizeToken);
+  return { tokens, next: env.data.nextCursor ?? null, observedAt: env.generatedAtMs, envelope: env };
+}
+const listPath = (sort: string, stage: string, q: string, limit: number, cursor?: string | null) =>
+  `/api/tokens?${new URLSearchParams({ sort, stage, q, limit: String(limit), ...(cursor ? { cursor } : {}) })}`;
+
 export function CoinFeed() {
   const [tab, setTab] = useState<Tab>("new");
   const [query, setQuery] = useState(""), [search, setSearch] = useState("");
-  const [count, setCount] = useState(PAGE);
   useEffect(() => { const t = setTimeout(() => setSearch(query.trim()), 300); return () => clearTimeout(t); }, [query]);
-  useEffect(() => setCount(PAGE), [tab, search]);
-  // the soon tab reads every coin still on its curve (the API caps a page at 100) and orders them here
-  // trending ranks by 24h volume in USD (the worker's volume ranking; unrated coins follow, newest first)
-  const params = new URLSearchParams({ sort: tab === "trending" ? "volume24h" : "newest", stage: tab === "soon" ? "bonding" : tab === "graduated" ? "graduated" : "all", q: search, limit: String(tab === "soon" ? 100 : Math.min(100, count)) });
-  const path = `/api/tokens?${params}`;
-  const officialMint = OFFICIAL_MINT && isOfficial(OFFICIAL_MINT.toBase58()) ? OFFICIAL_MINT.toBase58() : null;
-  const pinned = !!officialMint && tab === "new" && !search;
-  const official = useMarket<MarketToken>(pinned && officialMint ? `/api/tokens/${encodeURIComponent(officialMint)}` : null);
-  const { data, error, reload } = useMarket<TokenList>(path);
-  let tokens = (Array.isArray(data?.data?.tokens) ? data.data.tokens : []).filter((t) => isListed(t.mint));
-  if (tab === "soon") tokens = tokens.filter((t) => (t.migrationStage ?? t.stage) !== "graduated").sort((a, b) => (progressOf(b) ?? -1) - (progressOf(a) ?? -1));
-  const listRow = pinned ? tokens.find((t) => t.mint === officialMint) ?? null : null;
-  const pin = pinned ? (official.data && !official.error ? official.data.data : listRow ?? official.data?.data ?? null) : null;
-  if (pin) tokens = tokens.filter((t) => t.mint !== officialMint);
-  const shown = tokens.slice(0, count);
-  const more = tab === "soon" ? tokens.length > count : !!data?.data?.nextCursor && count < 100;
   return (
     <section className="coin-feed" aria-labelledby="feed-title">
       <h2 id="feed-title" className="sr-only">{copy.feedTitle}</h2>
@@ -103,21 +105,103 @@ export function CoinFeed() {
           <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{copy.tabs[k]}</button>
         ))}
       </div>
-      {tab === "soon" && <p className="feed-note">{copy.soonNote}</p>}
-      {tab === "trending" && <p className="feed-note">{copy.trendingNote}</p>}
-      {data && tab === "trending" && data.data?.volumeRanking?.basis !== "quote-usd-v1" ? <DataState compact title={copy.trendingOff} body={copy.emptyBody} />
-        : !data ? <DataState compact kind={error ? "error" : "loading"} title={error ? market.failed : market.loading} body={error ? market.failedBody : market.loadingBody} onRetry={error ? reload : undefined} />
-        : <>
-          {(pin || shown.length > 0) ? (
-            <div className="coin-list">
-              {pin && <CoinCard token={pin} official />}
-              {shown.map((t) => <CoinCard key={t.mint} token={t} />)}
-            </div>
-          ) : <DataState compact title={tab === "soon" && !search ? copy.soonEmpty : copy.empty} body={copy.emptyBody} />}
-          {more && <button type="button" className="button button-secondary feed-more" onClick={() => setCount((c) => c + PAGE)}>{copy.showMore}</button>}
-          {data.coverage.status !== "complete" && <p className="feed-note">{market.historyPending}</p>}
-          {error && <p className="feed-note" role="status">{market.stale} · <button type="button" className="link-button" onClick={reload}>{market.retry} ↻</button></p>}
-        </>}
+      {tab === "soon" ? <SoonList key={search} search={search} /> : <PagedList key={`${tab}|${search}`} tab={tab} search={search} />}
     </section>
+  );
+}
+
+/** New, Trending and Graduated: the first page polls; Show more follows the API's cursor and appends. */
+function PagedList({ tab, search }: { tab: Exclude<Tab, "soon">; search: string }) {
+  const sort = tab === "trending" ? "volume24h" : "newest", stage = tab === "graduated" ? "graduated" : "all";
+  const officialMint = OFFICIAL_MINT && isOfficial(OFFICIAL_MINT.toBase58()) ? OFFICIAL_MINT.toBase58() : null;
+  const pinned = !!officialMint && tab === "new" && !search;
+  const official = useMarket<MarketToken>(pinned && officialMint ? `/api/tokens/${encodeURIComponent(officialMint)}` : null);
+  const { data, error, reload } = useMarket<TokenList>(listPath(sort, stage, search, PAGE));
+  const [older, setOlder] = useState<Page[]>([]);
+  const [paging, setPaging] = useState<"idle" | "busy" | "error">("idle");
+  const firstObserved = error ? 0 : data?.generatedAtMs ?? 0;
+  const cursor = older.length ? older[older.length - 1].next : data?.data?.nextCursor ?? null;
+  const more = async () => {
+    if (!cursor || paging === "busy") return;
+    setPaging("busy");
+    try { const p = await readPage(listPath(sort, stage, search, PAGE, cursor)); setOlder((o) => [...o, p]); setPaging("idle"); }
+    catch { setPaging("error"); }
+  };
+  if (data && tab === "trending" && data.data?.volumeRanking?.basis !== "quote-usd-v1") return <DataState compact title={copy.trendingOff} body={copy.emptyBody} />;
+  if (!data) return <DataState compact kind={error ? "error" : "loading"} title={error ? market.failed : market.loading} body={error ? market.failedBody : market.loadingBody} onRetry={error ? reload : undefined} />;
+  // rows in order, each with the observation time of the read it came from; a coin seen on an earlier page is not repeated
+  const seen = new Set<string>();
+  const rows: { token: MarketToken; observedAt: number }[] = [];
+  for (const [list, at] of [[data.data.tokens, firstObserved] as const, ...older.map((p) => [p.tokens, p.observedAt] as const)])
+    for (const t of Array.isArray(list) ? list : []) if (isListed(t.mint) && !seen.has(t.mint)) { seen.add(t.mint); rows.push({ token: t, observedAt: at }); }
+  // the official coin pinned on the plain New tab: its own read when healthy, else the list's row, else the cached read marked last known
+  const listRow = pinned ? rows.find((r) => r.token.mint === officialMint) ?? null : null;
+  const pin = !pinned ? null
+    : official.data && !official.error ? { token: official.data.data, observedAt: official.data.generatedAtMs }
+    : listRow ? listRow
+    : official.data ? { token: official.data.data, observedAt: 0 }
+    : null;
+  const shown = pin ? rows.filter((r) => r.token.mint !== officialMint) : rows;
+  return (
+    <>
+      {tab === "trending" && <p className="feed-note">{copy.trendingNote}</p>}
+      {(pin || shown.length > 0) ? (
+        <div className="coin-list">
+          {pin && <CoinCard token={pin.token} observedAt={pin.observedAt} official />}
+          {shown.map((r) => <CoinCard key={r.token.mint} token={r.token} observedAt={r.observedAt} />)}
+        </div>
+      ) : <DataState compact title={copy.empty} body={copy.emptyBody} />}
+      {cursor && <button type="button" className="button button-secondary feed-more" disabled={paging === "busy"} onClick={() => void more()}>{paging === "error" ? `${market.retry} ↻` : copy.showMore}</button>}
+      {paging === "error" && <p className="feed-note" role="status">{market.failedBody}</p>}
+      {data.coverage.status !== "complete" && <p className="feed-note">{market.historyPending}</p>}
+      {error && <p className="feed-note" role="status">{market.stale} · <button type="button" className="link-button" onClick={reload}>{market.retry} ↻</button></p>}
+    </>
+  );
+}
+
+/** About to graduate: every coin still on its curve, read page by page (at most SWEEP_PAGES pages),
+ *  ordered by progress here; refreshed every minute while the page is visible. */
+const SWEEP_PAGES = 10;
+function SoonList({ search }: { search: string }) {
+  const [state, setState] = useState<{ tokens: MarketToken[]; observedAt: number; truncated: boolean; partial: boolean } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [count, setCount] = useState(PAGE);
+  const [tick, setTick] = useState(0);
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    const controller = new AbortController();
+    const sweep = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const tokens: MarketToken[] = []; let cursor: string | null = null, pages = 0, observedAt = Date.now(), partial = false;
+        do {
+          const p = await readPage(listPath("newest", "bonding", search, 100, cursor), controller.signal);
+          tokens.push(...p.tokens); cursor = p.next; pages++; observedAt = Math.min(observedAt, p.observedAt);
+          if (p.envelope.coverage.status !== "complete") partial = true;
+        } while (cursor && pages < SWEEP_PAGES);
+        if (live.current) { setState({ tokens, observedAt, truncated: !!cursor, partial }); setFailed(false); }
+      } catch { if (live.current && !controller.signal.aborted) setFailed(true); }
+    };
+    void sweep();
+    const t = setInterval(() => void sweep(), 60_000);
+    return () => { live.current = false; controller.abort(); clearInterval(t); };
+  }, [search, tick]);
+  if (!state) return <DataState compact kind={failed ? "error" : "loading"} title={failed ? market.failed : market.loading} body={failed ? market.failedBody : market.loadingBody} onRetry={failed ? () => setTick((n) => n + 1) : undefined} />;
+  const seen = new Set<string>();
+  const ranked = state.tokens
+    .filter((t) => isListed(t.mint) && (t.migrationStage ?? t.stage) !== "graduated" && !seen.has(t.mint) && (seen.add(t.mint), true))
+    .sort((a, b) => (progressOf(b) ?? -1) - (progressOf(a) ?? -1));
+  const at = failed ? 0 : state.observedAt;
+  return (
+    <>
+      <p className="feed-note">{state.truncated ? copy.soonTruncated(SWEEP_PAGES * 100) : copy.soonNote}</p>
+      {ranked.length ? (
+        <div className="coin-list">{ranked.slice(0, count).map((t) => <CoinCard key={t.mint} token={t} observedAt={at} />)}</div>
+      ) : <DataState compact title={search ? copy.empty : copy.soonEmpty} body={copy.emptyBody} />}
+      {ranked.length > count && <button type="button" className="button button-secondary feed-more" onClick={() => setCount((c) => c + PAGE)}>{copy.showMore}</button>}
+      {state.partial && <p className="feed-note">{market.historyPending}</p>}
+      {failed && <p className="feed-note" role="status">{market.stale} · <button type="button" className="link-button" onClick={() => setTick((n) => n + 1)}>{market.retry} ↻</button></p>}
+    </>
   );
 }

@@ -79,6 +79,7 @@ function Coins() {
   useEffect(() => { setState("loading"); setRows([]); void load(0); }, [sort, stage, eligible, mine, me, search]);
   return (
     <>
+      <Coverage c={coverage} />
       <label className="feed-search">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
         <input type="search" placeholder={copy.search} aria-label={copy.search} value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -110,7 +111,7 @@ function Coins() {
                         <CoinCell mint={c.mint} name={c.name} symbol={c.symbol} imageUrl={c.imageUrl} href={`/token/${c.mint}`} />
                         <span className="source-kind">{c.stage === "graduated" ? copy.graduated : c.stage === "bonding" ? copy.bonding : copy.migrating}{c.configAllowsTail ? ` · ${copy.canTail}` : ""}</span>
                       </span>
-                      <span className="fee-main"><span className="micro">{mainLabel}</span><Money lamports={main} /></span>
+                      <span className="fee-main"><span className="micro">{mainLabel}</span><Money lamports={main} />{sort !== "claimable" && sort !== "lifetime" && c.last24hWindowHours < 24 ? <span className="micro fee-window">{copy.window(c.last24hWindowHours)}</span> : null}</span>
                     </summary>
                     <dl className="detail-list">
                       <div><dt>{copy.launchpad}</dt><dd>{c.ours ? <Badge tone="gold">{copy.ours}</Badge> : c.launchpad ? <CopyAddress address={c.launchpad} label={copy.wallet} /> : "—"}</dd></div>
@@ -132,7 +133,6 @@ function Coins() {
           {more && <button type="button" className="button button-secondary mt-4" disabled={paging} onClick={() => void loadMore()}>{copy.more}</button>}
           <details className="glass-details">
             <summary>{copy.details}</summary>
-            <Coverage c={coverage} />
             <p>{copy.estimateNote} {copy.tailNote}</p>
           </details>
         </div>

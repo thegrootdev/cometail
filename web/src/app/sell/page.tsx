@@ -573,6 +573,7 @@ function Wizard() {
                 </p>
                   </div>
                 </details>
+                {!linksValid(links) && <p className="form-error" role="alert">{launchSimple.socialsInvalid}</p>}
                 {!capQ64 && <p className="form-error" role="alert">{wizard.capInvalid}</p>}
               </fieldset>
               <p className="caption mt-4">{c.uploadProof}</p>
