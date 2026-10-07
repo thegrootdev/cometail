@@ -35,6 +35,38 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
   if (compact && data && data.status === "not-set-up") return null;
   const d = data?.cometail?.decimals ?? 6;
   const coin = (raw: string | null | undefined) => (raw === null || raw === undefined ? copy.unknown : `${units(raw, d)} $COMETAIL`);
+  // the token page shows the numbers; every burn, the accounting and the program link sit in one fold
+  const body = data && data.status === "live" ? <>
+    {!compact && <>
+      <dl className="outside-facts mt-4">
+        <div><dt>{copy.claimedThroughProgram}</dt><dd>{data.provenance?.claimedByProgramLamports ? <Money lamports={data.provenance.claimedByProgramLamports} /> : copy.unknown}</dd></div>
+        <div><dt>{copy.claimedByOwners}</dt><dd>{data.provenance?.claimedByOwnersLamports ? <Money lamports={data.provenance.claimedByOwnersLamports} /> : copy.unknown}</dd></div>
+        <div><dt>{copy.carried}</dt><dd>{data.provenance?.carriedLamports ? <Money lamports={data.provenance.carriedLamports} /> : copy.unknown}</dd></div>
+        <div><dt>{copy.toReserve}</dt><dd><Money lamports={data.totals?.toReserveLamports ?? null} /></dd></div>
+        <div><dt>{copy.toTreasury}</dt><dd><Money lamports={data.totals?.toOtherLamports ?? null} /></dd></div>
+        <div><dt>{copy.sentDirect}</dt><dd>{data.sentDirectLamports ? <Money lamports={data.sentDirectLamports} /> : copy.unknown}</dd></div>
+        <div><dt>{copy.tailsShare}</dt><dd>{data.commitment ? <Money lamports={data.commitment.tailsShareLamports} /> : copy.unknown}</dd></div>
+        <div><dt>{copy.olderClaims}</dt><dd>{data.commitment?.olderConfigClaimsLamports ? <Money lamports={data.commitment.olderConfigClaimsLamports} /> : copy.unknown}</dd></div>
+        <div><dt>{copy.claimableNow}</dt><dd>{data.claimableNow?.programConfigsLamports ? <Money lamports={data.claimableNow.programConfigsLamports} /> : copy.unknown}</dd></div>
+        <div><dt>{copy.supply}</dt><dd>{coin(data.cometail?.supplyRaw)}</dd></div>
+      </dl>
+      <p className="micro mt-3">{copy.accountingNote}</p>
+    </>}
+    <h3 className="burn-list-title mt-4">{copy.listTitle(Math.min((data.burns ?? []).length + older.length, compact ? 5 : Infinity), data.burnsTotal ?? 0)}</h3>
+    {(data.coverage.status !== "complete" || data.history?.reconciled === false) && <p className="micro">{data.coverage.status === "unavailable" ? copy.historyUnavailable : copy.historyPartial}</p>}
+    {(data.burns ?? []).length === 0 ? <p className="micro">{copy.noBurns}</p> : (
+      <ul className="burn-list">
+        {[...(data.burns ?? []), ...(compact ? [] : older)].slice(0, compact ? 5 : undefined).map((b) => (
+          <li key={b.signature}>
+            <span><strong>{units(b.burnedRaw, d)}</strong> <span className="micro">$COMETAIL for</span> <Money lamports={b.spentLamports} /></span>
+            <span className="micro">{when(b.blockTime)} · <a className="text-link" href={EXPLORER("tx", b.signature)} target="_blank" rel="noreferrer">{short(b.signature, 6)} ↗</a></span>
+          </li>
+        ))}
+      </ul>
+    )}
+    {!compact && (olderCursor === undefined ? data.burnsNextCursor : olderCursor) && <button type="button" className="button button-secondary mt-3" disabled={paging} onClick={() => void more()}>{copy.showMore}</button>}
+    <p className="micro mt-3"><a className="text-link" href={EXPLORER("address", data.program)} target="_blank" rel="noreferrer">{copy.program} {short(data.program)} ↗</a>{compact && data.cometail ? <> · <Link className="text-link" href={`/token/${data.cometail.mint}`}>{copy.more} ↗</Link></> : null}</p>
+  </> : null;
   return (
     <Card title={copy.title} className={compact ? "burn-panel burn-compact" : "burn-panel mt-6"}>
       <p className="text-sm text-starlight/70">{copy.body}</p>
@@ -43,41 +75,16 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
         : data.status === "not-set-up" ? <p className="micro mt-3">{copy.notSetUp}</p>
         : <>
           <div className="burn-stats mt-4">
-            <div><span className="micro">{copy.burned}</span><strong>{coin(data.totals?.burnedRaw)}</strong></div>
+            <div><span className="micro">{copy.burned}</span><strong>{data.totals?.burnedRaw ? `${units(data.totals.burnedRaw, d, 0)} $COMETAIL` : copy.unknown}</strong></div>
             <div><span className="micro">{copy.spent}</span><strong><Money lamports={data.totals?.spentLamports ?? null} /></strong></div>
             <div><span className="micro">{copy.buybacks}</span><strong>{data.totals?.buybacks ?? copy.unknown}</strong></div>
             <div><span className="micro">{copy.reserve}</span><strong>{data.reserve ? <Money lamports={data.reserve.lamports} /> : copy.unknown}</strong></div>
           </div>
           <p className="micro mt-3">{data.nextBuyback ? (data.nextBuyback.due ? copy.dueNow(units(data.nextBuyback.amountLamports, 9)) : BigInt(data.nextBuyback.amountLamports) < 1_000_000n ? copy.waitingForFunds : copy.dueAt(when(data.nextBuyback.dueAtSec))) : copy.nextUnknown}</p>
-          {!compact && <>
-            <dl className="outside-facts mt-4">
-              <div><dt>{copy.claimedThroughProgram}</dt><dd>{data.provenance?.claimedByProgramLamports ? <Money lamports={data.provenance.claimedByProgramLamports} /> : copy.unknown}</dd></div>
-              <div><dt>{copy.claimedByOwners}</dt><dd>{data.provenance?.claimedByOwnersLamports ? <Money lamports={data.provenance.claimedByOwnersLamports} /> : copy.unknown}</dd></div>
-              <div><dt>{copy.carried}</dt><dd>{data.provenance?.carriedLamports ? <Money lamports={data.provenance.carriedLamports} /> : copy.unknown}</dd></div>
-              <div><dt>{copy.toReserve}</dt><dd><Money lamports={data.totals?.toReserveLamports ?? null} /></dd></div>
-              <div><dt>{copy.toTreasury}</dt><dd><Money lamports={data.totals?.toOtherLamports ?? null} /></dd></div>
-              <div><dt>{copy.sentDirect}</dt><dd>{data.sentDirectLamports ? <Money lamports={data.sentDirectLamports} /> : copy.unknown}</dd></div>
-              <div><dt>{copy.tailsShare}</dt><dd>{data.commitment ? <Money lamports={data.commitment.tailsShareLamports} /> : copy.unknown}</dd></div>
-              <div><dt>{copy.olderClaims}</dt><dd>{data.commitment?.olderConfigClaimsLamports ? <Money lamports={data.commitment.olderConfigClaimsLamports} /> : copy.unknown}</dd></div>
-              <div><dt>{copy.claimableNow}</dt><dd>{data.claimableNow?.programConfigsLamports ? <Money lamports={data.claimableNow.programConfigsLamports} /> : copy.unknown}</dd></div>
-              <div><dt>{copy.supply}</dt><dd>{coin(data.cometail?.supplyRaw)}</dd></div>
-            </dl>
-            <p className="micro mt-3">{copy.accountingNote}</p>
-          </>}
-          <h3 className="burn-list-title mt-4">{copy.listTitle(Math.min((data.burns ?? []).length + older.length, compact ? 5 : Infinity), data.burnsTotal ?? 0)}</h3>
-          {(data.coverage.status !== "complete" || data.history?.reconciled === false) && <p className="micro">{data.coverage.status === "unavailable" ? copy.historyUnavailable : copy.historyPartial}</p>}
-          {(data.burns ?? []).length === 0 ? <p className="micro">{copy.noBurns}</p> : (
-            <ul className="burn-list">
-              {[...(data.burns ?? []), ...(compact ? [] : older)].slice(0, compact ? 5 : undefined).map((b) => (
-                <li key={b.signature}>
-                  <span><strong>{units(b.burnedRaw, d)}</strong> <span className="micro">$COMETAIL for</span> <Money lamports={b.spentLamports} /></span>
-                  <span className="micro">{when(b.blockTime)} · <a className="text-link" href={EXPLORER("tx", b.signature)} target="_blank" rel="noreferrer">{short(b.signature, 6)} ↗</a></span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {!compact && (olderCursor === undefined ? data.burnsNextCursor : olderCursor) && <button type="button" className="button button-secondary mt-3" disabled={paging} onClick={() => void more()}>{copy.showMore}</button>}
-          <p className="micro mt-3"><a className="text-link" href={EXPLORER("address", data.program)} target="_blank" rel="noreferrer">{copy.program} {short(data.program)} ↗</a>{compact && data.cometail ? <> · <Link className="text-link" href={`/token/${data.cometail.mint}`}>{copy.more} ↗</Link></> : null}</p>
+          {compact ? body : <details className="burn-more mt-3">
+            <summary>{copy.everyBurn(data.burnsTotal ?? 0)}</summary>
+            {body}
+          </details>}
         </>}
     </Card>
   );

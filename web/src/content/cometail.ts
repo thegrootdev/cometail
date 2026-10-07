@@ -93,7 +93,8 @@ export const feeIndex = {
 /** $COMETAIL buyback and burn (components/BurnPanel.tsx, docs/burn.md). */
 export const burnPanel = {
   title: "$COMETAIL buyback and burn",
-  body: "Half of the protocol's fees buy $COMETAIL on its pool and burn it, on chain. Anyone can check every burn below.",
+  body: "Half of the protocol's fees buy $COMETAIL on its pool and burn it, on chain.",
+  everyBurn: (n: number) => `Every burn (${n}) and how it's counted`,
   loading: "Reading the burn program…",
   unavailable: "The burn figures are not answering right now.",
   notSetUp: "The burn program is not set up on this network yet.",

@@ -371,3 +371,9 @@ h3 { font-size: 19px; }
 .compact-extras .social-pills a > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .sell-source { padding: 10px 12px !important; border-color: var(--glass-line) !important; background: #ffffff06; }
 .sell-source .source-kind { margin: 2px 0; font-size: 12px; }
+
+/* $COMETAIL burn panel: the numbers up front, every burn and the accounting in one fold. */
+.burn-panel .burn-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.burn-panel .burn-stats > div { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: #ffffff08; border: 1px solid #ffffff14; min-width: 0; }
+.burn-panel .burn-stats strong { font-size: 16px; font-weight: 800; overflow-wrap: anywhere; }
+.burn-more > summary { cursor: pointer; display: flex; align-items: center; min-height: 44px; font-weight: 800; font-size: 14px; color: var(--ion); }
