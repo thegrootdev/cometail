@@ -42,13 +42,14 @@ export default function AdminBurnPage() {
       if (pool && mint) {
         // the same rules the program enforces at setup, checked here first so a mistake shows before signing
         const p: any = await new CpAmm(connection).fetchPoolState(pool);
-        const fee = Buffer.from(p.poolFees.baseFee.baseFeeInfo.data);
-        const cliff = fee.readBigUInt64LE(0);
+        // read with a DataView: the browser's Buffer polyfill has no 64-bit readers
+        const fee = Uint8Array.from(p.poolFees.baseFee.baseFeeInfo.data as number[]);
+        const cliff = new DataView(fee.buffer, fee.byteOffset, fee.byteLength).getBigUint64(0, true);
         const checks: [boolean, string][] = [
           [p.tokenAMint.equals(mint), `token A is $COMETAIL (${p.tokenAMint.toBase58()})`],
           [p.tokenBMint.toBase58() === WSOL, "token B is SOL"],
           [Number(p.collectFeeMode) === 2, `compounding pool (collect fee mode ${p.collectFeeMode})`],
-          [cliff >= 10_000_000n && fee.subarray(8).every((b: number) => b === 0), `constant fee of at least 1% (${Number(cliff) / 1e7}%)`],
+          [cliff >= 10_000_000n && fee.subarray(8).every((b) => b === 0), `constant fee of at least 1% (${Number(cliff) / 1e7}%)`],
           [Number(p.poolFees.dynamicFee.initialized) === 0, "no dynamic fee"],
           [Number(p.poolStatus) === 0, "pool enabled"],
         ];
