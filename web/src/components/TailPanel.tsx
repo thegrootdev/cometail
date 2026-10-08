@@ -62,7 +62,7 @@ export function TailPanel({ mint }: { mint: string }) {
                   <div><dt>{copy.kept}</dt><dd className="money"><Money lamports={c.keptLamports} /></dd></div>
                   <div><dt>{copy.toBurn}</dt><dd className="money"><Money lamports={c.toBurnLamports} /></dd></div>
                   <div><dt>{copy.burned(TARGET)}</dt><dd>{burnedText(c)}</dd></div>
-                  <div><dt>{copy.added}</dt><dd className="money"><Money lamports={c.liquidity.addedLamports} /><span className="micro">+ {units(c.liquidity.addedRaw, TARGET_DECIMALS, 0)} {TARGET}</span></dd></div>
+                  <div><dt>{copy.added}</dt><dd className="money"><Money lamports={c.liquidity.addedLamports} /><span className="micro tail-plus">+ {units(c.liquidity.addedRaw, TARGET_DECIMALS, 0)} {TARGET}</span></dd></div>
                 </dl>
                 <p className="micro">
                   <a href={EXPLORER("tx", c.signature)} target="_blank" rel="noreferrer">{copy.tx} {short(c.signature)}</a>
