@@ -82,19 +82,22 @@ export interface Tail {
 }
 /** /api/burn (worker burnview.ts, docs/burn.md). Exact counters are strings of raw units; null is unknown, never zero. */
 export type BurnRow = { signature: string; slot: number; idx: number; blockTime: number | null; spentLamports: string; receivedRaw: string; burnedRaw: string; minOutRaw: string };
-/** A tail's claims from /api/tail-claims/:mint (worker/src/tails.ts). Lamports and raw units as strings;
- *  `burn` is null while the reserve ledger is incomplete, `burnedRaw` null when a buyback's burn is unknown. */
+/** A tail's claims from /api/tail-claims/:mint (worker/src/tails.ts). Lamports and raw units as strings. Every
+ *  creator claim is listed, split or not (`status`); `burn` is null until the reserve's ledger proves where the
+ *  claim's SOL went; totals are null until the history they sum is complete. */
 export interface TailClaim {
   signature: string; slot: number; blockTime: number | null;
-  claimedLamports: string; keptLamports: string; toBurnLamports: string;
-  burn: { spentLamports: string; waitingLamports: string; burnedRaw: string | null; buybacks: string[] } | null;
-  liquidity: { swapInLamports: string; addedLamports: string; addedRaw: string; liquidity: string };
+  source: "curve" | "pool"; status: "split" | "unsplit" | "incomplete" | "ambiguous";
+  claimedLamports: string; keptLamports: string | null; toBurnLamports: string | null;
+  burn: { spentLamports: string; waitingLamports: string; boughtRaw: string; buybacks: string[] } | null;
+  liquidity: { swapInLamports: string | null; addedLamports: string; addedRaw: string; liquidity: string; locked: boolean; position: string } | null;
 }
 export interface TailInfo {
-  mint: string; config: string; curve: string; targetPool: string; position: string | null;
-  totals: { claims: number; claimedLamports: string; keptLamports: string; toBurnLamports: string; burnedRaw: string | null; liquidityLamports: string; liquidityRaw: string; lockedLiquidity: string };
+  mint: string; config: string; curve: string; targetPool: string; creators: string[]; graduatedPool: string | null; positions: string[];
+  totals: { claims: number | null; notSplit: number | null; claimedLamports: string | null; toBurnLamports: string | null; boughtRaw: string | null; liquidityLamports: string | null; liquidityRaw: string | null; lockedLiquidity: string | null; payoutLamports: string | null };
   claims: TailClaim[];
-  coverage: { claims: { status: string; atMs: number | null }; reserve: { status: string; atMs: number | null } };
+  payouts: { signature: string; slot: number; blockTime: number | null; kind: "migrationFee" | "surplus"; lamports: string }[];
+  coverage: { claims: { status: string; atMs: number | null }; reserve: { status: string; atMs: number | null }; reserveVerified: boolean };
 }
 export interface BurnView {
   program: string; claimer: string; sharePct: number; status: "live" | "not-set-up" | "unavailable"; observedSlot?: number;

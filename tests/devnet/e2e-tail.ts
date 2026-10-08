@@ -24,7 +24,7 @@ import { migrateTails } from "../../worker/src/keeper";
 import { LookupTables } from "../../worker/src/lut";
 import { openStore } from "../../worker/src/store";
 import { readBurnState } from "../../worker/src/burn";
-import { chainWalkDeps, parseTails, tailIndexPass, tailView } from "../../worker/src/tails";
+import { chainWalkDeps, parseTails, refreshSources, tailIndexPass, tailView } from "../../worker/src/tails";
 import { NATIVE_MINT, poolAddrs, ata, ataIx, createConfigIx, curveBuyIx, dammPool, dammSwapIx, dbcConfig, dbcPool, deriveDammV2PoolAddress, log, positionOwnedBy, send, smallConfigParams, tokenBalance, wrapSolIxs, DAMM_V2_MIGRATION_CONFIG } from "./rpc";
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -47,7 +47,9 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
   it("claims split by hand in one transaction, indexed and traced to the burn; graduation payout; graduated fees through the burn", async () => {
     const connection = new Connection(RPC, "confirmed");
     if ((await connection.getGenesisHash()) !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG") throw new Error("not devnet");
-    const authority = key("authority"), keeper = key("keeper"), buyer = key("buyer"), creator = key("depositor");
+    const authority = key("authority"), keeper = key("keeper"), buyer = key("buyer");
+    // a fresh creator wallet: the index finds its claims through this wallet's own transactions
+    const creator = Keypair.generate();
     const chain = new Chain(connection);
     const client = new BurnClient(connection);
     const record: any = { startedAt: new Date().toISOString(), rpc: RPC.replace(/api-key=[^&]+/, "api-key=…"), steps: [] };
@@ -58,7 +60,8 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
     expect(st, "the burn program is set up on devnet").not.null;
     const target = st.pool;
     step("burn program and its stand-in $COMETAIL pool", { reserve: st.reserve.toBase58(), cometailMint: st.cometailMint.toBase58(), pool: target.toBase58() });
-    if ((await connection.getBalance(creator.publicKey)) < 150_000_000) await send(connection, [SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: creator.publicKey, lamports: 200_000_000 })], [authority], { label: "authority funds the tail creator" });
+    await send(connection, [SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: creator.publicKey, lamports: 250_000_000 })], [authority], { label: "authority funds the fresh tail creator" });
+    if ((await connection.getBalance(buyer.publicKey)) < 1_000_000_000) await send(connection, [SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: buyer.publicKey, lamports: 800_000_000 })], [authority], { label: "authority funds the buyer" });
 
     // 1. the fee-sale config (stream-50's parameters, devnet scale) and the tail, launched by the plain wallet
     const cfgKp = Keypair.generate(), tailKp = Keypair.generate();
@@ -109,6 +112,14 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
       step(`claim ${round}`, claims[claims.length - 1]);
     }
 
+    // 3b. a claim that is not split (the creator claims directly): the index must list it as such
+    await roundTrip((R * 5n) / 10n, "trades 3");
+    const owedRaw = big((await dbcPool(connection, L.pool)).creatorQuoteFee);
+    const { dbcProgram: dbcP } = await import("../harness/programs");
+    const rawClaim = await dbcP.methods.claimCreatorTradingFee(new BN(0), new BN(owedRaw.toString())).accountsPartial({ poolAuthority: DBC_POOL_AUTHORITY, pool: L.pool, tokenAAccount: ata(tailKp.publicKey, creator.publicKey), tokenBAccount: wsol, baseVault: L.baseVault, quoteVault: L.quoteVault, baseMint: tailKp.publicKey, quoteMint: NATIVE_MINT, creator: creator.publicKey, tokenBaseProgram: TOKEN_PROGRAM_ID, tokenQuoteProgram: TOKEN_PROGRAM_ID }).instruction();
+    const unsplitSig = await send(connection, [rawClaim], [creator], { cu: 200_000, label: "a claim with no split" });
+    step("unsplit claim", { signature: unsplitSig, claimed: owedRaw });
+
     // 4. a buyback spends the reserve (when the cooldown allows), then the worker's tail index reads it all
     const fresh = (await readBurnState(chain, client))!;
     const due = fresh.lastBuyTs.toNumber() + 600 <= Math.floor(Date.now() / 1000);
@@ -119,23 +130,22 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
     } else step("buyback skipped: cooldown", { lastBuyTs: fresh.lastBuyTs.toNumber() });
     const dbPath = path.join(ROOT, ".local", `e2e-tail-store-${Date.now()}.sqlite`);
     const store = openStore(`sqlite:${dbPath}`); await store.init();
-    const tails = parseTails(`${tailKp.publicKey.toBase58()}:${cfgKp.publicKey.toBase58()}:${target.toBase58()}:${setup.position.toBase58()}`);
+    const tails = parseTails(`${tailKp.publicKey.toBase58()}:${cfgKp.publicKey.toBase58()}:${target.toBase58()}`);
+    const index = async (want: (v: any) => boolean) => { for (let i = 0; i < 15; i++) { await tailIndexPass(chainWalkDeps(connection), store, tails, st.reserve, (t) => refreshSources(chain, store, t)); const v: any = (await tailView(store, tails, null)).tails[0]; if (v.coverage.claims.status === "complete" && v.coverage.reserve.status === "complete" && want(v)) return v; await sleep(5_000); } return (await tailView(store, tails, null)).tails[0] as any; };
     expect(tails[0].curve.equals(L.pool)).true;
-    for (let i = 0; i < 12; i++) {
-      await tailIndexPass(chainWalkDeps(connection), store, tails, st.reserve);
-      const v: any = (await tailView(store, tails, null)).tails[0];
-      if (v.coverage.claims.status === "complete" && v.coverage.reserve.status === "complete" && v.claims.length === 2) break;
-      await sleep(5_000);
-    }
-    const view: any = (await tailView(store, tails, null)).tails[0];
-    expect(view.claims.length).eq(2);
+    const view: any = await index((v) => v.claims.length >= 3);
+    expect(view.claims.length).eq(3);
     for (const c of claims) {
       const r = view.claims.find((x: any) => x.signature === c.signature);
       expect(r, `indexed claim ${c.round}`).not.undefined;
+      expect(r.status).eq("split");
       expect(r.claimedLamports).eq(c.claimable.toString());
       expect(r.toBurnLamports).eq(c.split.toBurn.toString());
       expect(r.liquidity.liquidity).eq(c.liquidityDelta.toString());
     }
+    const u = view.claims.find((x: any) => x.signature === unsplitSig);
+    expect([u.status, u.claimedLamports, u.toBurnLamports]).deep.eq(["unsplit", owedRaw.toString(), null]);
+    expect(view.totals.notSplit).eq(1);
     expect(view.totals.lockedLiquidity).eq(lockedTotal.toString());
     step("worker tail index", { coverage: view.coverage, totals: view.totals, claims: view.claims.map((c: any) => ({ signature: c.signature, toBurn: c.toBurnLamports, burn: c.burn, liquidity: c.liquidity })) });
 
@@ -164,6 +174,11 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
     expect(toReserve > 0n).true;
     expect(Number(toOwner - toReserve) <= 1 && Number(toReserve - toOwner) <= 1, "half each").true;
     step("graduated position fees", { signature: gsig, toReserve, toOwner });
+    const after: any = await index((v) => v.claims.some((c: any) => c.source === "pool") && v.payouts.length > 0);
+    const pc = after.claims.find((c: any) => c.signature === gsig);
+    expect(pc && [pc.source, pc.status, pc.toBurnLamports]).deep.eq(["pool", "split", toReserve.toString()]);
+    expect(after.payouts.map((p: any) => p.signature)).include(payoutSig);
+    step("worker tail index after graduation", { totals: after.totals, coverage: after.coverage, payouts: after.payouts, poolClaim: pc });
     record.finishedAt = new Date().toISOString();
     fs.writeFileSync(out, JSON.stringify(record, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2));
     await store.close();

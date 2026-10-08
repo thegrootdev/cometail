@@ -49,10 +49,10 @@ export default function AdminTailsPage() {
       const t = await readTail(connection, publicKey, mint);
       setTail(t);
       // the worker's configured position first, else the only locked one this wallet holds in the pool
-      const pick = t.positions.find((p) => p.position.toBase58() === configured?.position) ?? (t.positions.length === 1 ? t.positions[0] : null);
+      const pick = t.positions.find((p) => configured?.positions.includes(p.position.toBase58())) ?? (t.positions.length === 1 ? t.positions[0] : null);
       setChosen(pick?.position.toBase58() ?? "");
     } catch (e: any) { setReadError(String(e?.message ?? e)); setTail(null); }
-  }, [connection, publicKey?.toBase58(), mint?.toBase58(), configured?.position]);
+  }, [connection, publicKey?.toBase58(), mint?.toBase58(), configured?.positions.join(",")]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const launch = async () => {
@@ -93,7 +93,7 @@ export default function AdminTailsPage() {
   const graduatedClaim = async () => { if (publicKey && mint && tail) { const sig = await run(() => graduatedClaimTx(connection, publicKey, mint, tail), [], 400_000); if (sig) await refresh(); } };
 
   const split = tail ? tailSplit(tail.claimable) : null;
-  const workerLine = mint ? `${mint.toBase58()}:${TAIL_CONFIG.toBase58()}:${COMETAIL_POOL?.toBase58() ?? "<$COMETAIL pool>"}${chosen ? `:${chosen}` : ""}` : "";
+  const workerLine = mint ? `${mint.toBase58()}:${TAIL_CONFIG.toBase58()}:${COMETAIL_POOL?.toBase58() ?? "<$COMETAIL pool>"}` : "";
 
   return (
     <Shell>
@@ -141,7 +141,7 @@ export default function AdminTailsPage() {
               ))}
             </ul>
           )}
-          {tail.positions.length > 1 && !configured?.position && <p className="mt-2 text-sm">More than one position in this pool: choose the tail&apos;s, and put it in the worker setting.</p>}
+          {tail.positions.length > 1 && !configured?.positions.length && <p className="mt-2 text-sm">More than one position in this pool: choose the one this tail&apos;s claims should add to.</p>}
         </Card>
       )}
 
@@ -151,7 +151,7 @@ export default function AdminTailsPage() {
             <li>creator fees waiting: {sol(tail.claimable)}</li>
             <li>stays in your wallet: {sol(split.kept)}</li>
             <li>to the $COMETAIL burn reserve: {sol(split.toBurn)}</li>
-            <li>to $COMETAIL liquidity, locked: {sol(split.toLiquidity)} (a little over half is swapped to $COMETAIL first)</li>
+            <li>to $COMETAIL liquidity, locked: {sol(split.toLiquidity)} (part of it is swapped to $COMETAIL first, sized so both sides add fully)</li>
           </ul>
           <div className="flex gap-2 mt-2">
             <button className="pill" onClick={simulateClaim} disabled={!position || !tail.target || split.toLiquidity < 1_000n}>Simulate</button>

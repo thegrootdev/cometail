@@ -10,7 +10,7 @@ import { BurnClient } from "@cometail/client";
 import { Chain } from "../../worker/src/chain";
 import { readBurnState, nextBuyback } from "../../worker/src/burn";
 import { openStore } from "../../worker/src/store";
-import { chainWalkDeps, parseTails, tailIndexPass, tailView } from "../../worker/src/tails";
+import { chainWalkDeps, parseTails, refreshSources, tailIndexPass, tailView } from "../../worker/src/tails";
 import { dammPool, log, send, tokenBalance } from "./rpc";
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -27,13 +27,14 @@ describe("devnet: the tail claims' SOL, bought back and burned", () => {
     if ((await connection.getGenesisHash()) !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG") throw new Error("not devnet");
     const chain = new Chain(connection), client = new BurnClient(connection), keeper = key("keeper");
     const launched = s("tail launched"), pos = s("locked position"), st0 = s("burn program and its stand-in $COMETAIL pool");
-    const tails = parseTails(`${launched.mint}:${launched.config}:${st0.pool}:${pos.position}`);
+    const tails = parseTails(`${launched.mint}:${launched.config}:${st0.pool}`);
+    void pos;
     const store = openStore(`sqlite:${path.join(ROOT, ".local", `e2e-tail-burn-store-${Date.now()}.sqlite`)}`); await store.init();
-    const view = async () => { for (let i = 0; i < 8; i++) { await tailIndexPass(chainWalkDeps(connection), store, tails, new PublicKey(st0.reserve)); const v: any = (await tailView(store, tails, null)).tails[0]; if (v.coverage.reserve.status === "complete" && v.coverage.claims.status === "complete") return v; await sleep(5_000); } return (await tailView(store, tails, null)).tails[0] as any; };
+    const view = async () => { for (let i = 0; i < 8; i++) { await tailIndexPass(chainWalkDeps(connection), store, tails, new PublicKey(st0.reserve), (t) => refreshSources(chain, store, t)); const v: any = (await tailView(store, tails, null)).tails[0]; if (v.coverage.reserve.status === "complete" && v.coverage.claims.status === "complete") return v; await sleep(5_000); } return (await tailView(store, tails, null)).tails[0] as any; };
     const buybacks: string[] = [];
     for (let round = 0; round < 10; round++) {
       const v = await view();
-      if (v.claims.every((c: any) => c.burn && BigInt(c.burn.waitingLamports) === 0n)) break;
+      if (v.claims.filter((c: any) => c.toBurnLamports !== null).every((c: any) => c.burn && BigInt(c.burn.waitingLamports) === 0n)) break;
       const st = (await readBurnState(chain, client))!;
       const p = await dammPool(connection, st.pool);
       const reserve = BigInt((await tokenBalance(connection, st.reserve)).toString());
@@ -42,8 +43,9 @@ describe("devnet: the tail claims' SOL, bought back and burned", () => {
       buybacks.push(await send(connection, [await client.buyback({ state: st, tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault })], [keeper], { cu: 400_000, label: `buyback ${buybacks.length + 1}` }));
     }
     const v = await view();
-    for (const c of v.claims) { expect(c.burn, "traced").not.null; expect(BigInt(c.burn.waitingLamports)).eq(0n); expect(BigInt(c.burn.burnedRaw) > 0n).true; }
-    record.steps.push({ name: "claims bought back and burned", buybacks, totals: v.totals, claims: v.claims.map((c: any) => ({ signature: c.signature, toBurn: c.toBurnLamports, burn: c.burn })) });
+    for (const c of v.claims.filter((x: any) => x.toBurnLamports !== null)) { expect(c.burn, "traced").not.null; expect(BigInt(c.burn.waitingLamports)).eq(0n); expect(BigInt(c.burn.boughtRaw) > 0n).true; }
+    expect(v.coverage.reserveVerified).eq(true);
+    record.steps.push({ name: "claims bought back and burned", buybacks, totals: v.totals, claims: v.claims.map((c: any) => ({ signature: c.signature, source: c.source, status: c.status, toBurn: c.toBurnLamports, burn: c.burn })) });
     fs.writeFileSync(file, JSON.stringify(record, null, 2));
     log("claims bought back and burned", { totals: v.totals });
     await store.close();

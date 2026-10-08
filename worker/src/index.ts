@@ -17,7 +17,7 @@ import { openStore } from "./store";
 import { keeperPass } from "./keeper";
 import { LookupTables } from "./lut";
 import { log } from "./tx";
-import { chainWalkDeps, reserveAddress, tailIndexPass, tailView } from "./tails";
+import { chainWalkDeps, refreshSources, reserveAddress, tailIndexPass, tailView } from "./tails";
 
 export const WORKER_VERSION = "0.1.0";
 
@@ -57,7 +57,7 @@ async function main() {
       // the burn program's events: their own cursor, never fatal to the pass
       if (cfg.burnConfigs?.length) { try { await burnIndexPass(chainDeps(chain.connection), store); } catch (e) { log("burn index pass failed", { error: String((e as Error).message ?? e) }); } }
       // tail claims and the reserve ledger they are traced through: their own cursors, never fatal to the pass
-      if (cfg.tails.length) { try { await tailIndexPass(chainWalkDeps(chain.connection), store, cfg.tails, reserveAddress()); } catch (e) { log("tail index pass failed", { error: String((e as Error).message ?? e) }); } }
+      if (cfg.tails.length) { try { await tailIndexPass(chainWalkDeps(chain.connection), store, cfg.tails, reserveAddress(), (t) => refreshSources(chain, store, t)); } catch (e) { log("tail index pass failed", { error: String((e as Error).message ?? e) }); } }
       // the Sky refreshes on its schedule, and right away when new events change what it shows
       if (added > 0 || passes % cfg.skyEveryPasses === 0) {
         try {

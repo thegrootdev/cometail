@@ -100,8 +100,8 @@ export function liquidityFor(amountA: bigint, amountB: bigint, tokenA: bigint, t
   return fromA < fromB ? fromA : fromB;
 }
 
-/** How much of the liquidity quarter to swap into $X so that both sides deposit fully: a little over half,
- *  because the swap pays the pool fee and moves the price. Found by bisection on the exact quote; returns the
+/** How much of the liquidity quarter to swap into $X so that both sides deposit fully: a little over half for a
+ *  claim small next to the pool (the swap pays the pool fee), below half when the claim moves the price. Found by bisection on the exact quote; returns the
  *  swap, its output and the liquidity both sides cover at the reserves after the swap. */
 export function liquidityPlan(p: CompoundingPool, total: bigint) {
   const at = (swapIn: bigint) => {
@@ -109,8 +109,9 @@ export function liquidityPlan(p: CompoundingPool, total: bigint) {
     const fromA = (q.out * p.liquidity) / q.tokenAAfter, fromB = ((total - swapIn) * p.liquidity) / q.tokenBAfter;
     return { swapIn, q, fromA, fromB, delta: fromA < fromB ? fromA : fromB };
   };
-  // fromA grows with the swap and fromB shrinks: the best swap is where they cross
-  let lo = total / 2n, hi = (total * 3n) / 4n;
+  // fromA grows with the swap (more $X out, a smaller $X reserve) and fromB shrinks (less SOL left, a larger SOL
+  // reserve): the best swap is where they cross, anywhere in [0, total]. Price impact can put it below half.
+  let lo = 0n, hi = total;
   while (hi - lo > 1n) { const mid = (lo + hi) / 2n; if (at(mid).fromA < at(mid).fromB) lo = mid; else hi = mid; }
   const a = at(lo), b = at(hi);
   return a.delta >= b.delta ? a : b;

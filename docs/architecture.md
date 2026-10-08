@@ -116,7 +116,7 @@ It uses no vault and no program of ours; $X is untouched.
   parameters).
 - **Claims.** One transaction signed by the creator wallet (`tailClaimIxs` in `packages/client/src/tail.ts`):
   DBC `claim_creator_trading_fee` of exactly the amount the pool owed when it was read; a quarter transferred to
-  the burn reserve; a little over half of another quarter swapped into $X on $X's compounding DAMM v2 pool (the
+  the burn reserve; part of another quarter swapped into $X on $X's compounding DAMM v2 pool (the
   swap size that lets both sides deposit fully, with a minimum out from the state just read); that $X and the rest
   of the quarter added to the wallet's own position; exactly the added liquidity permanently locked. The rest
   stays in the wallet. If a trade lands between the read and the send, the add fails and nothing moves. The
@@ -125,9 +125,14 @@ It uses no vault and no program of ours; $X is untouched.
 - **After graduation.** The keeper migrates configured tails (`migrateTails`). The creator wallet collects the
   graduation payout itself (`tailCashoutIxs`), and claims the creator position's pool fees through the burn
   program's `owner_claim_position_fees`, which sends half to the reserve in the same instruction.
-- **What the site shows.** The worker reads every claim from the events Meteora emitted (walking the locked
-  position's transactions) and keeps a ledger of every inflow to and outflow from the burn reserve (walking the
-  reserve's transactions). Each claim's SOL is traced first in, first out to the buybacks that spent it, and the
-  $COMETAIL those buybacks burned is attributed in proportion. `/api/tail-claims/:mint` serves it; the tail's
-  token page shows it, and says plainly that the split is ours, done by hand, not enforced by code.
-
+- **What the site shows.** The worker finds every claim, split or not, through the transactions of the curve's
+  creator (DBC requires the creator's signature for every creator claim and graduation withdrawal) and, after
+  graduation, of the creator's positions in the tail's own pool. Each split leg is bound to its own instruction
+  after the claim and to the claim's accounts; a claim with no legs is "not split", with some "partly split", with
+  repeated legs "unclear". The burn reserve gets a gross ledger: every transfer into or out of it in execution
+  order, each buyback's outflow tied to its event, transactions ordered inside a slot by linking balances. Each
+  claim's SOL is traced first in, first out to the buybacks that spent it and credited with the $COMETAIL they
+  bought (not tokens burned with them that they did not buy). Whatever the ledger cannot prove (a break in the
+  balance chain, an unexplained movement, a slot with more than one consistent order) is shown as unknown, and no
+  total is shown before the history it sums has been read. `/api/tail-claims/:mint` serves it; the tail's token
+  page shows it, and says plainly that the split is ours, done by hand, not enforced by code.

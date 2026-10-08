@@ -124,8 +124,10 @@ no program of ours involved. When the owner claims the tail's creator fees on `/
 splits them: half stays in the wallet, a quarter goes to the burn reserve (which can only buy $COMETAIL and burn
 it), and a quarter becomes $COMETAIL liquidity in a position the wallet holds, permanently locked by DAMM v2 in
 that transaction. **The split is done by us, by hand, in the open; no code forces it.** The tail's page lists
-every claim with its transaction: the SOL sent to the burn, the $COMETAIL that SOL burned (traced first in, first
-out through the reserve) and the liquidity locked. At graduation, 50% of the raise goes to the creator wallet
+every claim of the tail's creator fees with its transaction, found through the creator wallet's own transactions,
+including any claim that was not split: the SOL sent to the burn, the $COMETAIL the buybacks that spent that SOL
+bought and burned (traced first in, first out through the reserve, shown only when the reserve's ledger proves it)
+and the liquidity locked. At graduation, 50% of the raise goes to the creator wallet
 (DBC's creator migration fee) and the rest is locked in the tail's own pool; after graduation, the creator
 position's fees are claimed through the burn program's owner claim, which sends half to the reserve by itself.
 How it fits together: `docs/architecture.md` (Tails); the numbers: `docs/economics.md`.

@@ -3,7 +3,7 @@
 // compounding DAMM v2 pool as liquidity in the wallet's own position, permanently locked. Checked here against
 // the mainnet Meteora binaries: the exact split, the transaction size, the lock, the pool math the builder
 // predicts, the graduation payout, and the tail's own graduated position through the burn program's owner claim.
-import { BN } from "@coral-xyz/anchor";
+import { BN, utils } from "@coral-xyz/anchor";
 import { ComputeBudgetProgram, Keypair, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { FailedTransactionMetadata } from "litesvm";
 import { NATIVE_MINT, getAssociatedTokenAddressSync } from "@solana/spl-token";
@@ -14,27 +14,29 @@ import { send, expectFail } from "../harness/tx";
 import { ensureAta, balance, wrapSol } from "../harness/tokens";
 import * as dbc from "../harness/dbc";
 import * as damm from "../harness/damm";
-import { parseTailClaim, parseReserveFlow, traceReserve, type TxView } from "../../worker/src/tails";
+import { parseCreatorTx, parsePositionTx, parseReserveTx, type Ix, type TxView } from "../../worker/src/tails";
 
 const big = (v: any) => BigInt(v.toString());
-/** Sends like harness/tx.send and returns the indexer's view of the transaction (inner instructions, logs and
- *  the token deltas of the given accounts), as tails.ts reads it from getTransaction. */
+const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 });
+/** Sends like harness/tx.send and returns the indexer's view of the transaction (top-level and inner
+ *  instructions, logs, the token balances of the watched accounts), as tails.ts reads it from getTransaction. */
 function sendView(svm: any, ixs: TransactionInstruction[], signers: Keypair[], watch: PublicKey[]): { bytes: number; cu: bigint; view: TxView } {
   const tx = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), price, ...ixs);
   tx.feePayer = signers[0].publicKey; tx.recentBlockhash = svm.latestBlockhash(); tx.sign(...signers);
-  const keys = tx.compileMessage().accountKeys;
-  const amount = (k: PublicKey) => { const a = svm.getAccount(k); return a ? Buffer.from(a.data).readBigUInt64LE(64) : 0n; };
+  const msg = tx.compileMessage();
+  const keys = msg.accountKeys;
+  const amount = (k: PublicKey) => { const a = svm.getAccount(k); return a && a.data.length >= 72 ? Buffer.from(a.data).readBigUInt64LE(64) : 0n; };
   const pre = new Map(watch.map((k) => [k.toBase58(), amount(k)]));
   const bytes = tx.serialize().length;
   const res = svm.sendTransaction(tx); svm.expireBlockhash();
   if (res instanceof FailedTransactionMetadata) throw new Error(`failed: ${res.err()}\n${res.meta().logs().join("\n")}`);
-  const inner = res.innerInstructions().flat().map((i: any) => ({ programId: keys[i.instruction().programIdIndex()], data: Buffer.from(i.instruction().data()) }));
-  const view: TxView = { signature: "local", slot: 1, blockTime: null, err: false, signer: signers[0].publicKey.toBase58(), inner, logs: res.logs(),
-    tokenDelta: (k) => pre.has(k.toBase58()) ? amount(k) - pre.get(k.toBase58())! : null };
+  const top: Ix[] = msg.instructions.map((ix) => ({ programId: keys[ix.programIdIndex], accounts: ix.accounts.map((i) => keys[i]), data: Buffer.from(utils.bytes.bs58.decode(ix.data)) }));
+  const inner = new Map<number, Ix[]>();
+  res.innerInstructions().forEach((group: any[], i: number) => { if (group.length) inner.set(i, group.map((x: any) => ({ programId: keys[x.instruction().programIdIndex()], accounts: [...x.instruction().accounts()].map((k: number) => keys[k]), data: Buffer.from(x.instruction().data()) }))); });
+  const view: TxView = { signature: "local", slot: 1, blockTime: null, err: false, top, inner, logs: res.logs(),
+    balance: (k) => (pre.has(k.toBase58()) ? { pre: pre.get(k.toBase58())!, post: amount(k) } : null) };
   return { bytes, cu: res.computeUnitsConsumed(), view };
 }
-const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 10_000 });
-
 async function world() {
   const owner = Keypair.generate();
   const svm = startSvm({ upgradeAuthority: owner.publicKey, burnAuthority: owner.publicKey });
@@ -114,21 +116,26 @@ describe("gate 22: tail claims by a plain wallet", () => {
       // the balanced swap and the 0.2% margin leave under 0.4% of the liquidity quarter in the wallet
       expect(Number(s.liquiditySol - depositedB) / Number(s.liquiditySol)).lt(0.004);
       expect(Number(xGot) / Number(q.out)).lt(0.004);
-      // the indexer reads the same numbers back from the events Meteora emitted
-      const parsed = parseTailClaim(sent.view, { mint: w.tail.mint.toBase58(), curve: w.tail.pool.toBase58(), targetPool: w.comet.pool.toBase58(), position: setup.position.toBase58() }, w.state.reserve)!;
-      expect(parsed, "parsed as a tail claim").not.null;
-      expect(parsed.claimedLamports).eq(claimable.toString());
-      expect(parsed.toBurnLamports).eq(s.toBurn.toString());
-      expect(parsed.swapInLamports).eq(s.swapIn.toString());
-      expect(parsed.swapOutRaw).eq(q.out.toString());
-      expect(parsed.addedLamports).eq(depositedB.toString());
-      expect(parsed.addedRaw).eq(depositedA.toString());
-      expect(parsed.liquidity).eq(built.liquidityDelta.toString());
-      expect(parsed.lockedLiquidity).eq(built.liquidityDelta.toString());
-      expect(parseReserveFlow(sent.view, w.state.reserve)!.delta).eq(s.toBurn.toString());
-      // another position or another curve is not this tail's claim
-      expect(parseTailClaim(sent.view, { mint: "x", curve: w.tail.pool.toBase58(), targetPool: w.comet.pool.toBase58(), position: Keypair.generate().publicKey.toBase58() }, w.state.reserve)).null;
-      expect(parseTailClaim(sent.view, { mint: "x", curve: Keypair.generate().publicKey.toBase58(), targetPool: w.comet.pool.toBase58(), position: setup.position.toBase58() }, w.state.reserve)).null;
+      // the indexer reads the same numbers back, each leg bound to its own instruction after the claim
+      const target = { curve: w.tail.pool.toBase58(), targetPool: w.comet.pool.toBase58(), reserve: w.state.reserve.toBase58() };
+      const { claims, payouts } = parseCreatorTx(sent.view, target);
+      expect(payouts).deep.eq([]);
+      expect(claims.length).eq(1);
+      const c = claims[0];
+      expect(c.status).eq("split");
+      expect(c.creator).eq(creator.publicKey.toBase58());
+      expect(c.claimedLamports).eq(claimable.toString());
+      expect(c.toBurn!.lamports).eq(s.toBurn.toString());
+      expect(c.buy).deep.eq({ inLamports: s.swapIn.toString(), outRaw: q.out.toString() });
+      expect(c.add).deep.eq({ position: setup.position.toBase58(), addedRaw: depositedA.toString(), addedLamports: depositedB.toString(), liquidity: built.liquidityDelta.toString() });
+      expect(c.lockedLiquidity).eq(built.liquidityDelta.toString());
+      // the reserve ledger: one top-level inflow of exactly the quarter, balance linked
+      const r = parseReserveTx(sent.view, w.state.reserve)!;
+      expect(r.ok).eq(true);
+      expect(r.legs).deep.eq([{ seq: 0, dir: "in", lamports: s.toBurn.toString(), topLevel: true }]);
+      expect(BigInt(r.post) - BigInt(r.pre)).eq(s.toBurn);
+      // another curve's claim is not this tail's
+      expect(parseCreatorTx(sent.view, { ...target, curve: Keypair.generate().publicKey.toBase58() }).claims).deep.eq([]);
       console.log(JSON.stringify({ round, claimable: claimable.toString(), kept: s.kept.toString(), toBurn: s.toBurn.toString(), swapIn: s.swapIn.toString(), depositedSol: depositedB.toString(), depositedComet: depositedA.toString(), leftoverSol: (s.liquiditySol - depositedB).toString(), leftoverComet: xGot.toString(), liquidityDelta: built.liquidityDelta.toString(), bytes: sent.bytes, cu: sent.cu.toString() }));
     }
     // the locked liquidity cannot come out: DAMM v2 refuses to remove permanently locked liquidity
@@ -141,8 +148,12 @@ describe("gate 22: tail claims by a plain wallet", () => {
     const mig = await dbc.migrateToDammV2(svm, w.keeper, w.tail.pool, DAMM_V2_MIGRATION_CONFIG.customizable);
     const p = dbc.getPool(svm, w.tail.pool);
     const c0 = balance(svm, wsol);
-    send(svm, tailCashoutIxs({ creator: creator.publicKey, config: w.config, curve: curve(w), migrationFeePending: true, surplusPending: Number(p.isCreatorWithdrawSurplus) === 0 }), [creator], { label: "tail: graduation payout" });
+    const paid = sendView(svm, tailCashoutIxs({ creator: creator.publicKey, config: w.config, curve: curve(w), migrationFeePending: true, surplusPending: Number(p.isCreatorWithdrawSurplus) === 0 }), [creator], []);
     expect(balance(svm, wsol).sub(c0).toString()).eq(R.sub(R.muln(50).addn(99).divn(100)).toString());
+    // the creator walk records the payout (migration fee, and the surplus when there is one), not as a claim
+    const pp = parseCreatorTx(paid.view, { curve: w.tail.pool.toBase58(), targetPool: w.comet.pool.toBase58(), reserve: w.state.reserve.toBase58() });
+    expect(pp.claims).deep.eq([]);
+    expect(pp.payouts.reduce((a, x) => a + BigInt(x.lamports), 0n)).eq(big(balance(svm, wsol).sub(c0)));
 
     // after graduation: the tail's creator position fees go through the burn program's owner claim, half to the reserve
     const tailPos = damm.findPositionOwnedBy(svm, [mig.firstPosition, mig.secondPosition], creator.publicKey)!;
@@ -151,19 +162,17 @@ describe("gate 22: tail claims by a plain wallet", () => {
     const tailBase = w.tailBuyerAta;
     send(svm, [await damm.swapIx(svm, { pool: mig.dammPool, payer: w.buyer.publicKey, inputAccount: tailQuote, outputAccount: tailBase, amountIn: new BN(10_000_000_000) })], [w.buyer], { cu: 400_000 });
     const r0 = big(balance(svm, w.state.reserve)), o0 = big(balance(svm, wsol));
-    send(svm, [await w.client.ownerClaimPositionFees({ state: w.state, owner: creator.publicKey, ownerWsol: wsol, pool: mig.dammPool, position: tailPos.position, positionNftAccount: tailPos.nftAccount, tokenAVault: tp.tokenAVault, tokenBVault: tp.tokenBVault, tokenAMint: w.tail.mint })], [creator], { cu: 400_000, label: "tail: graduated position fees through the burn owner claim" });
+    const gv = sendView(svm, [await w.client.ownerClaimPositionFees({ state: w.state, owner: creator.publicKey, ownerWsol: wsol, pool: mig.dammPool, position: tailPos.position, positionNftAccount: tailPos.nftAccount, tokenAVault: tp.tokenAVault, tokenBVault: tp.tokenBVault, tokenAMint: w.tail.mint })], [creator], [w.state.reserve]);
     const toReserve = big(balance(svm, w.state.reserve)) - r0, toOwner = big(balance(svm, wsol)) - o0;
+    // the position walk records it as a pool claim split through the program, and the reserve sees an inner inflow of that half
+    const pc = parsePositionTx(gv.view, new Set([tailPos.position.toBase58()]), mig.dammPool.toBase58());
+    expect(pc).deep.eq([{ kind: "pool", position: tailPos.position.toBase58(), owner: creator.publicKey.toBase58(), claimedLamports: (toReserve + toOwner).toString(), status: "split", toBurn: { lamports: toReserve.toString() } }]);
+    const gr = parseReserveTx(gv.view, w.state.reserve)!;
+    expect(gr.ok).eq(true);
+    expect(gr.legs.filter((l) => l.dir === "in").map((l) => [l.lamports, l.topLevel])).deep.eq([[toReserve.toString(), false]]);
     expect(toReserve > 0n).true;
     expect(Number(toOwner - toReserve)).lte(1); // half each; the odd lamport goes to the other side
     expect(Number(toReserve - toOwner)).lte(1);
-  });
-
-  it("traces reserve inflows to the buybacks that spent them, first in, first out", () => {
-    const f = (signature: string, delta: bigint, burned: bigint | null = null) => ({ signature, slot: 0, delta, burned, spent: delta < 0n ? -delta : null });
-    const t = traceReserve([f("split", 100n), f("tail1", 60n), f("buy1", -120n, 1200n), f("tail2", 40n), f("buy2", -50n, 400n)]);
-    expect(t.get("split")).deep.eq({ spentLamports: 100n, burnedRaw: 1000n, buybacks: ["buy1"], exact: true });
-    expect(t.get("tail1")).deep.eq({ spentLamports: 60n, burnedRaw: 200n + 320n, buybacks: ["buy1", "buy2"], exact: true });
-    expect(t.get("tail2")).deep.eq({ spentLamports: 10n, burnedRaw: 80n, buybacks: ["buy2"], exact: true });
   });
 
   it("refuses a pool the math does not describe, and claims too small to split", async () => {

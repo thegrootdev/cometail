@@ -1,105 +1,228 @@
-// The tail index's walk (worker/src/tails.ts): pages newest to oldest, completes only when the whole history
-// is read, stops at an unreadable transaction (retried, never skipped), resumes across passes and stores each
-// row once; the view traces reserve inflows to buybacks and totals a tail's claims.
+// The tail index (worker/src/tails.ts) on synthetic transactions built from the pinned layouts:
+//   - the walk: pages, completion, unreadable stops, resumes, idempotence;
+//   - claims found and recorded whether split or not, each leg bound to its own instruction (review 156 R2, R3);
+//   - the reserve's gross ledger: balance-linked order inside a slot, mixed inflow and buyback in one transaction,
+//     tokens burned but not bought, breaks and ambiguity reported as unknown (R4, R5);
+//   - the view: nothing totals to zero before its history is complete (R6).
+// The happy path against the real Meteora binaries is gate 22.
 import { createHash } from "crypto";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { NATIVE_MINT } from "@solana/spl-token";
+import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { expect } from "chai";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { BURN_PROGRAM_ID } from "@cometail/client";
 import { openStore } from "../../worker/src/store";
-import { parseTails, tailView, walkPass, type TxView, type WalkDeps } from "../../worker/src/tails";
+import { parseCreatorTx, parsePositionTx, parseReserveTx, parseTails, traceReserve, tailView, walkPass, type Ix, type ReserveRow, type TxView, type WalkDeps } from "../../worker/src/tails";
 
-const sigOf = (i: number) => createHash("sha256").update(`tail${i}`).digest().toString("hex").replace(/[0OIl]/g, "1").slice(0, 88).padEnd(88, "A");
-async function freshStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tail-index-"));
-  const store = openStore(`sqlite:${path.join(dir, "store.sqlite")}`); await store.init();
-  return store;
-}
-function chain(n: number) {
-  const sigs = Array.from({ length: n }, (_, i) => ({ signature: sigOf(i + 1), slot: 1000 + i, err: null as unknown, blockTime: 1_700_000_000 + i }));
-  const unreadable = new Set<string>();
-  const view = (s: (typeof sigs)[number]): TxView => ({ signature: s.signature, slot: s.slot, blockTime: s.blockTime, err: false, signer: "x", inner: [], logs: [], tokenDelta: () => null });
-  const deps: WalkDeps = {
-    getSignatures: async (_a, { before, until, limit }) => {
-      const desc = [...sigs].reverse();
-      let start = 0;
-      if (before) { start = desc.findIndex((s) => s.signature === before) + 1; if (start === 0) return []; }
-      const out: typeof sigs = [];
-      for (let k = start; k < desc.length && out.length < limit; k++) { if (until && desc[k].signature === until) break; out.push(desc[k]); }
-      return out;
-    },
-    readView: async (sig) => (unreadable.has(sig) ? null : view(sigs.find((s) => s.signature === sig)!)),
-  };
-  return { sigs, deps, unreadable, add: (k: number) => { for (let j = 0; j < k; j++) { const i = sigs.length + 1; sigs.push({ signature: sigOf(i), slot: 1000 + i, err: null, blockTime: 1_700_000_000 + i }); } } };
-}
-const rowsOf = (v: TxView) => [{ signature: v.signature, idx: 0, slot: v.slot, blockTime: v.blockTime, name: "reserveFlow", data: { delta: "1", burnedRaw: null, spentLamports: null } }];
+const DBC = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"), DAMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+const TAG = Buffer.from([0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d]);
+const D = {
+  claim: [154, 228, 215, 202, 133, 155, 214, 138], migFee: [26, 203, 84, 85, 161, 23, 100, 214], swapEv: [189, 66, 51, 168, 38, 80, 117, 153],
+  liq: [197, 171, 78, 127, 224, 211, 87, 13], lockEv: [145, 143, 162, 218, 218, 80, 67, 11], posFee: [198, 182, 183, 52, 97, 12, 49, 56],
+  dbcClaimIx: [82, 220, 250, 189, 3, 85, 107, 45], swapIx: [248, 198, 158, 145, 225, 117, 135, 200], addIx: [181, 157, 89, 67, 143, 182, 52, 72], lockIx: [165, 176, 125, 6, 231, 171, 186, 213],
+};
+const u8 = (v: number) => Buffer.from([v]);
+const u64 = (v: bigint | number) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b; };
+const u128 = (v: bigint) => Buffer.concat([u64(v & 0xffffffffffffffffn), u64(v >> 64n)]);
+const key = (p: PublicKey) => p.toBuffer();
+const ev = (programId: PublicKey, disc: number[], ...fields: Buffer[]): Ix => ({ programId, accounts: [], data: Buffer.concat([TAG, Buffer.from(disc), ...fields]) });
+const ixOf = (programId: PublicKey, disc: number[], accounts: PublicKey[]): Ix => ({ programId, accounts, data: Buffer.from(disc) });
+const transfer = (source: PublicKey, dest: PublicKey, authority: PublicKey, amount: bigint): Ix => ({ programId: TOKEN_PROGRAM_ID, accounts: [source, dest, authority], data: Buffer.concat([u8(3), u64(amount)]) });
+const disc = (name: string) => createHash("sha256").update(`event:${name}`).digest().subarray(0, 8);
+const burnLog = (data: Buffer) => [`Program ${BURN_PROGRAM_ID.toBase58()} invoke [1]`, `Program data: ${data.toString("base64")}`, `Program ${BURN_PROGRAM_ID.toBase58()} success`];
+const buybackLog = (spent: bigint, received: bigint, burned: bigint) => burnLog(Buffer.concat([disc("BuybackBurned"), u64(spent), u64(received), u64(burned), u64(1n), u64(1000n), u64(1000n), u64(1n)]));
+const splitLog = (pool: PublicKey, claimant: PublicKey, claimed: bigint, toReserve: bigint) => burnLog(Buffer.concat([disc("ClaimSplit"), u8(3), key(pool), key(claimant), u64(claimed), u64(0n), u64(toReserve), u64(claimed - toReserve), key(claimant)]));
 
-describe("tail index walk", () => {
-  it("reads 450 transactions across passes, completes once, and stores each once", async () => {
+const k = () => Keypair.generate().publicKey;
+const curve = k(), target = k(), reserve = k(), creator = k(), dest = k(), xAta = k(), position = k(), other = k();
+const T = { curve: curve.toBase58(), targetPool: target.toBase58(), reserve: reserve.toBase58() };
+/** The claim's top-level instruction and its event: DBC claim_creator_trading_fee accounts, token_b_account [3], creator [8]. */
+const claimLeg = (quote: bigint, pool = curve): [Ix, Ix[]] => [ixOf(DBC, D.dbcClaimIx, [k(), pool, k(), dest, k(), k(), k(), NATIVE_MINT, creator]), [ev(DBC, D.claim, key(pool), u64(0n), u64(quote))]];
+const burnLeg = (amount: bigint, from = dest): [Ix, Ix[]] => [transfer(from, reserve, creator, amount), []];
+const buyLeg = (amountIn: bigint, out: bigint, direction = 1, input = dest): [Ix, Ix[]] => [ixOf(DAMM, D.swapIx, [k(), target, input, xAta]), [ev(DAMM, D.swapEv, key(target), u8(direction), u8(2), u8(0), u64(amountIn), u64(0n), u8(0), u64(amountIn), u64(amountIn), u64(0n), u64(out))]];
+const addLeg = (a: bigint, b: bigint, delta: bigint, pos = position): [Ix, Ix[]] => [ixOf(DAMM, D.addIx, [target, pos]), [ev(DAMM, D.liq, key(target), key(pos), key(creator), u64(a), u64(b), u64(a), u64(b), u64(0n), u64(0n), u128(delta), u64(a), u64(b), u8(0))]];
+const lockLeg = (amount: bigint, pos = position): [Ix, Ix[]] => [ixOf(DAMM, D.lockIx, [target, pos]), [ev(DAMM, D.lockEv, key(target), key(pos), u128(amount), u128(amount * 7n))]];
+function view(legs: [Ix, Ix[]][], o: { logs?: string[]; reserve?: [bigint, bigint]; signature?: string; slot?: number } = {}): TxView {
+  const inner = new Map<number, Ix[]>(); legs.forEach(([, i], n) => { if (i.length) inner.set(n, i); });
+  return { signature: o.signature ?? "s", slot: o.slot ?? 1, blockTime: 1, err: false, top: legs.map(([t]) => t), inner, logs: o.logs ?? [], balance: (a) => (o.reserve && a.equals(reserve) ? { pre: o.reserve[0], post: o.reserve[1] } : null) };
+}
+
+describe("tail index: claims (review 156 R2, R3)", () => {
+  it("a full split is bound leg by leg; a claim with nothing after it is recorded as not split", () => {
+    const full = parseCreatorTx(view([claimLeg(400n), burnLeg(100n), buyLeg(51n, 5000n), addLeg(4900n, 49n, 77n), lockLeg(77n)]), T).claims;
+    expect(full).deep.eq([{ kind: "curve", claimedLamports: "400", creator: creator.toBase58(), status: "split", toBurn: { lamports: "100", source: dest.toBase58() }, buy: { inLamports: "51", outRaw: "5000" }, add: { position: position.toBase58(), addedRaw: "4900", addedLamports: "49", liquidity: "77" }, lockedLiquidity: "77" }]);
+    const raw = parseCreatorTx(view([claimLeg(400n)]), T).claims;
+    expect(raw.map((c) => [c.status, c.claimedLamports, c.toBurn])).deep.eq([["unsplit", "400", null]]);
+  });
+  it("missing legs make it incomplete; a lock of a different amount is not a lock of the add", () => {
+    const onlyBurn = parseCreatorTx(view([claimLeg(400n), burnLeg(100n)]), T).claims[0];
+    expect([onlyBurn.status, onlyBurn.toBurn?.lamports, onlyBurn.add]).deep.eq(["incomplete", "100", null]);
+    const badLock = parseCreatorTx(view([claimLeg(400n), burnLeg(100n), buyLeg(51n, 5000n), addLeg(4900n, 49n, 77n), lockLeg(76n)]), T).claims[0];
+    expect([badLock.status, badLock.lockedLiquidity]).deep.eq(["incomplete", null]);
+  });
+  it("a reverse swap, a swap from another account, a transfer from another account and legs before the claim are not split legs", () => {
+    const c = parseCreatorTx(view([burnLeg(999n), buyLeg(9n, 9n), claimLeg(400n), buyLeg(999999n, 7n, 0), buyLeg(5n, 5n, 1, other), burnLeg(55n, other), burnLeg(100n), buyLeg(51n, 5000n), addLeg(4900n, 49n, 77n), lockLeg(77n)]), T).claims[0];
+    expect([c.status, c.toBurn?.lamports, c.buy?.inLamports]).deep.eq(["split", "100", "51"]);
+  });
+  it("two buys, two adds or two transfers to the reserve after one claim are ambiguous: no legs reported", () => {
+    for (const legs of [
+      [claimLeg(400n), burnLeg(100n), buyLeg(25n, 2500n), buyLeg(26n, 2500n), addLeg(4900n, 49n, 77n), lockLeg(77n)],
+      [claimLeg(400n), burnLeg(100n), buyLeg(51n, 5000n), addLeg(2000n, 20n, 30n), addLeg(2900n, 29n, 47n), lockLeg(77n)],
+      [claimLeg(400n), burnLeg(50n), burnLeg(50n), buyLeg(51n, 5000n), addLeg(4900n, 49n, 77n), lockLeg(77n)],
+    ]) {
+      const c = parseCreatorTx(view(legs as [Ix, Ix[]][]), T).claims[0];
+      expect([c.status, c.toBurn, c.buy, c.add]).deep.eq(["ambiguous", null, null, null]);
+    }
+    // two claims of the same curve in one transaction: both ambiguous
+    expect(parseCreatorTx(view([claimLeg(400n), claimLeg(10n), burnLeg(100n)]), T).claims.map((c) => c.status)).deep.eq(["ambiguous", "ambiguous"]);
+  });
+  it("another curve's claim is ignored; the creator's graduation payout is recorded apart", () => {
+    expect(parseCreatorTx(view([claimLeg(400n, k())]), T).claims).deep.eq([]);
+    const p = parseCreatorTx(view([[ixOf(DBC, [1, 2, 3, 4, 5, 6, 7, 8], []), [ev(DBC, D.migFee, key(curve), u64(20n), u8(1)), ev(DBC, D.migFee, key(curve), u64(9n), u8(0))]]]), T);
+    expect(p.payouts).deep.eq([{ kind: "migrationFee", lamports: "20" }]);
+  });
+  it("graduated position claims: through the burn owner claim is split, a direct claim is not split", () => {
+    const pool = k();
+    const fee = (feeB: bigint): [Ix, Ix[]] => [ixOf(DAMM, [1, 1, 1, 1, 1, 1, 1, 1], []), [ev(DAMM, D.posFee, key(pool), key(position), key(creator), u64(0n), u64(feeB))]];
+    expect(parsePositionTx(view([fee(1000n)], { logs: splitLog(pool, creator, 1000n, 500n) }), new Set([position.toBase58()]), pool.toBase58())).deep.eq([{ kind: "pool", position: position.toBase58(), owner: creator.toBase58(), claimedLamports: "1000", status: "split", toBurn: { lamports: "500" } }]);
+    expect(parsePositionTx(view([fee(1000n)]), new Set([position.toBase58()]), pool.toBase58())[0].status).eq("unsplit");
+    expect(parsePositionTx(view([fee(1000n)]), new Set([k().toBase58()]), pool.toBase58())).deep.eq([]);
+  });
+});
+
+describe("tail index: the reserve's gross ledger (review 156 R4, R5)", () => {
+  const row = (signature: string, slot: number, legs: [Ix, Ix[]][], pre: bigint, post: bigint, logs: string[] = []): ReserveRow => ({ signature, slot, tx: parseReserveTx(view(legs, { reserve: [pre, post], logs, signature, slot }), reserve)! });
+  const inflow = (amount: bigint, from = other): [Ix, Ix[]] => [transfer(from, reserve, creator, amount), []];
+  const buyback = (spent: bigint): [Ix, Ix[]] => [ixOf(BURN_PROGRAM_ID, [9, 9, 9, 9, 9, 9, 9, 9], []), [transfer(reserve, k(), k(), spent)]];
+
+  it("orders transactions inside a slot by their balances, not by signature", () => {
+    const rows = [row("z-tail", 10, [inflow(100n)], 0n, 100n), row("a-other", 10, [inflow(100n)], 100n, 200n), row("buy", 11, [buyback(100n)], 200n, 100n, buybackLog(100n, 1000n, 1000n))];
+    for (const order of [rows, [...rows].reverse(), [rows[1], rows[0], rows[2]]]) {
+      const { traced, verified } = traceReserve(order);
+      expect(verified).eq(true);
+      expect(traced.get("z-tail#0")).deep.eq({ spentLamports: 100n, boughtRaw: 1000n, buybacks: ["buy"], exact: true });
+      expect(traced.get("a-other#0")).deep.eq({ spentLamports: 0n, boughtRaw: 0n, buybacks: [], exact: true });
+    }
+  });
+  it("more than one consistent order inside a slot makes those inflows inexact", () => {
+    const rows = [row("start", 9, [inflow(100n)], 0n, 100n), row("x", 10, [inflow(100n)], 100n, 200n), row("y", 10, [buyback(100n)], 200n, 100n, buybackLog(100n, 1000n, 1000n)), row("z", 10, [inflow(100n)], 100n, 200n)];
+    const { traced } = traceReserve(rows);
+    expect(traced.get("x#0")!.exact).eq(false);
+    expect(traced.get("z#0")!.exact).eq(false);
+    expect(traced.get("start#0")!.exact).eq(true);
+  });
+  it("with two buybacks in an ambiguous slot, even SOL that arrived before it is attributed inexactly", () => {
+    const rows = [row("start", 9, [inflow(200n)], 0n, 200n), row("x", 10, [inflow(100n)], 200n, 300n), row("y1", 10, [buyback(100n)], 300n, 200n, buybackLog(100n, 1000n, 1000n)), row("y2", 10, [buyback(100n)], 200n, 100n, buybackLog(100n, 3000n, 3000n)), row("z", 10, [inflow(100n)], 100n, 200n)];
+    expect(traceReserve(rows).traced.get("start#0")!.exact).eq(false);
+  });
+  it("an inflow and a buyback in one transaction are gross legs in execution order", () => {
+    const rows = [row("old", 10, [inflow(100n)], 0n, 100n), row("mixed", 11, [inflow(100n), buyback(150n)], 100n, 50n, buybackLog(150n, 1500n, 1500n))];
+    const { traced, verified } = traceReserve(rows);
+    expect(verified).eq(true);
+    expect(traced.get("old#0")).deep.eq({ spentLamports: 100n, boughtRaw: 1000n, buybacks: ["mixed"], exact: true });
+    expect(traced.get("mixed#0")).deep.eq({ spentLamports: 50n, boughtRaw: 500n, buybacks: ["mixed"], exact: true });
+  });
+  it("credits what a buyback bought, not tokens that were already in the bought account and burned with them", () => {
+    const { traced } = traceReserve([row("tail", 10, [inflow(100n)], 0n, 100n), row("buy", 11, [buyback(100n)], 100n, 0n, buybackLog(100n, 500n, 1000n))]);
+    expect(traced.get("tail#0")!.boughtRaw).eq(500n);
+  });
+  it("an unexplained movement, a gap in the balance chain, or a spend without its event makes what follows inexact", () => {
+    const gap = traceReserve([row("a", 10, [inflow(100n)], 0n, 100n), row("b", 12, [inflow(50n)], 130n, 180n)]);
+    expect([gap.verified, gap.traced.get("a#0")!.exact, gap.traced.get("b#0")!.exact]).deep.eq([false, false, false]);
+    const unexplained = row("u", 10, [inflow(100n)], 0n, 90n);
+    expect(unexplained.tx.ok).eq(false);
+    expect(traceReserve([unexplained]).verified).eq(false);
+    const noEvent = row("n", 11, [buyback(100n)], 100n, 0n);
+    expect(noEvent.tx.ok).eq(false);
+  });
+});
+
+describe("tail index: walk and view", () => {
+  async function freshStore() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tail-index-"));
+    const store = openStore(`sqlite:${path.join(dir, "store.sqlite")}`); await store.init();
+    return store;
+  }
+  const sigOf = (i: number) => createHash("sha256").update(`tail${i}`).digest().toString("hex").replace(/[0OIl]/g, "1").slice(0, 88).padEnd(88, "A");
+  function chain(n: number) {
+    const sigs = Array.from({ length: n }, (_, i) => ({ signature: sigOf(i + 1), slot: 1000 + i, err: null as unknown, blockTime: 1_700_000_000 + i }));
+    const unreadable = new Set<string>();
+    const deps: WalkDeps = {
+      getSignatures: async (_a, { before, until, limit }) => {
+        const desc = [...sigs].reverse();
+        let start = 0;
+        if (before) { start = desc.findIndex((s) => s.signature === before) + 1; if (start === 0) return []; }
+        const out: typeof sigs = [];
+        for (let j = start; j < desc.length && out.length < limit; j++) { if (until && desc[j].signature === until) break; out.push(desc[j]); }
+        return out;
+      },
+      readView: async (sig) => (unreadable.has(sig) ? null : { ...view([]), signature: sig }),
+    };
+    return { sigs, deps, unreadable, add: (m: number) => { for (let j = 0; j < m; j++) { const i = sigs.length + 1; sigs.push({ signature: sigOf(i), slot: 1000 + i, err: null, blockTime: 1_700_000_000 + i }); } } };
+  }
+  const rowsOf = (v: TxView) => [{ signature: v.signature, idx: 0, slot: v.slot, blockTime: v.blockTime, name: "probe", data: {} }];
+
+  it("reads 450 transactions across passes, completes once, stores each once, stops at an unreadable one", async () => {
     const store = await freshStore();
-    const c = chain(450);
-    const a = Keypair.generate().publicKey;
-    const r1 = await walkPass(c.deps, store, a, "reserve", rowsOf, 200);
-    expect(r1).deep.eq({ stored: 200, complete: false });
-    const r2 = await walkPass(c.deps, store, a, "reserve", rowsOf, 200);
-    expect(r2.complete).eq(false);
-    const r3 = await walkPass(c.deps, store, a, "reserve", rowsOf, 200);
-    expect(r3).deep.eq({ stored: 50, complete: true });
-    expect((await store.listTailEvents("reserveFlow")).length).eq(450);
-    // new transactions: only those are read
+    const c = chain(450), a = k();
+    expect(await walkPass(c.deps, store, a, "x", rowsOf, 200)).deep.eq({ stored: 200, complete: false });
+    await walkPass(c.deps, store, a, "x", rowsOf, 200);
+    expect(await walkPass(c.deps, store, a, "x", rowsOf, 200)).deep.eq({ stored: 50, complete: true });
     c.add(5);
-    expect(await walkPass(c.deps, store, a, "reserve", rowsOf, 200)).deep.eq({ stored: 5, complete: true });
-    expect((await store.listTailEvents("reserveFlow")).length).eq(455);
-    // a re-read of the same history stores nothing twice
-    await store.setMeta("walk:reserve", JSON.stringify({ head: null, newHead: null, tail: null, target: null }));
-    for (let i = 0; i < 4; i++) await walkPass(c.deps, store, a, "reserve", rowsOf, 200);
-    expect((await store.listTailEvents("reserveFlow")).length).eq(455);
+    expect(await walkPass(c.deps, store, a, "x", rowsOf, 200)).deep.eq({ stored: 5, complete: true });
+    await store.setMeta("walk:x", JSON.stringify({ head: null, newHead: null, tail: null, target: null }));
+    for (let i = 0; i < 4; i++) await walkPass(c.deps, store, a, "x", rowsOf, 200);
+    expect((await store.listTailEvents("probe")).length).eq(455);
+    const s2 = await freshStore(), c2 = chain(30);
+    c2.unreadable.add(sigOf(12));
+    expect((await walkPass(c2.deps, s2, a, "y", rowsOf, 200)).complete).eq(false);
+    expect((await s2.listTailEvents("probe")).length).eq(18);
+    c2.unreadable.clear();
+    expect((await walkPass(c2.deps, s2, a, "y", rowsOf, 200)).complete).eq(true);
   });
 
-  it("stops at an unreadable transaction and is not complete until it reads", async () => {
-    const store = await freshStore();
-    const c = chain(30);
-    const a = Keypair.generate().publicKey;
-    c.unreadable.add(sigOf(12));
-    const r = await walkPass(c.deps, store, a, "reserve", rowsOf, 200);
-    expect(r.complete).eq(false);
-    expect((await store.listTailEvents("reserveFlow")).length).eq(18); // 30..13
-    expect(JSON.parse((await store.getMeta("walk_coverage:reserve"))!).status).eq("partial");
-    c.unreadable.clear();
-    expect((await walkPass(c.deps, store, a, "reserve", rowsOf, 200)).complete).eq(true);
-    expect((await store.listTailEvents("reserveFlow")).length).eq(30);
-  });
-
-  it("COMETAIL_TAILS: mint:config:targetPool[:position], the curve derived from the mint and config", () => {
-    const [m, c, p, pos] = [0, 1, 2, 3].map(() => Keypair.generate().publicKey);
-    const [t] = parseTails(` ${m.toBase58()}:${c.toBase58()}:${p.toBase58()}:${pos.toBase58()} `);
-    expect(t.mint.equals(m) && t.config.equals(c) && t.targetPool.equals(p) && t.position!.equals(pos)).true;
+  it("COMETAIL_TAILS: mint:config:targetPool, the curve derived from the mint and config", () => {
+    const [m, c, p] = [k(), k(), k()];
+    const [t] = parseTails(` ${m.toBase58()}:${c.toBase58()}:${p.toBase58()} `);
     const big = m.toBuffer().compare(NATIVE_MINT.toBuffer()) > 0;
-    const [curve] = PublicKey.findProgramAddressSync([Buffer.from("pool"), c.toBuffer(), (big ? m : NATIVE_MINT).toBuffer(), (big ? NATIVE_MINT : m).toBuffer()], new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"));
-    expect(t.curve.equals(curve)).true;
+    const [cv] = PublicKey.findProgramAddressSync([Buffer.from("pool"), c.toBuffer(), (big ? m : NATIVE_MINT).toBuffer(), (big ? NATIVE_MINT : m).toBuffer()], DBC);
+    expect(t.mint.equals(m) && t.config.equals(c) && t.targetPool.equals(p) && t.curve.equals(cv)).true;
     expect(parseTails("")).deep.eq([]);
-    expect(parseTails(`${m.toBase58()}:${c.toBase58()}:${p.toBase58()}`)[0].position).eq(null);
     expect(() => parseTails(`${m.toBase58()}:${c.toBase58()}`)).throw(/mint:config:targetPool/);
   });
 
-  it("the view: claims newest first, burned only once the reserve ledger is complete, totals summed", async () => {
+  it("the view: no totals before the history is complete; every claim listed with its status; burn only when proven", async () => {
     const store = await freshStore();
-    const [m, c, p, pos] = [0, 1, 2, 3].map(() => Keypair.generate().publicKey);
-    const tails = parseTails(`${m.toBase58()}:${c.toBase58()}:${p.toBase58()}:${pos.toBase58()}`);
-    const claim = (signature: string, slot: number, claimed: bigint) => ({ signature, idx: 0, slot, blockTime: 1, name: "tailClaim", data: { tail: m.toBase58(), creator: "w", claimedLamports: String(claimed), toBurnLamports: String(claimed / 4n), swapInLamports: String(claimed / 8n + 1n), swapOutRaw: "500", addedRaw: "490", addedLamports: String(claimed / 8n - 3n), liquidity: "7", lockedLiquidity: "7" } });
-    const flow = (signature: string, slot: number, delta: bigint, burned: bigint | null = null) => ({ signature, idx: 0, slot, blockTime: 1, name: "reserveFlow", data: { delta: String(delta), burnedRaw: burned === null ? null : String(burned), spentLamports: delta < 0n ? String(-delta) : null } });
-    await store.insertTailEvents([claim("c1", 10, 400n), claim("c2", 20, 800n), flow("c1", 10, 100n), flow("b1", 15, -60n, 600n), flow("c2", 20, 200n)], "walk:x", "{}");
+    const m = k();
+    const tails = parseTails(`${m.toBase58()}:${k().toBase58()}:${target.toBase58()}`);
+    // fresh: no sources, no coverage -> nothing is zero, everything unknown (R6)
     let v: any = (await tailView(store, tails, null)).tails[0];
-    expect(v.claims.map((r: any) => r.signature)).deep.eq(["c2", "c1"]);
-    expect(v.claims[1].burn).eq(null); // the reserve ledger's coverage is unknown: no burned figure
+    expect(v.totals).deep.eq({ claims: null, notSplit: null, claimedLamports: null, toBurnLamports: null, boughtRaw: null, liquidityLamports: null, liquidityRaw: null, lockedLiquidity: null, payoutLamports: null });
+    const c = creator.toBase58();
+    await store.setMeta(`tail_sources:${m.toBase58()}`, JSON.stringify({ creators: [c], pool: null, positions: [] }));
+    await store.setMeta(`walk_coverage:tail:${m.toBase58()}:creator:${c}`, JSON.stringify({ status: "complete", atMs: 1 }));
+    v = (await tailView(store, tails, null)).tails[0];
+    expect(v.totals.claims).eq(0); // complete and empty: a verified zero
+    expect(v.totals.boughtRaw).eq(null); // the reserve walk is not complete
+    // one split claim, one unsplit claim; the reserve saw the split's quarter and a buyback spent part of it
+    const split = parseCreatorTx(view([claimLeg(400n), burnLeg(100n), buyLeg(51n, 5000n), addLeg(4900n, 49n, 77n), lockLeg(77n)]), T).claims[0];
+    const unsplit = parseCreatorTx(view([claimLeg(300n)]), T).claims[0];
+    const rv = (sig: string, slot: number, legs: [Ix, Ix[]][], pre: bigint, post: bigint, logs: string[] = []) => ({ signature: sig, idx: 0, slot, blockTime: 1, name: "reserveTx", data: parseReserveTx(view(legs, { reserve: [pre, post], logs }), reserve) });
+    await store.insertTailEvents([
+      { signature: "claim1", idx: 0, slot: 10, blockTime: 1, name: "tailClaim", data: { tail: m.toBase58(), ...split } },
+      { signature: "claim2", idx: 0, slot: 20, blockTime: 2, name: "tailClaim", data: { tail: m.toBase58(), ...unsplit } },
+      rv("claim1", 10, [claimLeg(400n), burnLeg(100n)], 0n, 100n),
+      rv("buy", 15, [[ixOf(BURN_PROGRAM_ID, [9, 9, 9, 9, 9, 9, 9, 9], []), [transfer(reserve, k(), k(), 60n)]]], 100n, 40n, buybackLog(60n, 600n, 600n)),
+    ], "walk:z", "{}");
+    v = (await tailView(store, tails, m.toBase58())).tails[0];
+    expect(v.claims.map((x: any) => [x.signature, x.status, x.keptLamports, x.burn])).deep.eq([["claim2", "unsplit", "300", null], ["claim1", "split", String(400n - 100n - 51n - 49n), null]]);
+    expect(v.totals).deep.include({ claims: 2, notSplit: 1, claimedLamports: "700", toBurnLamports: "100", boughtRaw: null, liquidityLamports: "49", liquidityRaw: "4900", lockedLiquidity: "77" });
     await store.setMeta("walk_coverage:reserve", JSON.stringify({ status: "complete", atMs: 1 }));
     v = (await tailView(store, tails, m.toBase58())).tails[0];
-    expect(v.claims[1].burn).deep.eq({ spentLamports: "60", waitingLamports: "40", burnedRaw: "600", buybacks: ["b1"] });
-    expect(v.claims[0].burn).deep.eq({ spentLamports: "0", waitingLamports: "200", burnedRaw: "0", buybacks: [] });
-    expect(v.claims[1].keptLamports).eq(String(400n - 100n - 51n - 47n));
-    expect(v.totals).deep.include({ claims: 2, claimedLamports: "1200", toBurnLamports: "300", burnedRaw: "600", liquidityLamports: String(47n + 97n), liquidityRaw: "980", lockedLiquidity: "14" });
-    expect((await tailView(store, tails, Keypair.generate().publicKey.toBase58())).tails).deep.eq([]);
+    expect(v.claims[1].burn).deep.eq({ spentLamports: "60", waitingLamports: "40", boughtRaw: "600", buybacks: ["buy"] });
+    expect(v.totals.boughtRaw).eq("600");
+    expect(v.coverage.reserveVerified).eq(true);
   });
 });

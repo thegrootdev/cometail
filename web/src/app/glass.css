@@ -394,3 +394,4 @@ h3 { font-size: 19px; }
 .tail-claims { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
 .tail-claims li { padding: 10px 12px; border: 1px solid var(--glass-line); border-radius: 12px; background: var(--panel); overflow-wrap: anywhere; }
 .tail-plus { display: block; }
+.tail-claims li.tail-claim-unsplit { border-color: var(--dust); }
