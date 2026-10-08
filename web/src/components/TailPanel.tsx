@@ -60,7 +60,7 @@ export function TailPanel({ mint }: { mint: string }) {
             {t.payouts.map((p) => (
               <li key={`${p.signature}-${p.kind}`}>
                 <p className="micro">{when(p.blockTime)}</p>
-                <dl className="detail-list"><div><dt>{copy.payout}</dt><dd className="money"><Money lamports={p.lamports} /></dd></div></dl>
+                <dl className="detail-list"><div><dt>{copy.payout[p.kind]}</dt><dd className="money"><Money lamports={p.lamports} /></dd></div></dl>
                 <p className="micro"><a href={EXPLORER("tx", p.signature)} target="_blank" rel="noreferrer">{copy.tx} {short(p.signature)}</a></p>
               </li>
             ))}

@@ -105,7 +105,7 @@ export const tailPage = {
   list: (n: number) => `Every claim (${n})`, none: "No claims yet.", claimed: "Claimed", kept: "Kept", toBurn: "To the burn", added: "Locked as liquidity",
   status: { split: "Split", unsplit: "Not split", incomplete: "Partly split", ambiguous: "Unclear: check the transaction" } as Record<string, string>,
   source: { curve: "Curve fees", pool: "Graduated pool fees" } as Record<string, string>,
-  payout: "Graduation payout to the creator", tx: "Transaction", buybacks: "Buybacks that spent it", loading: "Reading this tail's claims…", unavailable: "The tail's claims are not answering right now.",
+  payout: { migrationFee: "Graduation payout to the creator (migration fee)", surplus: "Graduation payout to the creator (surplus)" } as Record<string, string>, tx: "Transaction", buybacks: "Buybacks that spent it", loading: "Reading this tail's claims…", unavailable: "The tail's claims are not answering right now.",
   partial: "Still reading the history: totals appear once every claim has been read.",
 } as const;
 
