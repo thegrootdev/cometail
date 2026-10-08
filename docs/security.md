@@ -62,8 +62,10 @@
   and sends exactly half to the reserve and half only to the signer's own WSOL account. `/admin/fees` claims SOL
   through them while the program is live and refuses to build a SOL claim while the program's state cannot be read.
   Claims made elsewhere, and the tails' share, are the owner's commitment; the site shows what reached the reserve.
-- Burn-program verification (a public reproducible-build record) is pending until after its deploy; the vault's
-  record is not touched.
+- The burn program is publicly verified: its upgrade authority signed the reproducible-build record for commit
+  5895634 and the public verifier's rebuild matches the deployed bytes
+  ([status](https://verify.osec.io/status/BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1)). The vault's record is
+  separate and unchanged.
 
 ## Threats considered
 

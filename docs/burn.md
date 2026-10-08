@@ -115,8 +115,12 @@ logs) stops the pass and is retried. Burn events live in their own table.
    Verification: the verifiable-image rebuild of the deployed commit 5895634 (`--library-name cometail_burn
    --base-image solanafoundation/solana-verifiable-build:3.1.10 --cargo-build-sbf-args="--tools-version v1.57"`)
    gives 8ead5d24..., the deployed program's hash. `/admin/verify/burn` embeds the record the verifier tool
-   exported for that commit and the deploy slot 454166757; the upgrade authority signs it there, then the public
-   rebuild job is submitted. Until the public verifier has rebuilt it, the program is reported as not verified.
+   exported for that commit and the deploy slot 454166757. Done 2026-10-07: the upgrade authority signed the record
+   (`3e1AmuGjpjaS4oygnwdGsF2csnfRsaN2RJLBdeZLabET1zWzfBD27xrsf7a2ZbLybcSt8RjSxR6ha6mp3n3wkSNb`, record account
+   `G3kcCoDFrZyLid9tJZB3PPWwkhfYBz5psVvcxBXoWRtV`), and the public verifier rebuilt commit 5895634 and found the same
+   hash as the chain: [verified](https://verify.osec.io/status/BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1).
+   An upgrade changes the program's hash, so it would need a new rebuild and a new record before it shows as
+   verified again.
 3. Create the four new configs (`tests/mainnet/burn-configs.ts`, dry run first): each is byte-identical to today's
    preset except the fee claimer, checked before and after.
 4. Worker: add the new configs to `COMETAIL_BURN_CONFIGS`, `COMETAIL_MIGRATE_CONFIGS` and `COMETAIL_SKY_CONFIGS`
