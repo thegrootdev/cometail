@@ -388,8 +388,10 @@ export async function walkPass(deps: WalkDeps, store: Store, address: PublicKey,
  *  whole chain of creators is followed from the first. After graduation, `migration` holds the positions the
  *  migration transaction gave to one of those creators, so a position NFT moved before the worker looked is still
  *  followed. Claims coverage is only complete when the origin and (after graduation) the migration are known. */
+/** The saved shape of TailSources; a record of any other version has its migration facts read again from the chain. */
+export const TAIL_SOURCES_VERSION = 2;
 export type TailSources = {
-  origin: { creator: string; signature: string } | null; creators: string[]; graduated: boolean;
+  v: number; origin: { creator: string; signature: string } | null; creators: string[]; graduated: boolean;
   /** The migration's two positions with their NFT's owner right after it (raw facts, matched against the creators
    *  every time: a creator learned later still gets its migration position). */
   pool: string | null; migration: { signature: string; positions: { position: string; owner: string | null }[] } | null;
@@ -397,9 +399,11 @@ export type TailSources = {
 export async function readSources(store: Store, mint: string): Promise<TailSources> {
   try {
     const v = await store.getMeta(`tail_sources:${mint}`);
-    if (v) { const j = JSON.parse(v); if ("origin" in j) { if (j.migration && typeof j.migration.positions?.[0] === "string") j.migration = null; return j; } }
+    // an older record (any shape, even an empty positions list) keeps its origin and creators but not its
+    // migration facts: those are read again from the chain before coverage can be complete
+    if (v) { const j = JSON.parse(v); if (j && "origin" in j) return j.v === TAIL_SOURCES_VERSION ? j : { ...j, v: TAIL_SOURCES_VERSION, migration: null }; }
   } catch { /* fresh */ }
-  return { origin: null, creators: [], graduated: false, pool: null, migration: null };
+  return { v: TAIL_SOURCES_VERSION, origin: null, creators: [], graduated: false, pool: null, migration: null };
 }
 /** The migration positions held by one of the tail's creators right after the migration. */
 export const creatorPositions = (s: TailSources) => (s.migration?.positions ?? []).filter((p) => p.owner !== null && s.creators.includes(p.owner)).map((p) => p.position);

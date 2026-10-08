@@ -203,7 +203,7 @@ describe("tail index: walk and view", () => {
     let v: any = (await tailView(store, tails, null)).tails[0];
     expect(v.totals).deep.eq({ claims: null, notSplit: null, ambiguous: null, claimedLamports: null, toBurnLamports: null, boughtRaw: null, liquidityLamports: null, liquidityRaw: null, lockedLiquidity: null, payoutLamports: null });
     const c = creator.toBase58();
-    await store.setMeta(`tail_sources:${m.toBase58()}`, JSON.stringify({ origin: { creator: c, signature: "first" }, creators: [c], graduated: false, pool: null, migration: null }));
+    await store.setMeta(`tail_sources:${m.toBase58()}`, JSON.stringify({ v: 2, origin: { creator: c, signature: "first" }, creators: [c], graduated: false, pool: null, migration: null }));
     await store.setMeta(`walk_coverage:tail:${m.toBase58()}:creator:${c}`, JSON.stringify({ status: "complete", atMs: 1 }));
     v = (await tailView(store, tails, null)).tails[0];
     expect(v.totals.claims).eq(0); // complete and empty: a verified zero
@@ -245,7 +245,7 @@ describe("tail index: walk and view", () => {
     const sigs = [{ signature: "both", slot: 5, err: null, blockTime: 1 }];
     const deps: WalkDeps = { getSignatures: async (_a, o) => (o.before ? [] : sigs), readView: async () => both };
     // what refreshSources would have saved for each tail
-    const sources = async (t: any) => { const src = { origin: { creator: creator.toBase58(), signature: "first" }, creators: [creator.toBase58()], graduated: false, pool: null, migration: null }; await store.setMeta(`tail_sources:${t.mint.toBase58()}`, JSON.stringify(src)); return src; };
+    const sources = async (t: any) => { const src = { v: 2, origin: { creator: creator.toBase58(), signature: "first" }, creators: [creator.toBase58()], graduated: false, pool: null, migration: null }; await store.setMeta(`tail_sources:${t.mint.toBase58()}`, JSON.stringify(src)); return src; };
     for (let i = 0; i < 2; i++) await tailIndexPass(deps, store, tails, reserve, sources);
     for (const [t, amount] of [[m1, "400"], [m2, "300"]] as const) {
       const v: any = (await tailView(store, tails, t.toBase58())).tails[0];
@@ -360,5 +360,33 @@ describe("tail index: walk and view", () => {
     await store.insertTailEvents([{ signature: "c-to-d", idx: 0, slot: 7, blockTime: 1, name: `tailCreatorUpdate:${m.toBase58()}`, data: { creator: C.toBase58(), newCreator: k().toBase58() } }], "walk:q", "{}");
     expect(((await tailView(store, [t], null)).tails[0] as any).coverage.claims.status).eq("unavailable");
     await store.close();
+
+    // upgrade (review 162): a record saved by the previous version, with the empty positions list that version
+    // cached, and creator walks already complete. It must not read as complete until the migration is read again
+    // and the recovered position is walked; its origin, creators and history are kept.
+    const old = openStore(`sqlite:${path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tail-162-")), "store.sqlite")}`); await old.init();
+    const mm = m.toBase58();
+    await old.setMeta(`tail_sources:${mm}`, JSON.stringify({ origin: { creator: A.toBase58(), signature: "create" }, creators: [A.toBase58(), C.toBase58(), B.toBase58()], graduated: true, pool: dammPool.toBase58(), migration: { signature: "migration", positions: [] } }));
+    for (const c of [A, B, C]) {
+      const head = history[c.toBase58()][0];
+      await old.setMeta(`walk:tail:${mm}:creator:${c.toBase58()}`, JSON.stringify({ head, newHead: null, tail: null, target: null }));
+      await old.setMeta(`walk_coverage:tail:${mm}:creator:${c.toBase58()}`, JSON.stringify({ status: "complete", atMs: 1 }));
+    }
+    await old.insertTailEvents([
+      { signature: "b-claim", idx: 0, slot: 3, blockTime: 1, name: `tailClaim:${mm}`, data: parseCreatorTx(views["b-claim"], { curve: curveS, targetPool: target.toBase58(), reserve: reserve.toBase58() }).claims[0] },
+      { signature: "a-to-b", idx: 0, slot: 2, blockTime: 1, name: `tailCreatorUpdate:${mm}`, data: { creator: A.toBase58(), newCreator: B.toBase58() } },
+      { signature: "b-to-c", idx: 0, slot: 5, blockTime: 1, name: `tailCreatorUpdate:${mm}`, data: { creator: B.toBase58(), newCreator: C.toBase58() } },
+    ], "walk:seed", "{}");
+    let o: any = (await tailView(old, [t], null)).tails[0];
+    expect(o.coverage.claims.status).eq("unavailable"); // the old migration facts are not trusted
+    o = await pass(old);
+    expect(o.coverage.claims.status).eq("complete");
+    expect(o.graduatedPositions).deep.eq([posB.toBase58()]);
+    expect(o.origin).deep.eq({ creator: A.toBase58(), signature: "create" });
+    expect(o.claims.map((c: any) => [c.signature, c.claimedLamports]).sort()).deep.eq([["b-claim", "400"], ["b-pos-claim", "600"]]);
+    for (let i = 0; i < 2; i++) o = await pass(old);
+    expect(o.totals).deep.include({ claims: 2, claimedLamports: "1000" });
+    expect(JSON.parse((await old.getMeta(`tail_sources:${mm}`))!).v).eq(2);
+    await old.close();
   });
 });
