@@ -93,6 +93,20 @@ export const feeIndex = {
 } as const;
 
 /** $COMETAIL buyback and burn (components/BurnPanel.tsx, docs/burn.md). */
+/** A tail's page (components/TailPanel.tsx). The split is ours, done by hand: the copy never says code forces it. */
+export const tailPage = {
+  title: (target: string) => `A tail of ${target}`,
+  tagline: (target: string) => `Every claim of this coin's fees burns ${target} and deepens its pool.`,
+  how: (target: string) => `We launched this coin from our own wallet. When we claim its creator fees, we split them in the same transaction: half stays with us, a quarter goes to the ${target} burn (which can only buy ${target} and burn it), and a quarter is added to ${target}'s pool as liquidity that is locked forever.`,
+  honest: "No program forces this split. We do it by hand, in the open, and every claim is listed below with its transaction, so you can check each one.",
+  graduation: (pct: number) => `When the curve fills, it graduates to its own pool. ${pct}% of what the curve raised goes to the creator (our wallet); the rest is locked in that pool as liquidity. After graduation, the fees from our locked share of that pool are claimed through the burn program, which sends half to the $COMETAIL burn by itself.`,
+  sentToBurn: "Sent to the burn", burned: (target: string) => `${target} burned with it`, liquidity: "Liquidity locked", claims: "Claims",
+  pending: "not yet known", waiting: (sol: string) => `${sol} SOL still waiting for a buyback`, waitingAll: "waiting for the next buybacks",
+  list: (n: number) => `Every claim (${n})`, none: "No claims yet.", claimed: "Claimed", kept: "Kept", toBurn: "To the burn", added: "Locked as liquidity",
+  tx: "Transaction", buybacks: "Buybacks that spent it", loading: "Reading this tail's claims…", unavailable: "The tail's claims are not answering right now.",
+  partial: "Still reading the history: some claims may be missing.",
+} as const;
+
 export const burnPanel = {
   title: "$COMETAIL buyback and burn",
   body: "Half of the protocol's fees buy $COMETAIL on its pool and burn it, on chain.",

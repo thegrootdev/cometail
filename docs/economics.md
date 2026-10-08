@@ -51,6 +51,20 @@ Swaps stop at the migration price, but DBC accounts for any quote reserve excess
 the threshold as surplus. Zero surplus is not an eligibility condition for external pools;
 the vault's one-time harvest path handles their creator surplus.
 
+## Tails launched from the owner's wallet
+
+A tail ($tX, pointed at $X) is launched by the owner's wallet on the stream-50 config, so its fees follow that
+config; the split of the creator's share is done by hand in each claim transaction (not enforced by code):
+
+| Per 1 SOL of | Meteora | Protocol share (through the burn owner claim) | Kept by the creator wallet | To the $X burn | Locked as $X liquidity | Stays in the pool |
+|---|---|---|---|---|---|---|
+| Tail curve fee | 0.20 | 0.20 (0.10 to the burn, 0.10 to the treasury) | 0.30 | 0.15 | 0.15 | |
+| Tail graduated pool fee | 0.20 | 0.08 (0.04 to the burn, 0.04 to the treasury) | 0.16 | 0.16 (owner claim) | | 0.40 |
+| Tail graduation | 0.2% of migrated liquidity | 0 | 50% of the raise | | | the rest, locked |
+
+For $tCOMETAIL the burn and $X are the same: the reserve buys $COMETAIL. Per 1 SOL of tail curve fee, 0.25 SOL
+goes to the $COMETAIL burn and 0.15 SOL becomes locked $COMETAIL liquidity.
+
 The vault-internal splits (8/15, 1/2, 1/5) are constants in the program, not settings.
 The protocol's partner shares are claimed by the protocol owner's wallet directly through
 DBC and DAMM v2 and never pass through the vault program.

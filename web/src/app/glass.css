@@ -388,3 +388,8 @@ h3 { font-size: 19px; }
 .burn-stat.is-last-known strong { color: #c9d3ee; }
 .burn-stale { font-size: 11px; font-weight: 700; color: var(--dust); }
 .fee-window { color: var(--dust) !important; }
+
+/* a tail's panel: the plain how-it-works, then every claim */
+.tail-panel .tail-tagline { font-weight: 800; font-size: 1.05rem; color: var(--dust); }
+.tail-claims { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.tail-claims li { padding: 10px 12px; border: 1px solid var(--glass-line); border-radius: 12px; background: var(--panel); overflow-wrap: anywhere; }

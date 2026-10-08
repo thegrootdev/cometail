@@ -12,6 +12,8 @@ program is not changed by any of this.
 | Today's launch configs (existing coins keep them, including $COMETAIL and TAIL) and the fee-sale stream configs | The owner claims them on `/admin/fees` through the program's owner claims: the program measures what each claim pays and sends exactly half to the burn reserve and half back to the signer's own WSOL account, in the same instruction | The program, for every claim made through it; claims made elsewhere are the owner's commitment |
 | The two non-SOL presets (USDC, stock) | Claimed as before | Outside the 50% scope: the reserve spends SOL only |
 | The tails' 1/5 protocol share (paid by the vault program into the treasury) | The owner sends half from the treasury on `/admin/fees` (a plain transfer, never a close or an unwrap) | The owner's commitment, checked on the site |
+| Tails launched from the owner's wallet ($tCOMETAIL): the creator curve fees | A quarter of each claim is transferred to the reserve in the claim transaction on `/admin/tails` (another quarter becomes locked $COMETAIL liquidity, half stays in the wallet) | The owner's commitment; each transfer is listed on the tail's page with what it burned |
+| Those tails after graduation: the creator position's pool fees | Claimed through the program's owner claim, which sends exactly half to the reserve | The program, for every claim made through it |
 
 Meteora requires the config's fee claimer to sign every partner claim and a config's fee claimer can never
 change, so only configs created with the program's claimer can be split by code. Revenue in USDC or a
@@ -106,6 +108,9 @@ logs) stops the pass and is retried. Burn events live in their own table.
   then refuses to buy rather than buy on changed terms.
 - The 50% on the older configs and the tails' share depends on the owner's transfers; the site shows what was
   sent, and leaves unknown what it cannot see.
+- A tail claim's quarter is a plain transfer into the reserve: it is not a split the program counts (its counters
+  and the provenance figures do not include it). The site traces it separately through the reserve's own ledger,
+  first in, first out, to the buybacks that spent it.
 
 ## Cutover (each mainnet step only with the owner's go)
 

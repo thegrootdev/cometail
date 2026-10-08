@@ -2,3 +2,4 @@
 export * from "./ids";
 export * from "./vault";
 export * from "./burn";
+export * from "./tail";

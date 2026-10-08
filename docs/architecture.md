@@ -103,3 +103,31 @@ use DLMM's own integer power, ported step for step; settlement reads each bin's 
 before cancelling, so refunded principal and fee share are exact. Harvests pass each mint's own token program, so Token-2022 bases
 work; `register_pair` is signed by the keeper or the depositor and refuses pairs whose base
 fee is above 1%; `create_vault` refuses a price cap that no approved bin step can represent.
+
+## Tails launched from the owner's wallet
+
+A tail ($tX) is a coin launched on COMETAIL and pointed at an existing coin $X ($tCOMETAIL points at $COMETAIL).
+It uses no vault and no program of ours; $X is untouched.
+
+- **Launch.** The owner's wallet launches the tail on the Take 50% fee-sale config, directly on DBC (`/admin/tails`),
+  with the wallet as the pool's creator. A wallet creator gets exactly what a vault creator gets: the same creator
+  curve fees, the same graduation payout through DBC's creator migration fee and creator surplus, the same
+  permanently locked creator position after migration (gate 21 runs both side by side on stream-50's mainnet
+  parameters).
+- **Claims.** One transaction signed by the creator wallet (`tailClaimIxs` in `packages/client/src/tail.ts`):
+  DBC `claim_creator_trading_fee` of exactly the amount the pool owed when it was read; a quarter transferred to
+  the burn reserve; a little over half of another quarter swapped into $X on $X's compounding DAMM v2 pool (the
+  swap size that lets both sides deposit fully, with a minimum out from the state just read); that $X and the rest
+  of the quarter added to the wallet's own position; exactly the added liquidity permanently locked. The rest
+  stays in the wallet. If a trade lands between the read and the send, the add fails and nothing moves. The
+  position is created once, by the wallet, and only $X pools in compounding mode with a constant fee and no
+  dynamic fee are accepted (the math is checked against cp-amm to the unit in gate 22).
+- **After graduation.** The keeper migrates configured tails (`migrateTails`). The creator wallet collects the
+  graduation payout itself (`tailCashoutIxs`), and claims the creator position's pool fees through the burn
+  program's `owner_claim_position_fees`, which sends half to the reserve in the same instruction.
+- **What the site shows.** The worker reads every claim from the events Meteora emitted (walking the locked
+  position's transactions) and keeps a ledger of every inflow to and outflow from the burn reserve (walking the
+  reserve's transactions). Each claim's SOL is traced first in, first out to the buybacks that spent it, and the
+  $COMETAIL those buybacks burned is attributed in proportion. `/api/tail-claims/:mint` serves it; the tail's
+  token page shows it, and says plainly that the split is ours, done by hand, not enforced by code.
+

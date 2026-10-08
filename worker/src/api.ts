@@ -22,7 +22,7 @@ import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed"
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null; tailView?: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -455,6 +455,15 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         if (source && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(source)) return send(400, { error: "bad source mint" });
         const offset = Math.max(0, Math.min(100_000, Number(url.searchParams.get("offset") ?? 0) || 0));
         return send(200, { schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), ...(await tailsRollup(store, opts.feeIndex ?? null, { limit: Math.min(100, limit), offset, source })) }, { "cache-control": "public, max-age=15" });
+      }
+      // tails launched by the owner's wallet and every claim split from them (tails.ts)
+      const tm = url.pathname.match(/^\/api\/tail-claims(?:\/([1-9A-HJ-NP-Za-km-z]{32,44}))?$/);
+      if (tm) {
+        const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=15" };
+        if (!opts.tailView) return send(200, { schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), tails: [] }, any);
+        const v = await opts.tailView(tm[1] ?? null);
+        if (tm[1] && !v.tails.length) return send(404, { error: "not a tail" }, any);
+        return send(200, { schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), ...(tm[1] ? { tail: v.tails[0] } : v) }, any);
       }
       if (url.pathname === "/api/burn") {
         if (!opts.burnView) return send(503, { error: "burn view not enabled on this server" }, { "access-control-allow-origin": "*" });

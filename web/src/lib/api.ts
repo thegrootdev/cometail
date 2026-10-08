@@ -82,6 +82,20 @@ export interface Tail {
 }
 /** /api/burn (worker burnview.ts, docs/burn.md). Exact counters are strings of raw units; null is unknown, never zero. */
 export type BurnRow = { signature: string; slot: number; idx: number; blockTime: number | null; spentLamports: string; receivedRaw: string; burnedRaw: string; minOutRaw: string };
+/** A tail's claims from /api/tail-claims/:mint (worker/src/tails.ts). Lamports and raw units as strings;
+ *  `burn` is null while the reserve ledger is incomplete, `burnedRaw` null when a buyback's burn is unknown. */
+export interface TailClaim {
+  signature: string; slot: number; blockTime: number | null;
+  claimedLamports: string; keptLamports: string; toBurnLamports: string;
+  burn: { spentLamports: string; waitingLamports: string; burnedRaw: string | null; buybacks: string[] } | null;
+  liquidity: { swapInLamports: string; addedLamports: string; addedRaw: string; liquidity: string };
+}
+export interface TailInfo {
+  mint: string; config: string; curve: string; targetPool: string; position: string | null;
+  totals: { claims: number; claimedLamports: string; keptLamports: string; toBurnLamports: string; burnedRaw: string | null; liquidityLamports: string; liquidityRaw: string; lockedLiquidity: string };
+  claims: TailClaim[];
+  coverage: { claims: { status: string; atMs: number | null }; reserve: { status: string; atMs: number | null } };
+}
 export interface BurnView {
   program: string; claimer: string; sharePct: number; status: "live" | "not-set-up" | "unavailable"; observedSlot?: number;
   history?: { reconciled: boolean; indexedSplitLamports: string; indexedBurnedRaw: string; indexedBuybacks: number };
@@ -100,6 +114,17 @@ export interface BurnView {
 }
 export const api = {
   burn: () => get<BurnView>("/api/burn"),
+  /** A tail and its claims; "missing" only for a real 404 (not a tail), "error" for anything else. */
+  tail: async (mint: string): Promise<{ state: "ok"; tail: TailInfo } | { state: "missing" } | { state: "error" }> => {
+    try {
+      const r = await fetch(`${API_URL}/api/tail-claims/${encodeURIComponent(mint)}`, { cache: "no-store", signal: AbortSignal.timeout(12_000) });
+      if (r.status === 404) return { state: "missing" };
+      if (!r.ok) return { state: "error" };
+      const j = await r.json();
+      return j?.tail ? { state: "ok", tail: j.tail as TailInfo } : { state: "error" };
+    } catch { return { state: "error" }; }
+  },
+  tailList: () => get<{ tails: TailInfo[] }>("/api/tail-claims"),
   burnPage: (before: string) => get<{ total: number; items: BurnRow[]; nextCursor: string | null }>(`/api/burn/burns?limit=50&before=${encodeURIComponent(before)}`),
   /** A text search reads every coin on the server and can take far longer than a listing: it waits up to 30 s. */
   feeCoins: (q: { sort: string; stage: string; eligible: boolean; creator?: string | null; q?: string; offset?: number; limit?: number }) => {

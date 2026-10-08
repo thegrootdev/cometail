@@ -5,6 +5,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { parseTails, type TailSpec } from "./tails";
 
 export type Mode = "keeper" | "indexer" | "once";
 
@@ -44,6 +45,9 @@ export interface Config {
   burnConfigs: PublicKey[];
   /** Below this many lamports a claim waits (the network fee would eat it). */
   burnMinClaimLamports: bigint;
+  /** Tails (tails.ts): coins launched by the owner's wallet on a fee-sale config, pointed at a target pool. The
+   *  keeper migrates their curves; the indexer records their claims. */
+  tails: TailSpec[];
   /** Wallets that belong to the team or the demo (depositors, creators, buyers); /api/metrics reports them apart from independent actors. */
   demoActors: string[];
   /** Cluster name reported by the API envelope. */
@@ -103,6 +107,7 @@ export function loadConfig(): Config {
     migrateConfigs: env("COMETAIL_MIGRATE_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
     burnConfigs: env("COMETAIL_BURN_CONFIGS", "").split(",").map((s) => s.trim()).filter(Boolean).map((s) => new PublicKey(s)),
     burnMinClaimLamports: BigInt(env("COMETAIL_BURN_MIN_CLAIM_LAMPORTS", "2000000")),
+    tails: parseTails(env("COMETAIL_TAILS", "")),
     demoActors: env("COMETAIL_DEMO_ACTORS", "").split(",").map((s) => s.trim()).filter(Boolean),
     cluster: env("COMETAIL_CLUSTER", "devnet"),
     dryRun: env("COMETAIL_DRY_RUN", "0") === "1",

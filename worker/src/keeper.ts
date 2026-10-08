@@ -37,6 +37,8 @@ export async function keeperPass(ctx: KeeperContext): Promise<void> {
   log("keeper pass", { vaults: vaults.length, pausedRouting: protocol.pausedRouting });
   // plain launches on the protocol's configs graduate without anyone's help
   try { await migratePlainLaunches(ctx, (pool, state) => migrate(ctx, pool, state)); } catch (e) { log("plain-launch migration pass failed", { error: String((e as Error).message ?? e) }); }
+  // tails (launched by the owner's wallet on a fee-sale config) graduate like any curve: the keeper migrates them
+  await migrateTails(ctx);
   // the burn program's claims and buyback: separate from the vaults, never fatal to the pass
   try { await burnPass(ctx); } catch (e) { log("burn pass failed", { error: String((e as Error).message ?? e) }); }
   for (const v of vaults) {
@@ -107,6 +109,16 @@ async function vaultPass(ctx: KeeperContext, protocol: any, entry: Decoded): Pro
         await routePass(ctx, vaultPk, vault, pair);
       }
     }
+  }
+}
+
+/** Migrates every configured tail whose curve is complete; failures are logged, never fatal to the pass. */
+export async function migrateTails(ctx: KeeperContext): Promise<void> {
+  for (const t of ctx.cfg.tails ?? []) {
+    try {
+      const p = await ctx.chain.dbcPool(t.curve);
+      if (p && (Number(p.migrationProgress) === DBC_PROGRESS.postBonding || Number(p.migrationProgress) === DBC_PROGRESS.lockedVesting)) { log("tail complete; migrating", { pool: t.curve, mint: t.mint }); await migrate(ctx, t.curve, p); }
+    } catch (e) { log("tail migration failed", { mint: t.mint.toBase58(), error: String((e as Error).message ?? e) }); }
   }
 }
 

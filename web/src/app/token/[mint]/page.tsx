@@ -14,6 +14,7 @@ import { metadataLinks, tickerText } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
 import { OutsideCoinFees, type FeeCoinResult } from "@/components/OutsideCoin";
 import { BurnPanel } from "@/components/BurnPanel";
+import { TailPanel } from "@/components/TailPanel";
 import { isOfficial } from "@/lib/addresses";
 import { ourConfigs } from "@/lib/protocol-fees";
 import { creatorClaims } from "@/lib/creator-fees";
@@ -436,6 +437,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       )}
       <TailLink mint={mintStr} />
       {isOfficial(mintStr) && <BurnPanel />}
+      {!isOfficial(mintStr) && <TailPanel mint={mintStr} />}
       {outside && <OutsideCoinFees result={feeResult} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} onRetry={reloadFee} />}
       {view && !outside && (
         <section className="token-tabs">
