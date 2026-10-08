@@ -390,11 +390,25 @@ export async function walkPass(deps: WalkDeps, store: Store, address: PublicKey,
  *  followed. Claims coverage is only complete when the origin and (after graduation) the migration are known. */
 export type TailSources = {
   origin: { creator: string; signature: string } | null; creators: string[]; graduated: boolean;
-  pool: string | null; migration: { signature: string; positions: string[] } | null;
+  /** The migration's two positions with their NFT's owner right after it (raw facts, matched against the creators
+   *  every time: a creator learned later still gets its migration position). */
+  pool: string | null; migration: { signature: string; positions: { position: string; owner: string | null }[] } | null;
 };
 export async function readSources(store: Store, mint: string): Promise<TailSources> {
-  try { const v = await store.getMeta(`tail_sources:${mint}`); if (v) { const j = JSON.parse(v); if ("origin" in j) return j; } } catch { /* fresh */ }
+  try {
+    const v = await store.getMeta(`tail_sources:${mint}`);
+    if (v) { const j = JSON.parse(v); if ("origin" in j) { if (j.migration && typeof j.migration.positions?.[0] === "string") j.migration = null; return j; } }
+  } catch { /* fresh */ }
   return { origin: null, creators: [], graduated: false, pool: null, migration: null };
+}
+/** The migration positions held by one of the tail's creators right after the migration. */
+export const creatorPositions = (s: TailSources) => (s.migration?.positions ?? []).filter((p) => p.owner !== null && s.creators.includes(p.owner)).map((p) => p.position);
+/** Adds every handover recorded so far to the creators; returns how many were new. */
+async function absorbHandovers(store: Store, mint: string, s: TailSources): Promise<number> {
+  let added = 0;
+  for (const r of await store.listTailEvents(`tailCreatorUpdate:${mint}`)) if (!s.creators.includes(r.data.newCreator)) { s.creators.push(r.data.newCreator); added++; }
+  if (added) await store.setMeta(`tail_sources:${mint}`, JSON.stringify(s));
+  return added;
 }
 
 /** The oldest signature of an address: signatures only, newest to oldest in pages. */
@@ -415,11 +429,11 @@ export function originOf(v: TxView, curve: string): string | null {
   for (const ix of allIxs(v)) if (ix.programId.equals(DBC_PROGRAM_ID) && (isDisc(ix.data, IX.dbcInitSpl) || isDisc(ix.data, IX.dbcInit2022)) && ix.accounts[5]?.toBase58() === curve) return ix.accounts[2].toBase58();
   return null;
 }
-/** The positions the migration gave to one of `creators`: the migration's two positions, by their NFT's owner after it. */
-export function migrationPositions(v: TxView, curve: string, creators: string[]): string[] | null {
+/** The migration's two positions and their NFT's owner right after it (null when the transaction does not say). */
+export function migrationPositions(v: TxView, curve: string): { position: string; owner: string | null }[] | null {
   for (const ix of allIxs(v)) {
     if (!(ix.programId.equals(DBC_PROGRAM_ID) && isDisc(ix.data, IX.dbcMigrateDammV2) && ix.accounts[0]?.toBase58() === curve)) continue;
-    return [[6, 7], [9, 10]].filter(([nft]) => creators.includes(v.ownerAfter(ix.accounts[nft]) ?? "")).map(([, pos]) => ix.accounts[pos].toBase58());
+    return [[6, 7], [9, 10]].map(([nft, pos]) => ({ position: ix.accounts[pos].toBase58(), owner: v.ownerAfter(ix.accounts[nft]) }));
   }
   return null;
 }
@@ -436,7 +450,7 @@ export async function refreshSources(chain: Chain, deps: WalkDeps, store: Store,
     if (sig && creator) { s.origin = { creator, signature: sig }; if (!s.creators.includes(creator)) s.creators.unshift(creator); }
   }
   // handovers found in followed creators' histories
-  for (const r of await store.listTailEvents(`tailCreatorUpdate:${m}`)) if (!s.creators.includes(r.data.newCreator)) s.creators.push(r.data.newCreator);
+  await absorbHandovers(store, m, s);
   const pool = await chain.dbcPool(t.curve);
   if (pool) {
     const current = new PublicKey(pool.creator).toBase58();
@@ -450,7 +464,7 @@ export async function refreshSources(chain: Chain, deps: WalkDeps, store: Store,
       if (!s.migration) {
         const sig = await oldestSignature(deps, new PublicKey(s.pool));
         const v = sig ? await deps.readView(sig) : null;
-        const positions = v ? migrationPositions(v, curve, s.creators) : null;
+        const positions = v ? migrationPositions(v, curve) : null;
         if (sig && positions) s.migration = { signature: sig, positions };
       }
     }
@@ -468,11 +482,15 @@ export async function tailIndexPass(deps: WalkDeps, store: Store, tails: TailSpe
     const m = t.mint.toBase58();
     const s = await sourcesOf(t);
     const target: CurveTarget = { curve: t.curve.toBase58(), targetPool: t.targetPool.toBase58(), reserve: reserve.toBase58() };
-    for (const c of s.creators) await walkPass(deps, store, new PublicKey(c), `tail:${m}:creator:${c}`, (v) => {
-      const p = parseCreatorTx(v, target);
-      return [...p.claims.map((x, i) => row(v, `tailClaim:${m}`, i, x)), ...p.payouts.map((x, i) => row(v, `tailPayout:${m}`, i, x)), ...p.creatorUpdates.map((x, i) => row(v, `tailCreatorUpdate:${m}`, i, x))];
-    });
-    const positions = s.migration?.positions ?? [];
+    // follow the creators until no walk turns up a new handover (each handover adds a creator to follow)
+    for (let round = 0; round < 8; round++) {
+      for (const c of s.creators) await walkPass(deps, store, new PublicKey(c), `tail:${m}:creator:${c}`, (v) => {
+        const p = parseCreatorTx(v, target);
+        return [...p.claims.map((x, i) => row(v, `tailClaim:${m}`, i, x)), ...p.payouts.map((x, i) => row(v, `tailPayout:${m}`, i, x)), ...p.creatorUpdates.map((x, i) => row(v, `tailCreatorUpdate:${m}`, i, x))];
+      });
+      if (!(await absorbHandovers(store, m, s))) break;
+    }
+    const positions = creatorPositions(s);
     if (s.pool) for (const pos of positions) await walkPass(deps, store, new PublicKey(pos), `tail:${m}:position:${pos}`, (v) => parsePositionTx(v, new Set(positions), s.pool!).map((x, i) => row(v, `tailPoolClaim:${m}`, i, x)));
   }
 }
@@ -506,9 +524,11 @@ export async function tailView(store: Store, tails: TailSpec[], mint: string | n
     if (mint && m !== mint) continue;
     const [curveClaims, poolClaims, payouts] = await Promise.all([store.listTailEvents(`tailClaim:${m}`), store.listTailEvents(`tailPoolClaim:${m}`), store.listTailEvents(`tailPayout:${m}`)]);
     const s = await readSources(store, m);
-    const positions = s.migration?.positions ?? [];
-    // complete only with the whole chain of sources known: the origin, and after graduation the migration
-    const sourcesKnown = !!s.origin && (!s.graduated || !!s.migration);
+    const positions = creatorPositions(s);
+    // complete only with the whole chain of sources known: the origin; every handover found so far already followed;
+    // after graduation the migration, with an owner for each of its positions
+    const pendingHandover = (await store.listTailEvents(`tailCreatorUpdate:${m}`)).some((r) => !s.creators.includes(r.data.newCreator));
+    const sourcesKnown = !!s.origin && !pendingHandover && (!s.graduated || (!!s.migration && s.migration.positions.every((p) => p.owner !== null)));
     const walked = worst(await Promise.all([...s.creators.map((c) => coverage(store, `tail:${m}:creator:${c}`)), ...positions.map((p) => coverage(store, `tail:${m}:position:${p}`))]));
     const claimCoverage: Coverage = sourcesKnown ? walked : { status: "unavailable", atMs: null };
     const claims = [

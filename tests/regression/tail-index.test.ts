@@ -14,7 +14,9 @@ import os from "os";
 import path from "path";
 import { BURN_PROGRAM_ID } from "@cometail/client";
 import { openStore } from "../../worker/src/store";
-import { migrationPositions, originOf, parseCreatorTx, parsePositionTx, parseReserveTx, parseTails, refreshSources, tailIndexPass, traceReserve, tailView, walkPass, type Ix, type ReserveRow, type TxView, type WalkDeps } from "../../worker/src/tails";
+import { deriveDammV2PoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
+import { DAMM_V2_MIGRATION_CONFIGS } from "../../worker/src/chain";
+import { creatorPositions, migrationPositions, originOf, parseCreatorTx, parsePositionTx, parseReserveTx, parseTails, refreshSources, tailIndexPass, traceReserve, tailView, walkPass, type Ix, type ReserveRow, type TxView, type WalkDeps } from "../../worker/src/tails";
 
 const DBC = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"), DAMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const TAG = Buffer.from([0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d]);
@@ -265,14 +267,14 @@ describe("tail index: walk and view", () => {
     const updates = [{ signature: "handover", idx: 0, slot: 50, blockTime: 1, name: `tailCreatorUpdate:${m.toBase58()}`, data: { creator: A.toBase58(), newCreator: B.toBase58() } }];
     let pool: any = { creator: C, migrationProgress: 0 };
     const chain: any = { dbcPool: async () => pool, dbc: { account: { poolConfig: { fetch: async () => ({ migrationFeeOption: 6 }) } } } };
-    const nft1 = k(), pos1 = k(), nft2 = k(), pos2 = k();
+    const nft1 = k(), pos1 = k(), nft2 = k(), pos2 = k(), partner = k();
     const migrateIx = ixOf(DBC, [156, 169, 230, 103, 53, 228, 80, 64], [t.curve, k(), cfg, k(), k(), k(), nft1, pos1, k(), nft2, pos2]);
     const deps: WalkDeps = {
       getSignatures: async (addr, o) => {
         if (addr.equals(t.curve)) { const start = o.before ? curveSigs.findIndex((x) => x.signature === o.before) + 1 : 0; return curveSigs.slice(start, start + o.limit); }
         return o.before ? [] : [{ signature: "migration", slot: 900, err: null, blockTime: 1 }];
       },
-      readView: async (sig) => (sig === "c1" ? view([[initIx, []]]) : sig === "migration" ? view([[migrateIx, []]], { owners: new Map([[nft1.toBase58(), k().toBase58()], [nft2.toBase58(), B.toBase58()]]) }) : null),
+      readView: async (sig) => (sig === "c1" ? view([[initIx, []]]) : sig === "migration" ? view([[migrateIx, []]], { owners: new Map([[nft1.toBase58(), partner.toBase58()], [nft2.toBase58(), B.toBase58()]]) }) : null),
     };
     let s = await refreshSources(chain, deps, store, t);
     expect(s.origin).deep.eq({ creator: A.toBase58(), signature: "c1" });
@@ -289,8 +291,10 @@ describe("tail index: walk and view", () => {
     // graduated: the migration gave B (a creator then) the second position; its NFT may have moved since, it is followed anyway
     pool = { creator: C, migrationProgress: 3 };
     s = await refreshSources(chain, deps, store, t);
-    expect(s.migration).deep.eq({ signature: "migration", positions: [pos2.toBase58()] });
-    expect(migrationPositions(view([[migrateIx, []]], { owners: new Map() }), t.curve.toBase58(), [A.toBase58()])).deep.eq([]);
+    expect(s.migration).deep.eq({ signature: "migration", positions: [{ position: pos1.toBase58(), owner: partner.toBase58() }, { position: pos2.toBase58(), owner: B.toBase58() }] });
+    expect(creatorPositions(s)).deep.eq([pos2.toBase58()]);
+    // a migration that does not say who got the NFTs: owners unknown, never "no creator position"
+    expect(migrationPositions(view([[migrateIx, []]], { owners: new Map() }), t.curve.toBase58())).deep.eq([{ position: pos1.toBase58(), owner: null }, { position: pos2.toBase58(), owner: null }]);
     expect(((await tailView(store, [t], null)).tails[0] as any).coverage.claims.status).eq("unavailable"); // the position is not walked yet
     // without a readable origin, coverage is never complete
     const fresh = await freshStore();
@@ -298,5 +302,63 @@ describe("tail index: walk and view", () => {
     await refreshSources({ ...chain, dbcPool: async () => ({ creator: C, migrationProgress: 0 }) }, blind, fresh, t);
     await fresh.setMeta(`walk_coverage:tail:${m.toBase58()}:creator:${C.toBase58()}`, JSON.stringify({ status: "complete", atMs: 1 }));
     expect(((await tailView(fresh, [t], null)).tails[0] as any).coverage.claims.status).eq("unavailable");
+  });
+
+  it("re-review 160: A creates, hands to B, B claims 400, the migration gives B the position, B hands to C, B claims 600 from the position; the worker starts afterwards", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tail-160-"));
+    const file = `sqlite:${path.join(dir, "store.sqlite")}`;
+    const [m, cfg] = [k(), k()];
+    const [t] = parseTails(`${m.toBase58()}:${cfg.toBase58()}:${target.toBase58()}`);
+    const curveS = t.curve.toBase58();
+    const dammPool = deriveDammV2PoolAddress(DAMM_V2_MIGRATION_CONFIGS[6], m, NATIVE_MINT);
+    const [A, B, C, partner] = [k(), k(), k(), k()];
+    const nftB = k(), posB = k(), nftX = k(), posX = k();
+    const handover = (from: PublicKey, to: PublicKey): [Ix, Ix[]] => [ixOf(DBC, [20, 7, 169, 33, 58, 147, 166, 33], [t.curve, cfg, from, to]), [ev(DBC, [107, 225, 165, 237, 91, 158, 213, 220], key(t.curve), key(from), key(to))]];
+    const views: Record<string, TxView> = {
+      create: view([[ixOf(DBC, [140, 85, 215, 176, 102, 54, 104, 79], [cfg, k(), A, m, NATIVE_MINT, t.curve]), []]], { signature: "create", slot: 1 }),
+      "a-to-b": view([handover(A, B)], { signature: "a-to-b", slot: 2 }),
+      "b-claim": view([claimLeg(400n, t.curve)], { signature: "b-claim", slot: 3 }),
+      migration: view([[ixOf(DBC, [156, 169, 230, 103, 53, 228, 80, 64], [t.curve, k(), cfg, k(), dammPool, k(), nftX, posX, k(), nftB, posB]), []]], { signature: "migration", slot: 4, owners: new Map([[nftX.toBase58(), partner.toBase58()], [nftB.toBase58(), B.toBase58()]]) }),
+      "b-to-c": view([handover(B, C)], { signature: "b-to-c", slot: 5 }),
+      "b-pos-claim": view([[ixOf(DAMM, [1, 1, 1, 1, 1, 1, 1, 1], []), [ev(DAMM, D.posFee, key(dammPool), key(posB), key(B), u64(0n), u64(600n))]]], { signature: "b-pos-claim", slot: 6 }),
+    };
+    const history: Record<string, string[]> = { // newest first, per address
+      [curveS]: ["trade3", "b-to-c", "trade2", "b-claim", "a-to-b", "trade1", "create"],
+      [A.toBase58()]: ["a-to-b", "create"], [B.toBase58()]: ["b-to-c", "migration", "b-claim", "a-to-b"], [C.toBase58()]: ["b-to-c"],
+      [dammPool.toBase58()]: ["trade4", "migration"], [posB.toBase58()]: ["b-pos-claim", "migration"], [posX.toBase58()]: ["migration"],
+    };
+    const deps: WalkDeps = {
+      getSignatures: async (addr, o) => {
+        const list = history[addr.toBase58()] ?? [];
+        let start = o.before ? list.indexOf(o.before) + 1 : 0;
+        const out = [];
+        for (let i = start; i < list.length && out.length < o.limit; i++) { if (o.until && list[i] === o.until) break; out.push({ signature: list[i], slot: views[list[i]]?.slot ?? 0, err: null, blockTime: 1 }); }
+        return out;
+      },
+      readView: async (sig) => views[sig] ?? view([], { signature: sig }),
+    };
+    const chain: any = { dbcPool: async () => ({ creator: C, migrationProgress: 3 }), dbc: { account: { poolConfig: { fetch: async () => ({ migrationFeeOption: 6 }) } } } };
+    const pass = async (store: any) => { await tailIndexPass(deps, store, [t], reserve, (tt) => refreshSources(chain, deps, store, tt)); return (await tailView(store, [t], null)).tails[0] as any; };
+    const check = (v: any) => {
+      // whenever the history says complete, both claims are in it, once each
+      if (v.coverage.claims.status === "complete") expect(v.claims.map((c: any) => [c.signature, c.source, c.claimedLamports]).sort()).deep.eq([["b-claim", "curve", "400"], ["b-pos-claim", "pool", "600"]]);
+    };
+    let store = openStore(file); await store.init();
+    for (let i = 0; i < 4; i++) check(await pass(store));
+    let v: any = await pass(store);
+    expect(v.coverage.claims.status).eq("complete");
+    expect(v.creators.sort()).deep.eq([A, B, C].map((x) => x.toBase58()).sort());
+    expect(v.graduatedPositions).deep.eq([posB.toBase58()]);
+    expect(v.totals).deep.include({ claims: 2, claimedLamports: "1000" });
+    // a restart on the same store, and more passes: nothing twice, still complete
+    await store.close();
+    store = openStore(file); await store.init();
+    for (let i = 0; i < 3; i++) { v = await pass(store); check(v); }
+    expect(v.totals).deep.include({ claims: 2, claimedLamports: "1000" });
+    expect(v.coverage.claims.status).eq("complete");
+    // a handover recorded but not yet followed keeps the history incomplete
+    await store.insertTailEvents([{ signature: "c-to-d", idx: 0, slot: 7, blockTime: 1, name: `tailCreatorUpdate:${m.toBase58()}`, data: { creator: C.toBase58(), newCreator: k().toBase58() } }], "walk:q", "{}");
+    expect(((await tailView(store, [t], null)).tails[0] as any).coverage.claims.status).eq("unavailable");
+    await store.close();
   });
 });
