@@ -61,7 +61,7 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
     const target = st.pool;
     step("burn program and its stand-in $COMETAIL pool", { reserve: st.reserve.toBase58(), cometailMint: st.cometailMint.toBase58(), pool: target.toBase58() });
     await send(connection, [SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: creator.publicKey, lamports: 250_000_000 })], [authority], { label: "authority funds the fresh tail creator" });
-    if ((await connection.getBalance(buyer.publicKey)) < 1_000_000_000) await send(connection, [SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: buyer.publicKey, lamports: 800_000_000 })], [authority], { label: "authority funds the buyer" });
+    if ((await connection.getBalance(buyer.publicKey)) < 300_000_000) await send(connection, [SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: buyer.publicKey, lamports: 300_000_000 })], [authority], { label: "authority funds the buyer" });
 
     // 1. the fee-sale config (stream-50's parameters, devnet scale) and the tail, launched by the plain wallet
     const cfgKp = Keypair.generate(), tailKp = Keypair.generate();
@@ -73,7 +73,7 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
     step("tail launched", { signature: launchSig, mint: tailKp.publicKey.toBase58(), config: cfgKp.publicKey.toBase58(), curve: L.pool.toBase58(), creator: creator.publicKey.toBase58(), raise: R.toString() });
 
     // 2. trades (buys and sells, so fees accrue without filling) and the wallet's position in the target pool
-    const wsolNeed = new BN((R * 2n).toString());
+    const wsolNeed = new BN(((R * 145n) / 100n).toString());
     const held = await tokenBalance(connection, ata(NATIVE_MINT, buyer.publicKey)).catch(() => new BN(0));
     await send(connection, [ataIx(buyer.publicKey, NATIVE_MINT, buyer.publicKey), ...(held.lt(wsolNeed) ? wrapSolIxs(buyer.publicKey, wsolNeed.sub(held)) : []), ataIx(buyer.publicKey, tailKp.publicKey, buyer.publicKey)], [buyer], { label: "buyer wraps SOL" });
     const roundTrip = async (lamports: bigint, label: string) => {
@@ -131,7 +131,7 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
     const dbPath = path.join(ROOT, ".local", `e2e-tail-store-${Date.now()}.sqlite`);
     const store = openStore(`sqlite:${dbPath}`); await store.init();
     const tails = parseTails(`${tailKp.publicKey.toBase58()}:${cfgKp.publicKey.toBase58()}:${target.toBase58()}`);
-    const index = async (want: (v: any) => boolean) => { for (let i = 0; i < 15; i++) { await tailIndexPass(chainWalkDeps(connection), store, tails, st.reserve, (t) => refreshSources(chain, store, t)); const v: any = (await tailView(store, tails, null)).tails[0]; if (v.coverage.claims.status === "complete" && v.coverage.reserve.status === "complete" && want(v)) return v; await sleep(5_000); } return (await tailView(store, tails, null)).tails[0] as any; };
+    const index = async (want: (v: any) => boolean) => { for (let i = 0; i < 15; i++) { { const deps = chainWalkDeps(connection); await tailIndexPass(deps, store, tails, st.reserve, (t) => refreshSources(chain, deps, store, t)); } const v: any = (await tailView(store, tails, null)).tails[0]; if (v.coverage.claims.status === "complete" && v.coverage.reserve.status === "complete" && want(v)) return v; await sleep(5_000); } return (await tailView(store, tails, null)).tails[0] as any; };
     expect(tails[0].curve.equals(L.pool)).true;
     const view: any = await index((v) => v.claims.length >= 3);
     expect(view.claims.length).eq(3);
@@ -175,6 +175,8 @@ describe("devnet end-to-end: a tail launched by a plain wallet", () => {
     expect(Number(toOwner - toReserve) <= 1 && Number(toReserve - toOwner) <= 1, "half each").true;
     step("graduated position fees", { signature: gsig, toReserve, toOwner });
     const after: any = await index((v) => v.claims.some((c: any) => c.source === "pool") && v.payouts.length > 0);
+    expect(after.origin?.creator).eq(creator.publicKey.toBase58());
+    expect(after.graduatedPositions).include(own!.position.toBase58());
     const pc = after.claims.find((c: any) => c.signature === gsig);
     expect(pc && [pc.source, pc.status, pc.toBurnLamports]).deep.eq(["pool", "split", toReserve.toString()]);
     expect(after.payouts.map((p: any) => p.signature)).include(payoutSig);

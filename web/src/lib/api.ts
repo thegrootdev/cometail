@@ -86,17 +86,18 @@ export type BurnRow = { signature: string; slot: number; idx: number; blockTime:
  *  creator claim is listed, split or not (`status`); `burn` is null until the reserve's ledger proves where the
  *  claim's SOL went; totals are null until the history they sum is complete. */
 export interface TailClaim {
-  signature: string; slot: number; blockTime: number | null;
+  signature: string; idx: number; slot: number; blockTime: number | null;
   source: "curve" | "pool"; status: "split" | "unsplit" | "incomplete" | "ambiguous";
   claimedLamports: string; keptLamports: string | null; toBurnLamports: string | null;
   burn: { spentLamports: string; waitingLamports: string; boughtRaw: string; buybacks: string[] } | null;
   liquidity: { swapInLamports: string | null; addedLamports: string; addedRaw: string; liquidity: string; locked: boolean; position: string } | null;
 }
 export interface TailInfo {
-  mint: string; config: string; curve: string; targetPool: string; creators: string[]; graduatedPool: string | null; positions: string[];
-  totals: { claims: number | null; notSplit: number | null; claimedLamports: string | null; toBurnLamports: string | null; boughtRaw: string | null; liquidityLamports: string | null; liquidityRaw: string | null; lockedLiquidity: string | null; payoutLamports: string | null };
+  mint: string; config: string; curve: string; targetPool: string; creators: string[]; origin: { creator: string; signature: string } | null;
+  graduatedPool: string | null; graduatedPositions: string[]; positions: string[];
+  totals: { claims: number | null; notSplit: number | null; ambiguous: number | null; claimedLamports: string | null; toBurnLamports: string | null; boughtRaw: string | null; liquidityLamports: string | null; liquidityRaw: string | null; lockedLiquidity: string | null; payoutLamports: string | null };
   claims: TailClaim[];
-  payouts: { signature: string; slot: number; blockTime: number | null; kind: "migrationFee" | "surplus"; lamports: string }[];
+  payouts: { signature: string; idx: number; slot: number; blockTime: number | null; kind: "migrationFee" | "surplus"; lamports: string }[];
   coverage: { claims: { status: string; atMs: number | null }; reserve: { status: string; atMs: number | null }; reserveVerified: boolean };
 }
 export interface BurnView {

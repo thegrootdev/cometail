@@ -30,8 +30,8 @@ describe("devnet: the tail claims' SOL, bought back and burned", () => {
     const tails = parseTails(`${launched.mint}:${launched.config}:${st0.pool}`);
     void pos;
     const store = openStore(`sqlite:${path.join(ROOT, ".local", `e2e-tail-burn-store-${Date.now()}.sqlite`)}`); await store.init();
-    const view = async () => { for (let i = 0; i < 8; i++) { await tailIndexPass(chainWalkDeps(connection), store, tails, new PublicKey(st0.reserve), (t) => refreshSources(chain, store, t)); const v: any = (await tailView(store, tails, null)).tails[0]; if (v.coverage.reserve.status === "complete" && v.coverage.claims.status === "complete") return v; await sleep(5_000); } return (await tailView(store, tails, null)).tails[0] as any; };
-    const buybacks: string[] = [];
+    const view = async () => { for (let i = 0; i < 8; i++) { { const deps = chainWalkDeps(connection); await tailIndexPass(deps, store, tails, new PublicKey(st0.reserve), (t) => refreshSources(chain, deps, store, t)); } const v: any = (await tailView(store, tails, null)).tails[0]; if (v.coverage.reserve.status === "complete" && v.coverage.claims.status === "complete") return v; await sleep(5_000); } return (await tailView(store, tails, null)).tails[0] as any; };
+    const buybacks: string[] = [], topUps: string[] = [];
     for (let round = 0; round < 10; round++) {
       const v = await view();
       if (v.claims.filter((c: any) => c.toBurnLamports !== null).every((c: any) => c.burn && BigInt(c.burn.waitingLamports) === 0n)) break;
@@ -39,13 +39,23 @@ describe("devnet: the tail claims' SOL, bought back and burned", () => {
       const p = await dammPool(connection, st.pool);
       const reserve = BigInt((await tokenBalance(connection, st.reserve)).toString());
       const next = nextBuyback(st, reserve, BigInt(p.tokenBAmount.toString()), Math.floor(Date.now() / 1000));
+      if (!next.due && next.amount < 1_000_000n) {
+        // below the program's 0.001 SOL minimum buy, the reserve waits for more: on devnet a later inflow is sent
+        // (after the claims, so first in, first out spends the claims' SOL first)
+        const { SystemProgram } = await import("@solana/web3.js");
+        const { createSyncNativeInstruction, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, NATIVE_MINT } = await import("@solana/spl-token");
+        const authority = key("authority"), src = getAssociatedTokenAddressSync(NATIVE_MINT, authority.publicKey);
+        const top = 1_200_000n;
+        topUps.push(await send(connection, [createAssociatedTokenAccountIdempotentInstruction(authority.publicKey, src, authority.publicKey, NATIVE_MINT), SystemProgram.transfer({ fromPubkey: authority.publicKey, toPubkey: src, lamports: Number(top) }), createSyncNativeInstruction(src), createTransferInstruction(src, st.reserve, authority.publicKey, top)], [authority], { label: "devnet: a later inflow to the reserve, above the buy minimum" }));
+        continue;
+      }
       if (!next.due) { const wait = Math.max(5, next.dueAtSec - Math.floor(Date.now() / 1000) + 5); log("waiting for the cooldown", { seconds: wait }); await sleep(wait * 1000); continue; }
       buybacks.push(await send(connection, [await client.buyback({ state: st, tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault })], [keeper], { cu: 400_000, label: `buyback ${buybacks.length + 1}` }));
     }
     const v = await view();
     for (const c of v.claims.filter((x: any) => x.toBurnLamports !== null)) { expect(c.burn, "traced").not.null; expect(BigInt(c.burn.waitingLamports)).eq(0n); expect(BigInt(c.burn.boughtRaw) > 0n).true; }
     expect(v.coverage.reserveVerified).eq(true);
-    record.steps.push({ name: "claims bought back and burned", buybacks, totals: v.totals, claims: v.claims.map((c: any) => ({ signature: c.signature, source: c.source, status: c.status, toBurn: c.toBurnLamports, burn: c.burn })) });
+    record.steps.push({ name: "claims bought back and burned", buybacks, topUps, totals: v.totals, claims: v.claims.map((c: any) => ({ signature: c.signature, source: c.source, status: c.status, toBurn: c.toBurnLamports, burn: c.burn })) });
     fs.writeFileSync(file, JSON.stringify(record, null, 2));
     log("claims bought back and burned", { totals: v.totals });
     await store.close();

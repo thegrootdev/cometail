@@ -50,6 +50,8 @@ export type TxView = {
   top: Ix[]; inner: Map<number, Ix[]>; logs: string[];
   /** The account's token amount before and after, when the account is in the transaction (absent before = 0). */
   balance: (account: PublicKey) => { pre: bigint; post: bigint } | null;
+  /** The owner of a token account after the transaction, when it holds a balance then. */
+  ownerAfter: (account: PublicKey) => string | null;
 };
 
 export function txView(signature: string, tx: any): TxView | null {
@@ -64,6 +66,10 @@ export function txView(signature: string, tx: any): TxView | null {
     signature, slot: tx.slot, blockTime: tx.blockTime ?? null, err: !!tx.meta.err, top, inner, logs: tx.meta.logMessages,
     balance: (account) => {
       for (let i = 0; i < keys.length; i++) if (key(i).equals(account)) return { pre: amount(tx.meta.preTokenBalances, i), post: amount(tx.meta.postTokenBalances, i) };
+      return null;
+    },
+    ownerAfter: (account) => {
+      for (let i = 0; i < keys.length; i++) if (key(i).equals(account)) { const e = (tx.meta.postTokenBalances ?? []).find((x: any) => x.accountIndex === i); return e?.owner ?? null; }
       return null;
     },
   };
@@ -81,12 +87,15 @@ const EVT = {
   liquidityChange: Buffer.from([197, 171, 78, 127, 224, 211, 87, 13]),
   permanentLock: Buffer.from([145, 143, 162, 218, 218, 80, 67, 11]),
   claimPositionFee: Buffer.from([198, 182, 183, 52, 97, 12, 49, 56]),
+  updatePoolCreator: Buffer.from([107, 225, 165, 237, 91, 158, 213, 220]),
 };
 /** Instruction discriminators of the top-level legs (cp-amm swap / swap2, add_liquidity, permanent_lock_position; DBC claim). */
 const IX = {
   dbcClaimCreator: Buffer.from([82, 220, 250, 189, 3, 85, 107, 45]),
   swap: Buffer.from([248, 198, 158, 145, 225, 117, 135, 200]), swap2: Buffer.from([65, 75, 63, 76, 235, 91, 91, 136]),
   addLiquidity: Buffer.from([181, 157, 89, 67, 143, 182, 52, 72]), permanentLock: Buffer.from([165, 176, 125, 6, 231, 171, 186, 213]),
+  dbcInitSpl: Buffer.from([140, 85, 215, 176, 102, 54, 104, 79]), dbcInit2022: Buffer.from([169, 118, 51, 78, 145, 110, 220, 155]),
+  dbcMigrateDammV2: Buffer.from([156, 169, 230, 103, 53, 228, 80, 64]),
 };
 const pk = (b: Buffer, o: number) => new PublicKey(b.subarray(o, o + 32)).toBase58();
 const u64 = (b: Buffer, o: number) => b.readBigUInt64LE(o);
@@ -97,6 +106,7 @@ export type Event =
   | { kind: "creatorClaim"; pool: string; base: bigint; quote: bigint }
   | { kind: "migrationFee"; pool: string; fee: bigint; flag: number }
   | { kind: "creatorSurplus"; pool: string; amount: bigint }
+  | { kind: "creatorUpdate"; pool: string; creator: string; newCreator: string }
   | { kind: "swap"; pool: string; direction: number; amountIn: bigint; out: bigint }
   | { kind: "liquidity"; pool: string; position: string; owner: string; a: bigint; b: bigint; delta: bigint; changeType: number }
   | { kind: "lock"; pool: string; position: string; amount: bigint; total: bigint }
@@ -112,6 +122,7 @@ export function decodeEvents(ixs: Ix[]): Event[] {
       if (disc.equals(EVT.claimCreatorTradingFee)) out.push({ kind: "creatorClaim", pool: pk(b, 0), base: u64(b, 32), quote: u64(b, 40) });
       else if (disc.equals(EVT.withdrawMigrationFee)) out.push({ kind: "migrationFee", pool: pk(b, 0), fee: u64(b, 32), flag: b[40] });
       else if (disc.equals(EVT.creatorWithdrawSurplus)) out.push({ kind: "creatorSurplus", pool: pk(b, 0), amount: u64(b, 32) });
+      else if (disc.equals(EVT.updatePoolCreator)) out.push({ kind: "creatorUpdate", pool: pk(b, 0), creator: pk(b, 32), newCreator: pk(b, 64) });
     } else if (ix.programId.equals(DAMM_V2_PROGRAM_ID)) {
       // EvtSwap2: pool, trade_direction u8 (1 = B -> A, a buy of token A), collect_fee_mode u8, has_referral bool,
       // params {amount_0, amount_1, swap_mode u8}, swap_result {included_fee_input_amount, excluded_fee_input_amount, amount_left, output_amount, ...}
@@ -149,9 +160,11 @@ export type CurveClaim = {
 };
 
 /** Every creator claim of `t.curve` in the transaction, with the split legs bound to it, and the graduation payouts. */
-export function parseCreatorTx(v: TxView, t: CurveTarget): { claims: CurveClaim[]; payouts: { kind: "migrationFee" | "surplus"; lamports: string }[] } {
-  if (v.err) return { claims: [], payouts: [] };
+export function parseCreatorTx(v: TxView, t: CurveTarget): { claims: CurveClaim[]; payouts: { kind: "migrationFee" | "surplus"; lamports: string }[]; creatorUpdates: { creator: string; newCreator: string }[] } {
+  if (v.err) return { claims: [], payouts: [], creatorUpdates: [] };
   const payouts: { kind: "migrationFee" | "surplus"; lamports: string }[] = [];
+  // a creator handover needs the current creator's signature, so every one is in some creator's own history
+  const creatorUpdates = [...v.inner.values()].flatMap(decodeEvents).filter((e): e is Extract<Event, { kind: "creatorUpdate" }> => e.kind === "creatorUpdate" && e.pool === t.curve).map((e) => ({ creator: e.creator, newCreator: e.newCreator }));
   const found: { at: number; quote: bigint; wrapped: boolean; ix: Ix }[] = [];
   for (let i = 0; i < v.top.length; i++) {
     for (const e of eventsOf(v, i)) {
@@ -194,7 +207,7 @@ export function parseCreatorTx(v: TxView, t: CurveTarget): { claims: CurveClaim[
       lockedLiquidity: lockMatches ? lock!.amount.toString() : null,
     };
   });
-  return { claims, payouts };
+  return { claims, payouts, creatorUpdates };
 }
 
 /** Fee claims of the tail's graduated positions, and whether each went through the burn program's owner claim. */
@@ -370,34 +383,84 @@ export async function walkPass(deps: WalkDeps, store: Store, address: PublicKey,
   return { stored: rows.length, complete };
 }
 
-/** What the index follows per tail: the curve's creators seen so far and, after graduation, their positions in
- *  the tail's own pool (saved in meta so a later creator transfer or NFT move cannot hide earlier sources). */
-export type TailSources = { creators: string[]; pool: string | null; positions: string[] };
+/** What the index follows per tail, saved in meta. `origin` is the creator that signed the curve's creation (from
+ *  the curve's first transaction); `creators` grows by every handover found in a followed creator's history, so the
+ *  whole chain of creators is followed from the first. After graduation, `migration` holds the positions the
+ *  migration transaction gave to one of those creators, so a position NFT moved before the worker looked is still
+ *  followed. Claims coverage is only complete when the origin and (after graduation) the migration are known. */
+export type TailSources = {
+  origin: { creator: string; signature: string } | null; creators: string[]; graduated: boolean;
+  pool: string | null; migration: { signature: string; positions: string[] } | null;
+};
 export async function readSources(store: Store, mint: string): Promise<TailSources> {
-  try { const v = await store.getMeta(`tail_sources:${mint}`); if (v) return JSON.parse(v); } catch { /* fresh */ }
-  return { creators: [], pool: null, positions: [] };
+  try { const v = await store.getMeta(`tail_sources:${mint}`); if (v) { const j = JSON.parse(v); if ("origin" in j) return j; } } catch { /* fresh */ }
+  return { origin: null, creators: [], graduated: false, pool: null, migration: null };
 }
 
-/** Refreshes a tail's sources from the chain: the curve's current creator, and after graduation the positions in
- *  the tail's DAMM v2 pool held by any of its creators. */
-export async function refreshSources(chain: Chain, store: Store, t: TailSpec): Promise<TailSources> {
+/** The oldest signature of an address: signatures only, newest to oldest in pages. */
+export async function oldestSignature(deps: WalkDeps, address: PublicKey): Promise<string | null> {
+  let before: string | undefined, last: string | null = null;
+  for (;;) {
+    const page = await deps.getSignatures(address, { before, limit: 1000 });
+    if (!page.length) return last;
+    last = page[page.length - 1].signature;
+    if (page.length < 1000) return last;
+    before = last;
+  }
+}
+const allIxs = (v: TxView) => v.top.flatMap((ix, i) => [ix, ...(v.inner.get(i) ?? [])]);
+
+/** The creator that signed the curve's creation, from the curve's first transaction. */
+export function originOf(v: TxView, curve: string): string | null {
+  for (const ix of allIxs(v)) if (ix.programId.equals(DBC_PROGRAM_ID) && (isDisc(ix.data, IX.dbcInitSpl) || isDisc(ix.data, IX.dbcInit2022)) && ix.accounts[5]?.toBase58() === curve) return ix.accounts[2].toBase58();
+  return null;
+}
+/** The positions the migration gave to one of `creators`: the migration's two positions, by their NFT's owner after it. */
+export function migrationPositions(v: TxView, curve: string, creators: string[]): string[] | null {
+  for (const ix of allIxs(v)) {
+    if (!(ix.programId.equals(DBC_PROGRAM_ID) && isDisc(ix.data, IX.dbcMigrateDammV2) && ix.accounts[0]?.toBase58() === curve)) continue;
+    return [[6, 7], [9, 10]].filter(([nft]) => creators.includes(v.ownerAfter(ix.accounts[nft]) ?? "")).map(([, pos]) => ix.accounts[pos].toBase58());
+  }
+  return null;
+}
+
+/** Refreshes a tail's sources: the origin (once), the current creator, graduation and, once, the migration's positions. */
+export async function refreshSources(chain: Chain, deps: WalkDeps, store: Store, t: TailSpec): Promise<TailSources> {
   const m = t.mint.toBase58();
   const s = await readSources(store, m);
+  const curve = t.curve.toBase58();
+  if (!s.origin) {
+    const sig = await oldestSignature(deps, t.curve);
+    const v = sig ? await deps.readView(sig) : null;
+    const creator = v ? originOf(v, curve) : null;
+    if (sig && creator) { s.origin = { creator, signature: sig }; if (!s.creators.includes(creator)) s.creators.unshift(creator); }
+  }
+  // handovers found in followed creators' histories
+  for (const r of await store.listTailEvents(`tailCreatorUpdate:${m}`)) if (!s.creators.includes(r.data.newCreator)) s.creators.push(r.data.newCreator);
   const pool = await chain.dbcPool(t.curve);
-  if (!pool) return s;
-  const creator = new PublicKey(pool.creator).toBase58();
-  if (!s.creators.includes(creator)) s.creators.push(creator);
-  if (Number(pool.migrationProgress) === DBC_PROGRESS.createdPool) {
-    const cfg: any = await (chain.dbc.account as any).poolConfig.fetch(t.config, "confirmed");
-    const dammPool = deriveDammV2PoolAddress(DAMM_V2_MIGRATION_CONFIGS[Number(cfg.migrationFeeOption)], t.mint, NATIVE_MINT);
-    s.pool = dammPool.toBase58();
-    for (const c of s.creators) for (const p of await chain.positionsOwnedBy(dammPool, new PublicKey(c))) if (!s.positions.includes(p.position.toBase58())) s.positions.push(p.position.toBase58());
+  if (pool) {
+    const current = new PublicKey(pool.creator).toBase58();
+    if (!s.creators.includes(current)) s.creators.push(current);
+    if (Number(pool.migrationProgress) === DBC_PROGRESS.createdPool) {
+      s.graduated = true;
+      if (!s.pool) {
+        const cfg: any = await (chain.dbc.account as any).poolConfig.fetch(t.config, "confirmed");
+        s.pool = deriveDammV2PoolAddress(DAMM_V2_MIGRATION_CONFIGS[Number(cfg.migrationFeeOption)], t.mint, NATIVE_MINT).toBase58();
+      }
+      if (!s.migration) {
+        const sig = await oldestSignature(deps, new PublicKey(s.pool));
+        const v = sig ? await deps.readView(sig) : null;
+        const positions = v ? migrationPositions(v, curve, s.creators) : null;
+        if (sig && positions) s.migration = { signature: sig, positions };
+      }
+    }
   }
   await store.setMeta(`tail_sources:${m}`, JSON.stringify(s));
   return s;
 }
 
-/** The indexer's tail pass: the reserve ledger, then each tail's creators and graduated positions. */
+/** The indexer's tail pass: the reserve ledger, then each tail's creators and graduated positions. Rows are named
+ *  per tail (`tailClaim:<mint>` …), so one transaction can hold claims of several tails. */
 export async function tailIndexPass(deps: WalkDeps, store: Store, tails: TailSpec[], reserve: PublicKey, sourcesOf: (t: TailSpec) => Promise<TailSources>) {
   const row = (v: TxView, name: string, idx: number, data: any): TailEventRow => ({ signature: v.signature, idx, slot: v.slot, blockTime: v.blockTime, name, data });
   await walkPass(deps, store, reserve, "reserve", (v) => { const r = parseReserveTx(v, reserve); return r ? [row(v, "reserveTx", 0, r)] : []; });
@@ -407,9 +470,10 @@ export async function tailIndexPass(deps: WalkDeps, store: Store, tails: TailSpe
     const target: CurveTarget = { curve: t.curve.toBase58(), targetPool: t.targetPool.toBase58(), reserve: reserve.toBase58() };
     for (const c of s.creators) await walkPass(deps, store, new PublicKey(c), `tail:${m}:creator:${c}`, (v) => {
       const p = parseCreatorTx(v, target);
-      return [...p.claims.map((x, i) => row(v, "tailClaim", i, { tail: m, ...x })), ...p.payouts.map((x, i) => row(v, "tailPayout", i, { tail: m, ...x }))];
+      return [...p.claims.map((x, i) => row(v, `tailClaim:${m}`, i, x)), ...p.payouts.map((x, i) => row(v, `tailPayout:${m}`, i, x)), ...p.creatorUpdates.map((x, i) => row(v, `tailCreatorUpdate:${m}`, i, x))];
     });
-    if (s.pool) for (const pos of s.positions) await walkPass(deps, store, new PublicKey(pos), `tail:${m}:position:${pos}`, (v) => parsePositionTx(v, new Set(s.positions), s.pool!).map((x, i) => row(v, "tailPoolClaim", i, { tail: m, ...x })));
+    const positions = s.migration?.positions ?? [];
+    if (s.pool) for (const pos of positions) await walkPass(deps, store, new PublicKey(pos), `tail:${m}:position:${pos}`, (v) => parsePositionTx(v, new Set(positions), s.pool!).map((x, i) => row(v, `tailPoolClaim:${m}`, i, x)));
   }
 }
 
@@ -436,51 +500,58 @@ export async function tailView(store: Store, tails: TailSpec[], mint: string | n
     if (!t || !t.exact) return null;
     return { spentLamports: t.spentLamports.toString(), waitingLamports: (BigInt(lamports) - t.spentLamports).toString(), boughtRaw: t.boughtRaw.toString(), buybacks: t.buybacks };
   };
-  const [curveClaims, poolClaims, payouts] = await Promise.all([store.listTailEvents("tailClaim"), store.listTailEvents("tailPoolClaim"), store.listTailEvents("tailPayout")]);
   const out = [];
   for (const t of tails) {
     const m = t.mint.toBase58();
     if (mint && m !== mint) continue;
+    const [curveClaims, poolClaims, payouts] = await Promise.all([store.listTailEvents(`tailClaim:${m}`), store.listTailEvents(`tailPoolClaim:${m}`), store.listTailEvents(`tailPayout:${m}`)]);
     const s = await readSources(store, m);
-    const claimCoverage = worst(await Promise.all([...s.creators.map((c) => coverage(store, `tail:${m}:creator:${c}`)), ...s.positions.map((p) => coverage(store, `tail:${m}:position:${p}`))]));
+    const positions = s.migration?.positions ?? [];
+    // complete only with the whole chain of sources known: the origin, and after graduation the migration
+    const sourcesKnown = !!s.origin && (!s.graduated || !!s.migration);
+    const walked = worst(await Promise.all([...s.creators.map((c) => coverage(store, `tail:${m}:creator:${c}`)), ...positions.map((p) => coverage(store, `tail:${m}:position:${p}`))]));
+    const claimCoverage: Coverage = sourcesKnown ? walked : { status: "unavailable", atMs: null };
     const claims = [
-      ...curveClaims.filter((r) => r.data.tail === m).map((r) => {
+      ...curveClaims.map((r) => {
         const d = r.data as CurveClaim;
         const added = d.add ? BigInt(d.add.addedLamports) : 0n, swapped = d.buy ? BigInt(d.buy.inLamports) : 0n, burned = d.toBurn ? BigInt(d.toBurn.lamports) : 0n;
-        return { signature: r.signature, slot: r.slot, blockTime: r.blockTime, source: "curve" as const, status: d.status, claimedLamports: d.claimedLamports,
+        return { signature: r.signature, idx: r.idx, slot: r.slot, blockTime: r.blockTime, source: "curve" as const, status: d.status, claimedLamports: d.claimedLamports,
           keptLamports: d.status === "ambiguous" ? null : (BigInt(d.claimedLamports) - burned - swapped - added).toString(),
           toBurnLamports: d.toBurn?.lamports ?? null, burn: d.toBurn ? burnOf(r.signature, d.toBurn.lamports, true) : null,
           liquidity: d.add ? { swapInLamports: d.buy?.inLamports ?? null, addedLamports: d.add.addedLamports, addedRaw: d.add.addedRaw, liquidity: d.add.liquidity, locked: d.lockedLiquidity !== null, position: d.add.position } : null };
       }),
-      ...poolClaims.filter((r) => r.data.tail === m).map((r) => {
+      ...poolClaims.map((r) => {
         const d = r.data as PoolClaim;
-        return { signature: r.signature, slot: r.slot, blockTime: r.blockTime, source: "pool" as const, status: d.status, claimedLamports: d.claimedLamports,
+        return { signature: r.signature, idx: r.idx, slot: r.slot, blockTime: r.blockTime, source: "pool" as const, status: d.status, claimedLamports: d.claimedLamports,
           keptLamports: d.status === "ambiguous" ? null : (BigInt(d.claimedLamports) - BigInt(d.toBurn?.lamports ?? "0")).toString(),
           toBurnLamports: d.toBurn?.lamports ?? null, burn: d.toBurn ? burnOf(r.signature, d.toBurn.lamports, false) : null, liquidity: null };
       }),
-    ].sort((a, b) => b.slot - a.slot || a.signature.localeCompare(b.signature));
+    ].sort((a, b) => b.slot - a.slot || a.signature.localeCompare(b.signature) || a.idx - b.idx);
     const sum = (xs: (string | null | undefined)[]) => xs.reduce((acc, x) => acc + BigInt(x ?? "0"), 0n).toString();
     const known = claimCoverage.status === "complete";
-    const burnKnown = known && reserveCoverage.status === "complete" && verified && claims.every((c) => c.toBurnLamports === null || c.burn !== null);
+    // an ambiguous claim's legs are unknown, not absent: no total of legs while one is listed
+    const legsKnown = known && claims.every((c) => c.status !== "ambiguous");
+    const burnKnown = legsKnown && reserveCoverage.status === "complete" && verified && claims.every((c) => c.toBurnLamports === null || c.burn !== null);
     const locked = claims.filter((c) => c.liquidity?.locked);
-    const mine = payouts.filter((p) => p.data.tail === m);
+    const mine = payouts;
     out.push({
       mint: m, config: t.config.toBase58(), curve: t.curve.toBase58(), targetPool: t.targetPool.toBase58(),
-      creators: s.creators, graduatedPool: s.pool, positions: [...new Set(claims.map((c) => c.liquidity?.position).filter((p): p is string => !!p))],
+      creators: s.creators, origin: s.origin, graduatedPool: s.pool, graduatedPositions: positions, positions: [...new Set(claims.map((c) => c.liquidity?.position).filter((p): p is string => !!p))],
       totals: {
         // every total is null until the history it sums is complete: an empty or partial history is not a zero
         claims: known ? claims.length : null,
         notSplit: known ? claims.filter((c) => c.status !== "split").length : null,
         claimedLamports: known ? sum(claims.map((c) => c.claimedLamports)) : null,
-        toBurnLamports: known ? sum(claims.map((c) => c.toBurnLamports)) : null,
+        ambiguous: known ? claims.filter((c) => c.status === "ambiguous").length : null,
+        toBurnLamports: legsKnown ? sum(claims.map((c) => c.toBurnLamports)) : null,
         boughtRaw: burnKnown ? sum(claims.map((c) => c.burn?.boughtRaw)) : null,
-        liquidityLamports: known ? sum(locked.map((c) => c.liquidity!.addedLamports)) : null,
-        liquidityRaw: known ? sum(locked.map((c) => c.liquidity!.addedRaw)) : null,
-        lockedLiquidity: known ? sum(locked.map((c) => c.liquidity!.liquidity)) : null,
+        liquidityLamports: legsKnown ? sum(locked.map((c) => c.liquidity!.addedLamports)) : null,
+        liquidityRaw: legsKnown ? sum(locked.map((c) => c.liquidity!.addedRaw)) : null,
+        lockedLiquidity: legsKnown ? sum(locked.map((c) => c.liquidity!.liquidity)) : null,
         payoutLamports: known ? sum(mine.map((p) => p.data.lamports)) : null,
       },
       claims,
-      payouts: mine.map((p) => ({ signature: p.signature, slot: p.slot, blockTime: p.blockTime, kind: p.data.kind, lamports: p.data.lamports })),
+      payouts: mine.map((p) => ({ signature: p.signature, idx: p.idx, slot: p.slot, blockTime: p.blockTime, kind: p.data.kind, lamports: p.data.lamports })),
       coverage: { claims: claimCoverage, reserve: reserveCoverage, reserveVerified: verified },
     });
   }

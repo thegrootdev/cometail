@@ -34,7 +34,7 @@ function sendView(svm: any, ixs: TransactionInstruction[], signers: Keypair[], w
   const inner = new Map<number, Ix[]>();
   res.innerInstructions().forEach((group: any[], i: number) => { if (group.length) inner.set(i, group.map((x: any) => ({ programId: keys[x.instruction().programIdIndex()], accounts: [...x.instruction().accounts()].map((k: number) => keys[k]), data: Buffer.from(x.instruction().data()) }))); });
   const view: TxView = { signature: "local", slot: 1, blockTime: null, err: false, top, inner, logs: res.logs(),
-    balance: (k) => (pre.has(k.toBase58()) ? { pre: pre.get(k.toBase58())!, post: amount(k) } : null) };
+    balance: (k) => (pre.has(k.toBase58()) ? { pre: pre.get(k.toBase58())!, post: amount(k) } : null), ownerAfter: () => null };
   return { bytes, cu: res.computeUnitsConsumed(), view };
 }
 async function world() {

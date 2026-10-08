@@ -47,9 +47,9 @@ export function TailPanel({ mint }: { mint: string }) {
       <p className="text-sm mt-2">{copy.graduation(TAIL_TAKE_PCT)}</p>
       {n.claims === null ? <p className="micro mt-3">{copy.partial}</p> : (
         <div className="burn-stats mt-3">
-          <div><span className="micro">{copy.sentToBurn}</span><strong><Money lamports={n.toBurnLamports} /></strong></div>
+          <div><span className="micro">{copy.sentToBurn}</span><strong>{n.toBurnLamports === null ? copy.unknownWithAmbiguous : <Money lamports={n.toBurnLamports} />}</strong></div>
           <div><span className="micro">{copy.bought(TARGET)}</span><strong>{boughtTotal}</strong></div>
-          <div><span className="micro">{copy.liquidity}</span><strong><Money lamports={n.liquidityLamports} /></strong><span className="micro tail-plus">+ {units(n.liquidityRaw ?? "0", TARGET_DECIMALS, 0)} {TARGET}</span></div>
+          <div><span className="micro">{copy.liquidity}</span>{n.liquidityLamports === null ? <strong>{copy.unknownWithAmbiguous}</strong> : <><strong><Money lamports={n.liquidityLamports} /></strong><span className="micro tail-plus">+ {units(n.liquidityRaw ?? "0", TARGET_DECIMALS, 0)} {TARGET}</span></>}</div>
           <div><span className="micro">{copy.claims}</span><strong>{n.claims}</strong>{(n.notSplit ?? 0) > 0 && <span className="micro tail-plus">{copy.notSplit}: {n.notSplit}</span>}</div>
         </div>
       )}
@@ -58,21 +58,21 @@ export function TailPanel({ mint }: { mint: string }) {
         {t.claims.length === 0 && t.payouts.length === 0 ? <p className="text-sm mt-2">{n.claims === null ? copy.partial : copy.none}</p> : (
           <ul className="tail-claims mt-2">
             {t.payouts.map((p) => (
-              <li key={`${p.signature}-${p.kind}`}>
+              <li key={`${p.signature}-${p.kind}-${p.idx}`}>
                 <p className="micro">{when(p.blockTime)}</p>
                 <dl className="detail-list"><div><dt>{copy.payout[p.kind]}</dt><dd className="money"><Money lamports={p.lamports} /></dd></div></dl>
                 <p className="micro"><a href={EXPLORER("tx", p.signature)} target="_blank" rel="noreferrer">{copy.tx} {short(p.signature)}</a></p>
               </li>
             ))}
             {t.claims.map((c) => (
-              <li key={`${c.signature}-${c.source}`} className={c.status === "split" ? "" : "tail-claim-unsplit"}>
+              <li key={`${c.signature}-${c.source}-${c.idx}`} className={c.status === "split" ? "" : "tail-claim-unsplit"}>
                 <p className="micro">{when(c.blockTime)} · {copy.source[c.source]} · <strong>{copy.status[c.status]}</strong></p>
                 <dl className="detail-list">
                   <div><dt>{copy.claimed}</dt><dd className="money"><Money lamports={c.claimedLamports} /></dd></div>
                   {c.keptLamports !== null && <div><dt>{copy.kept}</dt><dd className="money"><Money lamports={c.keptLamports} /></dd></div>}
                   {c.toBurnLamports !== null && <div><dt>{copy.toBurn}</dt><dd className="money"><Money lamports={c.toBurnLamports} /></dd></div>}
                   {c.toBurnLamports !== null && <div><dt>{copy.bought(TARGET)}</dt><dd>{boughtText(c)}</dd></div>}
-                  {c.liquidity && <div><dt>{copy.added}</dt><dd className="money"><Money lamports={c.liquidity.addedLamports} /><span className="micro tail-plus">+ {units(c.liquidity.addedRaw, TARGET_DECIMALS, 0)} {TARGET}</span></dd></div>}
+                  {c.liquidity && <div><dt>{c.liquidity.locked ? copy.added : copy.addedNotLocked}</dt><dd className="money"><Money lamports={c.liquidity.addedLamports} /><span className="micro tail-plus">+ {units(c.liquidity.addedRaw, TARGET_DECIMALS, 0)} {TARGET}</span></dd></div>}
                 </dl>
                 <p className="micro">
                   <a href={EXPLORER("tx", c.signature)} target="_blank" rel="noreferrer">{copy.tx} {short(c.signature)}</a>
