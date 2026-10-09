@@ -127,7 +127,9 @@ that transaction. **The split is done by us, by hand, in the open; no code force
 every claim of the tail's creator fees with its transaction, found through the creator wallet's own transactions,
 including any claim that was not split: the SOL sent to the burn, the $COMETAIL the buybacks that spent that SOL
 bought and burned (traced first in, first out through the reserve, shown only when the reserve's ledger proves it)
-and the liquidity locked. At graduation, 50% of the raise goes to the creator wallet
+and the liquidity locked. A claim that was not split can be made up once, later, from the wallet's SOL: the same
+two quarters, in one transaction whose memo names the claim; the page keeps the claim as not split and shows the
+make-up under it with its transaction. At graduation, 50% of the raise goes to the creator wallet
 (DBC's creator migration fee) and the rest is locked in the tail's own pool; after graduation, the creator
 position's fees are claimed through the burn program's owner claim, which sends half to the reserve by itself.
 How it fits together: `docs/architecture.md` (Tails); the numbers: `docs/economics.md`.

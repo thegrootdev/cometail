@@ -2,7 +2,8 @@
 // A tail's page panel: how the tail works, in plain words, and every claim of its creator fees, split or not, with
 // what each sent to the $COMETAIL burn, the $COMETAIL the buybacks that spent it bought and burned (first in, first
 // out through the reserve; shown only once the reserve's ledger proves it), and the liquidity it locked, each with
-// its transaction. Shown only for mints the worker records as tails (/api/tail-claims/:mint).
+// its transaction; for a claim that was not split, the make-up that counts for it, with its own transaction. Shown
+// only for mints the worker records as tails (/api/tail-claims/:mint).
 import { useEffect, useState } from "react";
 import { Card } from "./Shell";
 import { Money } from "./Money";
@@ -17,13 +18,14 @@ const TARGET_DECIMALS = 6;
 const when = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "");
 
 /** What a claim's SOL bought and burned: unknown until the reserve's ledger proves it; while some of it waits, say so. */
-function boughtText(c: TailClaim): string {
-  if (!c.burn) return copy.pending;
-  const waiting = BigInt(c.burn.waitingLamports);
-  if (BigInt(c.burn.spentLamports) === 0n) return copy.waitingAll;
-  const bought = `${units(c.burn.boughtRaw, TARGET_DECIMALS, 0)} ${TARGET}`;
-  return waiting > 0n ? `${bought} · ${copy.waiting(units(c.burn.waitingLamports, 9, 4))}` : bought;
+function boughtText(burn: TailClaim["burn"]): string {
+  if (!burn) return copy.pending;
+  const waiting = BigInt(burn.waitingLamports);
+  if (BigInt(burn.spentLamports) === 0n) return copy.waitingAll;
+  const bought = `${units(burn.boughtRaw, TARGET_DECIMALS, 0)} ${TARGET}`;
+  return waiting > 0n ? `${bought} · ${copy.waiting(units(burn.waitingLamports, 9, 4))}` : bought;
 }
+const txLinks = (label: string, list: string[]) => <> · {label}: {list.map((b, i) => <span key={b}>{i ? ", " : ""}<a href={EXPLORER("tx", b)} target="_blank" rel="noreferrer">{short(b)}</a></span>)}</>;
 
 export function TailPanel({ mint }: { mint: string }) {
   const [state, setState] = useState<{ kind: "loading" } | { kind: "missing" } | { kind: "error" } | { kind: "ok"; tail: TailInfo }>({ kind: "loading" });
@@ -50,7 +52,7 @@ export function TailPanel({ mint }: { mint: string }) {
           <div><span className="micro">{copy.sentToBurn}</span><strong>{n.toBurnLamports === null ? copy.unknownWithAmbiguous : <Money lamports={n.toBurnLamports} />}</strong></div>
           <div><span className="micro">{copy.bought(TARGET)}</span><strong>{boughtTotal}</strong></div>
           <div><span className="micro">{copy.liquidity}</span>{n.liquidityLamports === null ? <strong>{copy.unknownWithAmbiguous}</strong> : <><strong><Money lamports={n.liquidityLamports} /></strong><span className="micro tail-plus">+ {units(n.liquidityRaw ?? "0", TARGET_DECIMALS, 0)} {TARGET}</span></>}</div>
-          <div><span className="micro">{copy.claims}</span><strong>{n.claims}</strong>{(n.notSplit ?? 0) > 0 && <span className="micro tail-plus">{copy.notSplit}: {n.notSplit}</span>}</div>
+          <div><span className="micro">{copy.claims}</span><strong>{n.claims}</strong>{(n.notSplit ?? 0) > 0 && <span className="micro tail-plus">{copy.notSplit}: {n.notSplit}</span>}{(n.madeUp ?? 0) > 0 && <span className="micro tail-plus">{copy.madeUp}: {n.madeUp}</span>}</div>
         </div>
       )}
       <details className="burn-more mt-3" open={t.claims.length > 0 && t.claims.length <= 5}>
@@ -65,19 +67,28 @@ export function TailPanel({ mint }: { mint: string }) {
               </li>
             ))}
             {t.claims.map((c) => (
-              <li key={`${c.signature}-${c.source}-${c.idx}`} className={c.status === "split" ? "" : "tail-claim-unsplit"}>
-                <p className="micro">{when(c.blockTime)} · {copy.source[c.source]} · <strong>{copy.status[c.status]}</strong></p>
+              <li key={`${c.signature}-${c.source}-${c.idx}`} className={c.status === "split" || c.makeUp ? "" : "tail-claim-unsplit"}>
+                <p className="micro">{when(c.blockTime)} · {copy.source[c.source]} · <strong>{c.makeUp ? copy.madeUpStatus : copy.status[c.status]}</strong></p>
                 <dl className="detail-list">
                   <div><dt>{copy.claimed}</dt><dd className="money"><Money lamports={c.claimedLamports} /></dd></div>
                   {c.keptLamports !== null && <div><dt>{copy.kept}</dt><dd className="money"><Money lamports={c.keptLamports} /></dd></div>}
                   {c.toBurnLamports !== null && <div><dt>{copy.toBurn}</dt><dd className="money"><Money lamports={c.toBurnLamports} /></dd></div>}
-                  {c.toBurnLamports !== null && <div><dt>{copy.bought(TARGET)}</dt><dd>{boughtText(c)}</dd></div>}
+                  {c.toBurnLamports !== null && <div><dt>{copy.bought(TARGET)}</dt><dd>{boughtText(c.burn)}</dd></div>}
                   {c.liquidity && <div><dt>{c.liquidity.locked ? copy.added : copy.addedNotLocked}</dt><dd className="money"><Money lamports={c.liquidity.addedLamports} /><span className="micro tail-plus">+ {units(c.liquidity.addedRaw, TARGET_DECIMALS, 0)} {TARGET}</span></dd></div>}
+                  {c.makeUp && <>
+                    <div><dt>{copy.makeUpToBurn}</dt><dd className="money"><Money lamports={c.makeUp.toBurnLamports} /></dd></div>
+                    <div><dt>{copy.bought(TARGET)}</dt><dd>{boughtText(c.makeUp.burn)}</dd></div>
+                    <div><dt>{copy.makeUpAdded}</dt><dd className="money"><Money lamports={c.makeUp.liquidity.addedLamports} /><span className="micro tail-plus">+ {units(c.makeUp.liquidity.addedRaw, TARGET_DECIMALS, 0)} {TARGET}</span></dd></div>
+                  </>}
                 </dl>
                 <p className="micro">
                   <a href={EXPLORER("tx", c.signature)} target="_blank" rel="noreferrer">{copy.tx} {short(c.signature)}</a>
-                  {c.burn && c.burn.buybacks.length > 0 && <> · {copy.buybacks}: {c.burn.buybacks.map((b, i) => <span key={b}>{i ? ", " : ""}<a href={EXPLORER("tx", b)} target="_blank" rel="noreferrer">{short(b)}</a></span>)}</>}
+                  {c.burn && c.burn.buybacks.length > 0 && txLinks(copy.buybacks, c.burn.buybacks)}
                 </p>
+                {c.makeUp && <p className="micro">
+                  <a href={EXPLORER("tx", c.makeUp.signature)} target="_blank" rel="noreferrer">{copy.makeUpTx} {short(c.makeUp.signature)}</a>
+                  {c.makeUp.burn && c.makeUp.burn.buybacks.length > 0 && txLinks(copy.buybacks, c.makeUp.burn.buybacks)}
+                </p>}
               </li>
             ))}
           </ul>

@@ -7,7 +7,7 @@
 // Pure: no RPC, no signing. The caller reads the pools and passes their state; every amount is computed here
 // from that state, so the page, the tests and the indexer agree on the numbers.
 import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
-import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID } from "./ids";
 
 const DBC_POOL_AUTHORITY = new PublicKey("FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM");
@@ -153,20 +153,12 @@ export function tailClaimIxs(a: {
   slippageBps?: number; marginBps?: number;
 }) {
   const split = tailSplit(a.claimable);
-  const slippage = BigInt(a.slippageBps ?? TAIL_SLIPPAGE_BPS), margin = BigInt(a.marginBps ?? TAIL_LIQUIDITY_MARGIN_BPS);
   if (split.toLiquidity < 4n) throw new Error("claim too small to split");
-  const plan = liquidityPlan(a.x, split.toLiquidity);
-  const swapIn = plan.swapIn, liquiditySol = split.toLiquidity - swapIn, out = plan.q.out;
-  const minOut = (out * (10_000n - slippage)) / 10_000n;
-  if (minOut <= 0n) throw new Error("swap would return nothing");
-  // sized from the expected output at the reserves just read, less a small margin for rounding; a trade landing
-  // first changes both and the transaction fails as a whole (nothing moves), to be built again from fresh state
-  const liquidityDelta = (plan.delta * (10_000n - margin)) / 10_000n - 1n;
-  if (liquidityDelta <= 0n) throw new Error("liquidity too small to add");
   const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, a.creator);
   const baseProgram = a.curve.baseTokenProgram ?? TOKEN_PROGRAM_ID;
   const tailAta = getAssociatedTokenAddressSync(a.curve.baseMint, a.creator, false, baseProgram);
   const xAta = getAssociatedTokenAddressSync(a.x.tokenAMint, a.creator, false, a.x.tokenAProgram);
+  const legs = splitLegs({ ...a, wsol, xAta, toBurn: split.toBurn, toLiquidity: split.toLiquidity });
   const ixs = [
     createAssociatedTokenAccountIdempotentInstruction(a.creator, tailAta, a.creator, a.curve.baseMint, baseProgram),
     createAssociatedTokenAccountIdempotentInstruction(a.creator, wsol, a.creator, NATIVE_MINT),
@@ -177,7 +169,30 @@ export function tailClaimIxs(a: {
         meta(a.curve.baseMint), meta(NATIVE_MINT), meta(a.creator, false, true), meta(baseProgram), meta(TOKEN_PROGRAM_ID), meta(DBC_EVENT_AUTHORITY), meta(DBC_PROGRAM_ID)],
       data: data(DISC.claimCreatorTradingFee, u64(0n), u64(a.claimable)),
     }),
-    createTransferInstruction(wsol, a.reserve, a.creator, split.toBurn),
+    ...legs.ixs,
+  ];
+  return { ixs, split: { ...split, swapIn: legs.swapIn, liquiditySol: legs.liquiditySol }, minOut: legs.minOut, expectedOut: legs.out, liquidityDelta: legs.liquidityDelta };
+}
+
+/** The split's four legs, from the wallet's WSOL account: `toBurn` transferred to the burn reserve; part of
+ *  `toLiquidity` swapped into $X (liquidityPlan) with a minimum out from the state just read; that $X and the rest
+ *  added to the position; exactly the added liquidity permanently locked. Shared by the claim and the make-up. */
+function splitLegs(a: {
+  creator: PublicKey; wsol: PublicKey; xAta: PublicKey; reserve: PublicKey; x: CompoundingPool; locked: LockedPosition;
+  toBurn: bigint; toLiquidity: bigint; slippageBps?: number; marginBps?: number;
+}) {
+  const slippage = BigInt(a.slippageBps ?? TAIL_SLIPPAGE_BPS), margin = BigInt(a.marginBps ?? TAIL_LIQUIDITY_MARGIN_BPS);
+  const plan = liquidityPlan(a.x, a.toLiquidity);
+  const swapIn = plan.swapIn, liquiditySol = a.toLiquidity - swapIn, out = plan.q.out;
+  const minOut = (out * (10_000n - slippage)) / 10_000n;
+  if (minOut <= 0n) throw new Error("swap would return nothing");
+  // sized from the expected output at the reserves just read, less a small margin for rounding; a trade landing
+  // first changes both and the transaction fails as a whole (nothing moves), to be built again from fresh state
+  const liquidityDelta = (plan.delta * (10_000n - margin)) / 10_000n - 1n;
+  if (liquidityDelta <= 0n) throw new Error("liquidity too small to add");
+  const { wsol, xAta } = a;
+  const ixs = [
+    createTransferInstruction(wsol, a.reserve, a.creator, a.toBurn),
     new TransactionInstruction({
       programId: DAMM_V2_PROGRAM_ID,
       keys: [meta(DAMM_POOL_AUTHORITY), meta(a.x.pool, true), meta(wsol, true), meta(xAta, true), meta(a.x.tokenAVault, true), meta(a.x.tokenBVault, true),
@@ -198,7 +213,39 @@ export function tailClaimIxs(a: {
       data: data(DISC.permanentLockPosition, u128(liquidityDelta)),
     }),
   ];
-  return { ixs, split: { ...split, swapIn, liquiditySol }, minOut, expectedOut: out, liquidityDelta };
+  return { ixs, swapIn, liquiditySol, out, minOut, liquidityDelta };
+}
+
+/** SPL Memo v2 (the same id vault.ts exports): it fails unless every account it lists signed the transaction. */
+const MEMO_PROGRAM = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+/** The make-up's memo: this prefix, then the signature of the claim it makes up. */
+export const TAIL_MAKEUP_MEMO = "cometail:tail-makeup:v1:";
+
+/** A one-time make-up, from the wallet's own SOL, of a claim that was not split when it was made: the quarter the
+ *  burn and the quarter the liquidity should have had, computed from the claim's amount exactly as tailSplit does.
+ *  One transaction signed by the creator:
+ *   1. the WSOL and $X token accounts, created if missing; half the claim wrapped into the WSOL account;
+ *   2. a memo naming the claim, listing the creator as a signer (the memo program checks it signed);
+ *   3-6. the split's legs (splitLegs), bound by the indexer to the memo as a claim's legs are bound to the claim. */
+export function tailMakeUpIxs(a: {
+  creator: PublicKey; claimSignature: string; claimedLamports: bigint; reserve: PublicKey; x: CompoundingPool; locked: LockedPosition;
+  slippageBps?: number; marginBps?: number;
+}) {
+  const split = tailSplit(a.claimedLamports);
+  if (split.toLiquidity < 4n) throw new Error("claim too small to make up");
+  if (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(a.claimSignature)) throw new Error("not a transaction signature");
+  const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, a.creator);
+  const xAta = getAssociatedTokenAddressSync(a.x.tokenAMint, a.creator, false, a.x.tokenAProgram);
+  const legs = splitLegs({ ...a, wsol, xAta, toBurn: split.toBurn, toLiquidity: split.toLiquidity });
+  const ixs = [
+    createAssociatedTokenAccountIdempotentInstruction(a.creator, wsol, a.creator, NATIVE_MINT),
+    createAssociatedTokenAccountIdempotentInstruction(a.creator, xAta, a.creator, a.x.tokenAMint, a.x.tokenAProgram),
+    SystemProgram.transfer({ fromPubkey: a.creator, toPubkey: wsol, lamports: split.toBurn + split.toLiquidity }),
+    createSyncNativeInstruction(wsol),
+    new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [meta(a.creator, false, true)], data: Buffer.from(TAIL_MAKEUP_MEMO + a.claimSignature, "utf8") }),
+    ...legs.ixs,
+  ];
+  return { ixs, split: { ...split, swapIn: legs.swapIn, liquiditySol: legs.liquiditySol }, minOut: legs.minOut, expectedOut: legs.out, liquidityDelta: legs.liquidityDelta };
 }
 
 /** The graduation payout to the tail's creator: DBC's creator migration fee and creator surplus, to the wallet. */

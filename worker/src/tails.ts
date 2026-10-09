@@ -10,6 +10,11 @@
 //     (the transfer from the claim's destination to the reserve; the SOL -> target buy from that account; the add
 //     to a position of the creator in the target pool; the lock of exactly what was added). Missing legs make a
 //     claim "unsplit" or "incomplete", and repeated legs "ambiguous": nothing is guessed.
+//   - A claim that was not split can be made up once, later, from the creator's own SOL: a transaction with a memo
+//     naming the claim (signed: the memo program checks it), followed by the split's legs from the signer's WSOL
+//     account. The first such transaction after the claim, by one of the tail's creators, with exactly tailSplit's
+//     quarter to the reserve and a liquidity quarter swapped and added to within the margin, counts for the claim
+//     (makeUpOf); the claim stays "not split" and shows its make-up. Every make-up found is listed, counted or not.
 //   - The burn reserve gets a gross ledger: every token transfer into or out of it, in execution order within each
 //     transaction, each buyback's outflow tied to its BuybackBurned event. Transactions are ordered by slot and,
 //     within a slot, by linking each one's starting balance to the previous one's ending balance. SOL that entered
@@ -22,7 +27,7 @@
 // completes only when it reaches it; an unreadable transaction stops the pass and is retried, never skipped).
 import { utils } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
-import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { NATIVE_MINT, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { BurnClient } from "@cometail/client";
 import { deriveDammV2PoolAddress, deriveDbcPoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { burnParser } from "./burn";
@@ -158,10 +163,16 @@ export type CurveClaim = {
   add: { position: string; addedRaw: string; addedLamports: string; liquidity: string } | null;
   lockedLiquidity: string | null;
 };
+/** A make-up, from the wallet's own SOL, of a claim that was not split (`claim` is that claim's signature). */
+export type MakeUp = Omit<CurveClaim, "kind" | "claimedLamports"> & { kind: "makeUp"; claim: string };
+/** The make-up's memo prefix (packages/client tail.ts); SPL Memo v2. */
+export const TAIL_MAKEUP_MEMO = "cometail:tail-makeup:v1:";
+const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
-/** Every creator claim of `t.curve` in the transaction, with the split legs bound to it, and the graduation payouts. */
-export function parseCreatorTx(v: TxView, t: CurveTarget): { claims: CurveClaim[]; payouts: { kind: "migrationFee" | "surplus"; lamports: string }[]; creatorUpdates: { creator: string; newCreator: string }[] } {
-  if (v.err) return { claims: [], payouts: [], creatorUpdates: [] };
+/** Every creator claim of `t.curve` in the transaction, with the split legs bound to it, the graduation payouts,
+ *  handovers, and make-ups of earlier unsplit claims. */
+export function parseCreatorTx(v: TxView, t: CurveTarget): { claims: CurveClaim[]; payouts: { kind: "migrationFee" | "surplus"; lamports: string }[]; creatorUpdates: { creator: string; newCreator: string }[]; makeUps: MakeUp[] } {
+  if (v.err) return { claims: [], payouts: [], creatorUpdates: [], makeUps: [] };
   const payouts: { kind: "migrationFee" | "surplus"; lamports: string }[] = [];
   // a creator handover needs the current creator's signature, so every one is in some creator's own history
   const creatorUpdates = [...v.inner.values()].flatMap(decodeEvents).filter((e): e is Extract<Event, { kind: "creatorUpdate" }> => e.kind === "creatorUpdate" && e.pool === t.curve).map((e) => ({ creator: e.creator, newCreator: e.newCreator }));
@@ -177,37 +188,54 @@ export function parseCreatorTx(v: TxView, t: CurveTarget): { claims: CurveClaim[
     const base: CurveClaim = { kind: "curve", claimedLamports: f.quote.toString(), creator: "", status: "ambiguous", toBurn: null, buy: null, add: null, lockedLiquidity: null };
     // more than one claim of this curve in one transaction, or a claim inside another program: the legs cannot be bound
     if (found.length > 1 || f.wrapped || f.ix.accounts.length < 9) return base;
-    const dest = f.ix.accounts[3].toBase58(), creator = f.ix.accounts[8].toBase58();
-    base.creator = creator;
-    const transfers: { lamports: string; source: string }[] = [], buys: { inLamports: string; outRaw: string }[] = [];
-    const adds: { position: string; addedRaw: string; addedLamports: string; liquidity: string; delta: bigint }[] = [], locks: { position: string; amount: bigint }[] = [];
-    for (let j = f.at + 1; j < v.top.length; j++) {
-      const ix = v.top[j];
-      const tr = transferOf(ix);
-      if (tr && tr.dest === t.reserve && tr.source === dest) transfers.push({ lamports: tr.amount.toString(), source: tr.source });
-      if (!ix.programId.equals(DAMM_V2_PROGRAM_ID)) continue;
-      const ev = eventsOf(v, j);
-      if ((isDisc(ix.data, IX.swap) || isDisc(ix.data, IX.swap2)) && ix.accounts[2]?.toBase58() === dest)
-        for (const e of ev) if (e.kind === "swap" && e.pool === t.targetPool && e.direction === 1) buys.push({ inLamports: e.amountIn.toString(), outRaw: e.out.toString() });
-      if (isDisc(ix.data, IX.addLiquidity))
-        for (const e of ev) if (e.kind === "liquidity" && e.pool === t.targetPool && e.changeType === 0 && e.owner === creator) adds.push({ position: e.position, addedRaw: e.a.toString(), addedLamports: e.b.toString(), liquidity: e.delta.toString(), delta: e.delta });
-      if (isDisc(ix.data, IX.permanentLock))
-        for (const e of ev) if (e.kind === "lock" && e.pool === t.targetPool) locks.push({ position: e.position, amount: e.amount });
-    }
-    const legs = [transfers, buys, adds, locks];
-    if (legs.some((l) => l.length > 1)) return base;
-    if (legs.every((l) => l.length === 0)) return { ...base, status: "unsplit" };
-    const add = adds[0] ?? null, lock = locks[0] ?? null;
-    const lockMatches = !!add && !!lock && lock.position === add.position && lock.amount === add.delta;
-    const complete = transfers.length === 1 && buys.length === 1 && lockMatches;
-    return {
-      ...base, status: complete ? "split" : "incomplete",
-      toBurn: transfers[0] ?? null, buy: buys[0] ?? null,
-      add: add ? { position: add.position, addedRaw: add.addedRaw, addedLamports: add.addedLamports, liquidity: add.liquidity } : null,
-      lockedLiquidity: lockMatches ? lock!.amount.toString() : null,
-    };
+    const creator = f.ix.accounts[8].toBase58();
+    return { ...base, creator, ...legsAfter(v, f.at, f.ix.accounts[3].toBase58(), creator, t) };
   });
-  return { claims, payouts, creatorUpdates };
+  // make-ups: a top-level memo naming the claim, listing its signer (the memo program fails unless it signed); the
+  // legs after it are bound as a claim's are, from the signer's WSOL account. A make-up next to a claim of this
+  // curve, or next to another make-up, cannot be told apart from it: ambiguous, never counted.
+  const memos = v.top.map((ix, at) => ({ ix, at })).filter(({ ix }) => ix.programId.equals(MEMO_PROGRAM_ID) && ix.accounts.length >= 1 && ix.data.toString("utf8").startsWith(TAIL_MAKEUP_MEMO));
+  const makeUps = memos.map(({ ix, at }): MakeUp => {
+    const creator = ix.accounts[0].toBase58(), claim = ix.data.toString("utf8").slice(TAIL_MAKEUP_MEMO.length);
+    const base: MakeUp = { kind: "makeUp", claim, creator, status: "ambiguous", toBurn: null, buy: null, add: null, lockedLiquidity: null };
+    if (memos.length > 1 || found.length > 0) return base;
+    return { ...base, ...legsAfter(v, at, getAssociatedTokenAddressSync(NATIVE_MINT, ix.accounts[0], true).toBase58(), creator, t) };
+  });
+  return { claims, payouts, creatorUpdates, makeUps };
+}
+
+/** The split's legs among the top-level instructions after `at`: the transfer from `source` to the reserve; the
+ *  SOL -> target buy from `source`; the add to a position `creator` holds in the target pool; the lock of exactly
+ *  what was added. None: unsplit; repeated: ambiguous; some or an unmatched lock: incomplete. */
+function legsAfter(v: TxView, at: number, source: string, creator: string, t: CurveTarget): Pick<CurveClaim, "status" | "toBurn" | "buy" | "add" | "lockedLiquidity"> {
+  const transfers: { lamports: string; source: string }[] = [], buys: { inLamports: string; outRaw: string }[] = [];
+  const adds: { position: string; addedRaw: string; addedLamports: string; liquidity: string; delta: bigint }[] = [], locks: { position: string; amount: bigint }[] = [];
+  for (let j = at + 1; j < v.top.length; j++) {
+    const ix = v.top[j];
+    const tr = transferOf(ix);
+    if (tr && tr.dest === t.reserve && tr.source === source) transfers.push({ lamports: tr.amount.toString(), source: tr.source });
+    if (!ix.programId.equals(DAMM_V2_PROGRAM_ID)) continue;
+    const ev = eventsOf(v, j);
+    if ((isDisc(ix.data, IX.swap) || isDisc(ix.data, IX.swap2)) && ix.accounts[2]?.toBase58() === source)
+      for (const e of ev) if (e.kind === "swap" && e.pool === t.targetPool && e.direction === 1) buys.push({ inLamports: e.amountIn.toString(), outRaw: e.out.toString() });
+    if (isDisc(ix.data, IX.addLiquidity))
+      for (const e of ev) if (e.kind === "liquidity" && e.pool === t.targetPool && e.changeType === 0 && e.owner === creator) adds.push({ position: e.position, addedRaw: e.a.toString(), addedLamports: e.b.toString(), liquidity: e.delta.toString(), delta: e.delta });
+    if (isDisc(ix.data, IX.permanentLock))
+      for (const e of ev) if (e.kind === "lock" && e.pool === t.targetPool) locks.push({ position: e.position, amount: e.amount });
+  }
+  const none = { toBurn: null, buy: null, add: null, lockedLiquidity: null };
+  const legs = [transfers, buys, adds, locks];
+  if (legs.some((l) => l.length > 1)) return { status: "ambiguous", ...none };
+  if (legs.every((l) => l.length === 0)) return { status: "unsplit", ...none };
+  const add = adds[0] ?? null, lock = locks[0] ?? null;
+  const lockMatches = !!add && !!lock && lock.position === add.position && lock.amount === add.delta;
+  const complete = transfers.length === 1 && buys.length === 1 && lockMatches;
+  return {
+    status: complete ? "split" : "incomplete",
+    toBurn: transfers[0] ?? null, buy: buys[0] ?? null,
+    add: add ? { position: add.position, addedRaw: add.addedRaw, addedLamports: add.addedLamports, liquidity: add.liquidity } : null,
+    lockedLiquidity: lockMatches ? lock!.amount.toString() : null,
+  };
 }
 
 /** Fee claims of the tail's graduated positions, and whether each went through the burn program's owner claim. */
@@ -490,7 +518,7 @@ export async function tailIndexPass(deps: WalkDeps, store: Store, tails: TailSpe
     for (let round = 0; round < 8; round++) {
       for (const c of s.creators) await walkPass(deps, store, new PublicKey(c), `tail:${m}:creator:${c}`, (v) => {
         const p = parseCreatorTx(v, target);
-        return [...p.claims.map((x, i) => row(v, `tailClaim:${m}`, i, x)), ...p.payouts.map((x, i) => row(v, `tailPayout:${m}`, i, x)), ...p.creatorUpdates.map((x, i) => row(v, `tailCreatorUpdate:${m}`, i, x))];
+        return [...p.claims.map((x, i) => row(v, `tailClaim:${m}`, i, x)), ...p.payouts.map((x, i) => row(v, `tailPayout:${m}`, i, x)), ...p.creatorUpdates.map((x, i) => row(v, `tailCreatorUpdate:${m}`, i, x)), ...p.makeUps.map((x, i) => row(v, `tailMakeUp:${m}`, i, x))];
       });
       if (!(await absorbHandovers(store, m, s))) break;
     }
@@ -526,7 +554,7 @@ export async function tailView(store: Store, tails: TailSpec[], mint: string | n
   for (const t of tails) {
     const m = t.mint.toBase58();
     if (mint && m !== mint) continue;
-    const [curveClaims, poolClaims, payouts] = await Promise.all([store.listTailEvents(`tailClaim:${m}`), store.listTailEvents(`tailPoolClaim:${m}`), store.listTailEvents(`tailPayout:${m}`)]);
+    const [curveClaims, poolClaims, payouts, makeUpRows] = await Promise.all([store.listTailEvents(`tailClaim:${m}`), store.listTailEvents(`tailPoolClaim:${m}`), store.listTailEvents(`tailPayout:${m}`), store.listTailEvents(`tailMakeUp:${m}`)]);
     const s = await readSources(store, m);
     const positions = creatorPositions(s);
     // complete only with the whole chain of sources known: the origin; every handover found so far already followed;
@@ -550,36 +578,65 @@ export async function tailView(store: Store, tails: TailSpec[], mint: string | n
           keptLamports: d.status === "ambiguous" ? null : (BigInt(d.claimedLamports) - BigInt(d.toBurn?.lamports ?? "0")).toString(),
           toBurnLamports: d.toBurn?.lamports ?? null, burn: d.toBurn ? burnOf(r.signature, d.toBurn.lamports, false) : null, liquidity: null };
       }),
-    ].sort((a, b) => b.slot - a.slot || a.signature.localeCompare(b.signature) || a.idx - b.idx);
+    ].sort((a, b) => b.slot - a.slot || a.signature.localeCompare(b.signature) || a.idx - b.idx)
+      .map((c) => {
+        const makeUp = c.status === "unsplit" ? makeUpOf(c, makeUpRows, s.creators) : null;
+        if (!makeUp) return { ...c, makeUp: null };
+        return { ...c, keptLamports: (BigInt(c.claimedLamports) - BigInt(makeUp.toBurnLamports) - BigInt(makeUp.liquidity.swapInLamports) - BigInt(makeUp.liquidity.addedLamports)).toString(),
+          makeUp: { ...makeUp, burn: burnOf(makeUp.signature, makeUp.toBurnLamports, true) } };
+      });
     const sum = (xs: (string | null | undefined)[]) => xs.reduce((acc, x) => acc + BigInt(x ?? "0"), 0n).toString();
     const known = claimCoverage.status === "complete";
     // an ambiguous claim's legs are unknown, not absent: no total of legs while one is listed
     const legsKnown = known && claims.every((c) => c.status !== "ambiguous");
-    const burnKnown = legsKnown && reserveCoverage.status === "complete" && verified && claims.every((c) => c.toBurnLamports === null || c.burn !== null);
-    const locked = claims.filter((c) => c.liquidity?.locked);
+    const burnKnown = legsKnown && reserveCoverage.status === "complete" && verified && claims.every((c) => (c.toBurnLamports === null || c.burn !== null) && (!c.makeUp || c.makeUp.burn !== null));
+    // the liquidity each claim locked, its own or its make-up's
+    const locked = [...claims.filter((c) => c.liquidity?.locked).map((c) => c.liquidity!), ...claims.flatMap((c) => (c.makeUp ? [c.makeUp.liquidity] : []))];
     const mine = payouts;
     out.push({
       mint: m, config: t.config.toBase58(), curve: t.curve.toBase58(), targetPool: t.targetPool.toBase58(),
-      creators: s.creators, origin: s.origin, graduatedPool: s.pool, graduatedPositions: positions, positions: [...new Set(claims.map((c) => c.liquidity?.position).filter((p): p is string => !!p))],
+      creators: s.creators, origin: s.origin, graduatedPool: s.pool, graduatedPositions: positions, positions: [...new Set(claims.flatMap((c) => [c.liquidity?.position, c.makeUp?.liquidity.position]).filter((p): p is string => !!p))],
       totals: {
         // every total is null until the history it sums is complete: an empty or partial history is not a zero
         claims: known ? claims.length : null,
-        notSplit: known ? claims.filter((c) => c.status !== "split").length : null,
+        notSplit: known ? claims.filter((c) => c.status !== "split" && !c.makeUp).length : null,
+        madeUp: known ? claims.filter((c) => c.makeUp).length : null,
         claimedLamports: known ? sum(claims.map((c) => c.claimedLamports)) : null,
         ambiguous: known ? claims.filter((c) => c.status === "ambiguous").length : null,
-        toBurnLamports: legsKnown ? sum(claims.map((c) => c.toBurnLamports)) : null,
-        boughtRaw: burnKnown ? sum(claims.map((c) => c.burn?.boughtRaw)) : null,
-        liquidityLamports: legsKnown ? sum(locked.map((c) => c.liquidity!.addedLamports)) : null,
-        liquidityRaw: legsKnown ? sum(locked.map((c) => c.liquidity!.addedRaw)) : null,
-        lockedLiquidity: legsKnown ? sum(locked.map((c) => c.liquidity!.liquidity)) : null,
+        toBurnLamports: legsKnown ? sum(claims.flatMap((c) => [c.toBurnLamports, c.makeUp?.toBurnLamports])) : null,
+        boughtRaw: burnKnown ? sum(claims.flatMap((c) => [c.burn?.boughtRaw, c.makeUp?.burn?.boughtRaw])) : null,
+        liquidityLamports: legsKnown ? sum(locked.map((l) => l.addedLamports)) : null,
+        liquidityRaw: legsKnown ? sum(locked.map((l) => l.addedRaw)) : null,
+        lockedLiquidity: legsKnown ? sum(locked.map((l) => l.liquidity)) : null,
         payoutLamports: known ? sum(mine.map((p) => p.data.lamports)) : null,
       },
       claims,
+      // every make-up found, valid or not (the admin page offers one make-up per claim, ever)
+      makeUps: makeUpRows.map((r) => ({ signature: r.signature, idx: r.idx, slot: r.slot, blockTime: r.blockTime, claim: (r.data as MakeUp).claim, status: (r.data as MakeUp).status,
+        counted: claims.some((c) => c.makeUp?.signature === r.signature && c.makeUp.idx === r.idx) })),
       payouts: mine.map((p) => ({ signature: p.signature, idx: p.idx, slot: p.slot, blockTime: p.blockTime, kind: p.data.kind, lamports: p.data.lamports })),
       coverage: { claims: claimCoverage, reserve: reserveCoverage, reserveVerified: verified },
     });
   }
   return { tails: out };
+}
+
+/** The make-up that counts for an unsplit claim: the first (by slot, then signature) after the claim, signed by one
+ *  of the tail's creators, with every leg bound (split) and the amounts tailSplit gives for the claim: exactly a
+ *  quarter to the reserve, and a quarter to liquidity, of which the swap and the add used at least 99% (the
+ *  liquidity margin leaves a little in the wallet, as it does in a split claim). Anything else counts for nothing. */
+export function makeUpOf(c: { signature: string; slot: number; claimedLamports: string }, rows: TailEventRow[], creators: string[]) {
+  const quarter = BigInt(c.claimedLamports) / 4n;
+  const ok = rows.filter((r) => {
+    const d = r.data as MakeUp;
+    if (d.claim !== c.signature || d.status !== "split" || r.slot <= c.slot || !creators.includes(d.creator) || !d.toBurn || !d.buy || !d.add || d.lockedLiquidity === null) return false;
+    const used = BigInt(d.buy.inLamports) + BigInt(d.add.addedLamports);
+    return BigInt(d.toBurn.lamports) === quarter && used <= quarter && used * 100n >= quarter * 99n;
+  }).sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature) || a.idx - b.idx);
+  if (!ok.length) return null;
+  const r = ok[0], d = r.data as MakeUp;
+  return { signature: r.signature, idx: r.idx, slot: r.slot, blockTime: r.blockTime, toBurnLamports: d.toBurn!.lamports,
+    liquidity: { swapInLamports: d.buy!.inLamports, addedLamports: d.add!.addedLamports, addedRaw: d.add!.addedRaw, liquidity: d.add!.liquidity, locked: true, position: d.add!.position } };
 }
 
 export function reserveAddress(): PublicKey { return new BurnClient().a.reserve; }

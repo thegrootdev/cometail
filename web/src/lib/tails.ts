@@ -4,7 +4,7 @@
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import { NATIVE_MINT, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { deriveDbcPoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
-import { BurnClient, compoundingPool, createLockedPositionIxs, tailCashoutIxs, tailClaimIxs, type CompoundingPool } from "@cometail/client";
+import { BurnClient, compoundingPool, createLockedPositionIxs, tailCashoutIxs, tailClaimIxs, tailMakeUpIxs, type CompoundingPool } from "@cometail/client";
 import { cpAmm } from "./damm";
 import { dbcState, derivedDammPool, MigrationProgress } from "./dbc";
 import { ADDRESSES, COMETAIL_POOL } from "./addresses";
@@ -74,6 +74,14 @@ export function claimTx(creator: PublicKey, mint: PublicKey, t: TailChain, posit
     creator, claimable: t.claimable, reserve: burn.a.reserve, x: t.target, locked: position,
     curve: { pool: t.curve, baseMint: mint, baseVault: new PublicKey(t.state.baseVault), quoteVault: new PublicKey(t.state.quoteVault) },
   });
+  return { tx: tx(creator, built.ixs), built };
+}
+
+/** The one-time make-up of a claim that was not split: tailSplit's quarters of its amount, from the wallet's SOL. */
+export function makeUpTx(creator: PublicKey, t: TailChain, claim: { signature: string; claimedLamports: string }, position: { position: PublicKey; nftAccount: PublicKey }) {
+  if (!t.target) throw new Error("target pool unreadable");
+  const burn = new BurnClient();
+  const built = tailMakeUpIxs({ creator, claimSignature: claim.signature, claimedLamports: BigInt(claim.claimedLamports), reserve: burn.a.reserve, x: t.target, locked: position });
   return { tx: tx(creator, built.ixs), built };
 }
 

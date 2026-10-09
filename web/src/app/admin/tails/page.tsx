@@ -15,9 +15,9 @@ import { useStorageReady, useTx } from "@/lib/hooks";
 import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
 import { cleanSymbolInput } from "@/lib/token-display";
-import { api, type TailInfo } from "@/lib/api";
+import { api, type TailClaim, type TailInfo } from "@/lib/api";
 import { COMETAIL_POOL, EXPLORER, OFFICIAL_MINT } from "@/lib/addresses";
-import { TAIL_CONFIG, cashoutTx, claimTx, graduatedClaimTx, lockedPositionTx, readTail, type TailChain } from "@/lib/tails";
+import { TAIL_CONFIG, cashoutTx, claimTx, graduatedClaimTx, lockedPositionTx, makeUpTx, readTail, type TailChain } from "@/lib/tails";
 import { tailSplit } from "@cometail/client";
 
 const sol = (l: bigint) => `${(Number(l) / 1e9).toFixed(6)} SOL`;
@@ -34,6 +34,10 @@ export default function AdminTailsPage() {
   const [note, setNote] = useState("");
   const [simulation, setSimulation] = useState("");
   const [chosen, setChosen] = useState<string>("");
+  // the worker's record of this tail, for make-ups: null while unread, "unavailable" when it cannot be read
+  const [record, setRecord] = useState<TailInfo | "unavailable" | null>(null);
+  const [makeUpFor, setMakeUpFor] = useState("");
+  const [makeUpSim, setMakeUpSim] = useState("");
   // launch form
   const [name, setName] = useState(""), [symbol, setSymbol] = useState(""), [description, setDescription] = useState("");
   const [image, setImage] = useState<TokenImage | null>(null);
@@ -43,7 +47,8 @@ export default function AdminTailsPage() {
   const configured = known.find((t) => t.mint === mint?.toBase58()) ?? null;
 
   const refresh = useCallback(async () => {
-    setReadError(""); setSimulation("");
+    setReadError(""); setSimulation(""); setMakeUpSim("");
+    if (mint) void api.tail(mint.toBase58()).then((r) => setRecord(r.state === "ok" ? r.tail : "unavailable"));
     if (!publicKey || !mint) { setTail(null); return; }
     try {
       const t = await readTail(connection, publicKey, mint);
@@ -88,6 +93,29 @@ export default function AdminTailsPage() {
     // built from a fresh read: a claim built from stale state would fail as a whole and move nothing
     const sig = await run(async () => claimTx(publicKey, mint, await readTail(connection, publicKey, mint), position).tx, [], 400_000);
     if (sig) await refresh();
+  };
+  // make-ups: once per claim, ever, and only through a worker that records them (its record lists make-ups) and
+  // whose history of this tail is complete; every make-up it has seen for a claim, counted or not, closes that claim
+  const rec = record && record !== "unavailable" ? record : null;
+  const makeUpReady = !!rec && Array.isArray(rec.makeUps) && rec.coverage.claims.status === "complete";
+  const owed: TailClaim[] = rec && makeUpReady ? rec.claims.filter((c) => c.status === "unsplit" && !c.makeUp && !rec.makeUps!.some((m) => m.claim === c.signature)) : [];
+  const owedClaim = owed.find((c) => c.signature === makeUpFor) ?? owed[0] ?? null;
+  const simulateMakeUp = async () => {
+    if (!publicKey || !tail || !position || !owedClaim) return;
+    try {
+      const { tx } = makeUpTx(publicKey, tail, owedClaim, position);
+      tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+      const r = await connection.simulateTransaction(tx);
+      setMakeUpSim(r.value.err ? `simulation FAILED: ${JSON.stringify(r.value.err)} ${(r.value.logs ?? []).filter((l) => /Error|failed|insufficient/i.test(l)).slice(-3).join(" | ")}` : `simulation OK: ${r.value.unitsConsumed ?? "?"} compute units`);
+    } catch (e: any) { setMakeUpSim(`simulation FAILED: ${String(e?.message ?? e)}`); }
+  };
+  const makeUp = async () => {
+    if (!publicKey || !mint || !position || !owedClaim) return;
+    // built from a fresh read of the pool; the worker's record is read again first so a make-up it already saw is not sent twice
+    const fresh = await api.tail(mint.toBase58());
+    if (fresh.state !== "ok" || (fresh.tail.makeUps ?? []).some((m) => m.claim === owedClaim.signature)) { setMakeUpSim("This claim already has a make-up on record (or the record is unreadable): nothing sent."); return; }
+    const sig = await run(async () => makeUpTx(publicKey, await readTail(connection, publicKey, mint), owedClaim, position).tx, [], 400_000);
+    if (sig) { setNote(`Make-up sent: ${sig}. The tail page shows it once the worker has read it (about a minute).`); await refresh(); }
   };
   const cashout = async () => { if (publicKey && mint && tail) { const sig = await run(async () => cashoutTx(publicKey, mint, tail), [], 200_000); if (sig) await refresh(); } };
   const graduatedClaim = async () => { if (publicKey && mint && tail) { const sig = await run(() => graduatedClaimTx(connection, publicKey, mint, tail), [], 400_000); if (sig) await refresh(); } };
@@ -160,6 +188,36 @@ export default function AdminTailsPage() {
           </div>
           {!position && <p className="mt-2 text-sm">Create or choose the locked position first.</p>}
           {simulation && <p className="mt-2 text-sm">{simulation}</p>}
+        </Card>
+      )}
+
+      {tail?.state && tail.isCreator && (
+        <Card title="Make up a claim that was not split">
+          <p className="text-sm">For a claim of this tail&apos;s fees made without the split. One transaction you sign sends, from this wallet&apos;s SOL, what the split would have: a quarter of the claim to the burn reserve and a quarter as liquidity locked in the position above. A memo names the claim, and the tail page then shows the claim as made up, with this transaction. Once per claim.</p>
+          {record === null && <p className="mt-2 text-sm">Reading the worker&apos;s record…</p>}
+          {record === "unavailable" && <p className="mt-2 text-sm">The worker&apos;s record of this tail is unreadable: no make-up can be checked. <button className="pill" onClick={() => refresh()}>Retry</button></p>}
+          {rec && !Array.isArray(rec.makeUps) && <p className="mt-2 text-sm">The worker does not record make-ups yet (restart it on this release first): a make-up sent now would never show.</p>}
+          {rec && Array.isArray(rec.makeUps) && !makeUpReady && <p className="mt-2 text-sm">The worker has not finished reading this tail&apos;s history: wait for it.</p>}
+          {makeUpReady && owed.length === 0 && <p className="mt-2 text-sm">No claim is waiting for a make-up.</p>}
+          {makeUpReady && owed.length > 0 && owedClaim && (() => {
+            const q = tailSplit(BigInt(owedClaim.claimedLamports));
+            return (<>
+              {owed.length > 1 && <ul className="mt-2 text-sm space-y-1 [overflow-wrap:anywhere]">{owed.map((c) => <li key={c.signature}><label><input type="radio" name="makeup" checked={owedClaim.signature === c.signature} onChange={() => { setMakeUpFor(c.signature); setMakeUpSim(""); }} /> {c.signature.slice(0, 10)}… · {sol(BigInt(c.claimedLamports))}</label></li>)}</ul>}
+              <ul className="mt-2 text-sm space-y-1 [overflow-wrap:anywhere]">
+                <li>claim: <a href={EXPLORER("tx", owedClaim.signature)} target="_blank" rel="noreferrer">{owedClaim.signature}</a>{owedClaim.blockTime ? ` (${new Date(owedClaim.blockTime * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC)` : ""}</li>
+                <li>claimed, all kept: {sol(q.claimed)}</li>
+                <li>to the $COMETAIL burn reserve: {sol(q.toBurn)}</li>
+                <li>to $COMETAIL liquidity, locked: {sol(q.toLiquidity)}</li>
+                <li>from this wallet in all: {sol(q.toBurn + q.toLiquidity)}, plus the network fee</li>
+              </ul>
+              <div className="flex gap-2 mt-2">
+                <button className="pill" onClick={simulateMakeUp} disabled={!position || !tail.target}>Simulate</button>
+                <button className="button button-gold" onClick={makeUp} disabled={!position || !tail.target || !makeUpSim.startsWith("simulation OK") || status.state === "sending"}>Make up this claim</button>
+              </div>
+              {!position && <p className="mt-2 text-sm">Choose the locked position first.</p>}
+              {makeUpSim && <p className="mt-2 text-sm">{makeUpSim}</p>}
+            </>);
+          })()}
         </Card>
       )}
 

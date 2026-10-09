@@ -91,13 +91,23 @@ export interface TailClaim {
   claimedLamports: string; keptLamports: string | null; toBurnLamports: string | null;
   burn: { spentLamports: string; waitingLamports: string; boughtRaw: string; buybacks: string[] } | null;
   liquidity: { swapInLamports: string | null; addedLamports: string; addedRaw: string; liquidity: string; locked: boolean; position: string } | null;
+  /** For a claim that was not split: the make-up that counts for it, later, from the wallet (absent from a worker
+   *  older than make-ups). */
+  makeUp?: TailMakeUp | null;
+}
+export interface TailMakeUp {
+  signature: string; idx: number; slot: number; blockTime: number | null; toBurnLamports: string;
+  burn: { spentLamports: string; waitingLamports: string; boughtRaw: string; buybacks: string[] } | null;
+  liquidity: { swapInLamports: string; addedLamports: string; addedRaw: string; liquidity: string; locked: boolean; position: string };
 }
 export interface TailInfo {
   mint: string; config: string; curve: string; targetPool: string; creators: string[]; origin: { creator: string; signature: string } | null;
   graduatedPool: string | null; graduatedPositions: string[]; positions: string[];
-  totals: { claims: number | null; notSplit: number | null; ambiguous: number | null; claimedLamports: string | null; toBurnLamports: string | null; boughtRaw: string | null; liquidityLamports: string | null; liquidityRaw: string | null; lockedLiquidity: string | null; payoutLamports: string | null };
+  totals: { claims: number | null; notSplit: number | null; madeUp?: number | null; ambiguous: number | null; claimedLamports: string | null; toBurnLamports: string | null; boughtRaw: string | null; liquidityLamports: string | null; liquidityRaw: string | null; lockedLiquidity: string | null; payoutLamports: string | null };
   claims: TailClaim[];
   payouts: { signature: string; idx: number; slot: number; blockTime: number | null; kind: "migrationFee" | "surplus"; lamports: string }[];
+  /** Every make-up transaction found, counted or not. */
+  makeUps?: { signature: string; idx: number; slot: number; blockTime: number | null; claim: string; status: string; counted: boolean }[];
   coverage: { claims: { status: string; atMs: number | null }; reserve: { status: string; atMs: number | null }; reserveVerified: boolean };
 }
 export interface BurnView {

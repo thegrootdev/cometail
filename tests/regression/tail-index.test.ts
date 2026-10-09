@@ -7,7 +7,7 @@
 // The happy path against the real Meteora binaries is gate 22.
 import { createHash } from "crypto";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { NATIVE_MINT, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { expect } from "chai";
 import fs from "fs";
 import os from "os";
@@ -16,7 +16,7 @@ import { BURN_PROGRAM_ID } from "@cometail/client";
 import { openStore } from "../../worker/src/store";
 import { deriveDammV2PoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { DAMM_V2_MIGRATION_CONFIGS } from "../../worker/src/chain";
-import { creatorPositions, migrationPositions, originOf, parseCreatorTx, parsePositionTx, parseReserveTx, parseTails, refreshSources, tailIndexPass, traceReserve, tailView, walkPass, type Ix, type ReserveRow, type TxView, type WalkDeps } from "../../worker/src/tails";
+import { TAIL_MAKEUP_MEMO, creatorPositions, makeUpOf, migrationPositions, originOf, parseCreatorTx, parsePositionTx, parseReserveTx, parseTails, refreshSources, tailIndexPass, traceReserve, tailView, walkPass, type Ix, type ReserveRow, type TxView, type WalkDeps } from "../../worker/src/tails";
 
 const DBC = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"), DAMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const TAG = Buffer.from([0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d]);
@@ -49,6 +49,12 @@ const lockLeg = (amount: bigint, pos = position): [Ix, Ix[]] => [ixOf(DAMM, D.lo
 function view(legs: [Ix, Ix[]][], o: { logs?: string[]; reserve?: [bigint, bigint]; signature?: string; slot?: number; owners?: Map<string, string> } = {}): TxView {
   const inner = new Map<number, Ix[]>(); legs.forEach(([, i], n) => { if (i.length) inner.set(n, i); });
   return { signature: o.signature ?? "s", slot: o.slot ?? 1, blockTime: 1, err: false, top: legs.map(([t]) => t), inner, logs: o.logs ?? [], balance: (a) => (o.reserve && a.equals(reserve) ? { pre: o.reserve[0], post: o.reserve[1] } : null), ownerAfter: (a) => o.owners?.get(a.toBase58()) ?? null };
+}
+
+async function freshStore() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tail-index-"));
+  const store = openStore(`sqlite:${path.join(dir, "store.sqlite")}`); await store.init();
+  return store;
 }
 
 describe("tail index: claims (review 156 R2, R3)", () => {
@@ -91,6 +97,67 @@ describe("tail index: claims (review 156 R2, R3)", () => {
     expect(parsePositionTx(view([fee(1000n)], { logs: splitLog(pool, creator, 1000n, 500n) }), new Set([position.toBase58()]), pool.toBase58())).deep.eq([{ kind: "pool", position: position.toBase58(), owner: creator.toBase58(), claimedLamports: "1000", status: "split", toBurn: { lamports: "500" } }]);
     expect(parsePositionTx(view([fee(1000n)]), new Set([position.toBase58()]), pool.toBase58())[0].status).eq("unsplit");
     expect(parsePositionTx(view([fee(1000n)]), new Set([k().toBase58()]), pool.toBase58())).deep.eq([]);
+  });
+});
+
+describe("tail index: make-ups of unsplit claims", () => {
+  const MEMO = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+  const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, creator);
+  const memo = (claim: string, signer: PublicKey | null = creator): [Ix, Ix[]] => [{ programId: MEMO, accounts: signer ? [signer] : [], data: Buffer.from(TAIL_MAKEUP_MEMO + claim, "utf8") }, []];
+  const legs = (burn = 100n, swap = 51n, added = 49n): [Ix, Ix[]][] => [burnLeg(burn, wsol), buyLeg(swap, 5000n, 1, wsol), addLeg(4900n, added, 77n), lockLeg(77n)];
+
+  it("a signed memo naming the claim binds the legs after it, from the signer's WSOL account", () => {
+    const p = parseCreatorTx(view([memo("claimX"), ...legs()]), T);
+    expect(p.claims).deep.eq([]);
+    expect(p.makeUps).deep.eq([{ kind: "makeUp", claim: "claimX", creator: creator.toBase58(), status: "split", toBurn: { lamports: "100", source: wsol.toBase58() }, buy: { inLamports: "51", outRaw: "5000" }, add: { position: position.toBase58(), addedRaw: "4900", addedLamports: "49", liquidity: "77" }, lockedLiquidity: "77" }]);
+    // legs from another account, or before the memo, are not its legs
+    expect(parseCreatorTx(view([memo("claimX"), burnLeg(100n), buyLeg(51n, 5000n)]), T).makeUps[0].status).eq("unsplit");
+    expect(parseCreatorTx(view([...legs(), memo("claimX")]), T).makeUps[0].status).eq("unsplit");
+    // a memo listing no signer proves nothing: not a make-up
+    expect(parseCreatorTx(view([memo("claimX", null), ...legs()]), T).makeUps).deep.eq([]);
+  });
+  it("next to a claim of the curve, or next to another make-up, it is ambiguous", () => {
+    expect(parseCreatorTx(view([claimLeg(400n), memo("claimX"), ...legs()]), T).makeUps.map((x) => [x.status, x.toBurn])).deep.eq([["ambiguous", null]]);
+    expect(parseCreatorTx(view([memo("a"), memo("b"), ...legs()]), T).makeUps.map((x) => x.status)).deep.eq(["ambiguous", "ambiguous"]);
+  });
+  it("counts once: the first make-up after the claim, by a creator, with exactly tailSplit's quarters", () => {
+    const row = (signature: string, slot: number, legsOf: [Ix, Ix[]][], claim = "claimX") => ({ signature, idx: 0, slot, blockTime: slot, name: "m", data: parseCreatorTx(view([memo(claim), ...legsOf]), T).makeUps[0] });
+    const claim = { signature: "claimX", slot: 20, claimedLamports: "400" };
+    const c = [creator.toBase58()];
+    expect(makeUpOf(claim, [row("early", 15, legs())], c)).eq(null); // before the claim
+    expect(makeUpOf(claim, [row("other", 25, legs(), "claimY")], c)).eq(null); // another claim's
+    expect(makeUpOf(claim, [row("burn99", 25, legs(99n))], c)).eq(null); // burn not exactly a quarter
+    expect(makeUpOf(claim, [row("burn101", 25, legs(101n))], c)).eq(null);
+    expect(makeUpOf(claim, [row("liq98", 25, legs(100n, 50n, 48n))], c)).eq(null); // liquidity under 99% of a quarter
+    expect(makeUpOf(claim, [row("liq101", 25, legs(100n, 52n, 49n))], c)).eq(null); // over a quarter
+    expect(makeUpOf(claim, [row("nolock", 25, legs().slice(0, 3))], c)).eq(null); // incomplete
+    expect(makeUpOf(claim, [row("stranger", 25, legs())], [k().toBase58()])).eq(null); // not a creator of the tail
+    const got = makeUpOf(claim, [row("second", 40, legs()), row("first", 30, legs()), row("bad", 26, legs(99n))], c)!;
+    expect([got.signature, got.toBurnLamports, got.liquidity.addedLamports, got.liquidity.liquidity]).deep.eq(["first", "100", "49", "77"]);
+    expect(makeUpOf(claim, [row("liq99", 25, legs(100n, 50n, 49n))], c)?.signature).eq("liq99"); // 99 of 100: the margin's leftover
+  });
+  it("the view: the claim stays not split, shows its make-up, and the totals count the make-up's legs", async () => {
+    const store = await freshStore();
+    const m = k(), mm = m.toBase58(), c = creator.toBase58();
+    const tails = parseTails(`${mm}:${k().toBase58()}:${target.toBase58()}`);
+    await store.setMeta(`tail_sources:${mm}`, JSON.stringify({ v: 2, origin: { creator: c, signature: "first" }, creators: [c], graduated: false, pool: null, migration: null }));
+    await store.setMeta(`walk_coverage:tail:${mm}:creator:${c}`, JSON.stringify({ status: "complete", atMs: 1 }));
+    await store.setMeta("walk_coverage:reserve", JSON.stringify({ status: "complete", atMs: 1 }));
+    const mu = (signature: string, slot: number, legsOf: [Ix, Ix[]][]) => ({ signature, idx: 0, slot, blockTime: slot, name: `tailMakeUp:${mm}`, data: parseCreatorTx(view([memo("claimX"), ...legsOf]), T).makeUps[0] });
+    const rv = (sig: string, slot: number, legsOf: [Ix, Ix[]][], pre: bigint, post: bigint, logs: string[] = []) => ({ signature: sig, idx: 0, slot, blockTime: 1, name: "reserveTx", data: parseReserveTx(view(legsOf, { reserve: [pre, post], logs }), reserve) });
+    await store.insertTailEvents([
+      { signature: "claimX", idx: 0, slot: 20, blockTime: 20, name: `tailClaim:${mm}`, data: parseCreatorTx(view([claimLeg(400n)]), T).claims[0] },
+      mu("bad", 25, legs(90n)), mu("makeup", 30, legs()), mu("again", 40, legs()),
+      rv("bad", 25, [burnLeg(90n, wsol)], 0n, 90n), rv("makeup", 30, [burnLeg(100n, wsol)], 90n, 190n), rv("again", 40, [burnLeg(100n, wsol)], 190n, 290n),
+      rv("buy", 50, [[ixOf(BURN_PROGRAM_ID, [9, 9, 9, 9, 9, 9, 9, 9], []), [transfer(reserve, k(), k(), 190n)]]], 290n, 100n, buybackLog(190n, 1900n, 1900n)),
+    ], "walk:z", "{}");
+    const v: any = (await tailView(store, tails, mm)).tails[0];
+    expect(v.claims.map((x: any) => [x.signature, x.status, x.keptLamports, x.makeUp?.signature, x.makeUp?.toBurnLamports])).deep.eq([["claimX", "unsplit", String(400n - 100n - 51n - 49n), "makeup", "100"]]);
+    // FIFO: the bad make-up's 90 went first, then 100 of this one
+    expect(v.claims[0].makeUp.burn).deep.eq({ spentLamports: "100", waitingLamports: "0", boughtRaw: "1000", buybacks: ["buy"] });
+    expect(v.totals).deep.include({ claims: 1, notSplit: 0, madeUp: 1, toBurnLamports: "100", boughtRaw: "1000", liquidityLamports: "49", liquidityRaw: "4900", lockedLiquidity: "77" });
+    expect(v.makeUps.map((x: any) => [x.signature, x.status, x.counted])).deep.eq([["bad", "split", false], ["makeup", "split", true], ["again", "split", false]]);
+    expect(v.positions).deep.eq([position.toBase58()]);
   });
 });
 
@@ -142,11 +209,6 @@ describe("tail index: the reserve's gross ledger (review 156 R4, R5)", () => {
 });
 
 describe("tail index: walk and view", () => {
-  async function freshStore() {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tail-index-"));
-    const store = openStore(`sqlite:${path.join(dir, "store.sqlite")}`); await store.init();
-    return store;
-  }
   const sigOf = (i: number) => createHash("sha256").update(`tail${i}`).digest().toString("hex").replace(/[0OIl]/g, "1").slice(0, 88).padEnd(88, "A");
   function chain(n: number) {
     const sigs = Array.from({ length: n }, (_, i) => ({ signature: sigOf(i + 1), slot: 1000 + i, err: null as unknown, blockTime: 1_700_000_000 + i }));
@@ -201,7 +263,7 @@ describe("tail index: walk and view", () => {
     const tails = parseTails(`${m.toBase58()}:${k().toBase58()}:${target.toBase58()}`);
     // fresh: no sources, no coverage -> nothing is zero, everything unknown (R6)
     let v: any = (await tailView(store, tails, null)).tails[0];
-    expect(v.totals).deep.eq({ claims: null, notSplit: null, ambiguous: null, claimedLamports: null, toBurnLamports: null, boughtRaw: null, liquidityLamports: null, liquidityRaw: null, lockedLiquidity: null, payoutLamports: null });
+    expect(v.totals).deep.eq({ claims: null, notSplit: null, madeUp: null, ambiguous: null, claimedLamports: null, toBurnLamports: null, boughtRaw: null, liquidityLamports: null, liquidityRaw: null, lockedLiquidity: null, payoutLamports: null });
     const c = creator.toBase58();
     await store.setMeta(`tail_sources:${m.toBase58()}`, JSON.stringify({ v: 2, origin: { creator: c, signature: "first" }, creators: [c], graduated: false, pool: null, migration: null }));
     await store.setMeta(`walk_coverage:tail:${m.toBase58()}:creator:${c}`, JSON.stringify({ status: "complete", atMs: 1 }));
