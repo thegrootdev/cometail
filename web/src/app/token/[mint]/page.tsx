@@ -23,6 +23,7 @@ import { creatorClaims } from "@/lib/creator-fees";
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { PublicKey } from "@solana/web3.js";
+import { VAULT_PROGRAM_ID } from "@cometail/client";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { NATIVE_MINT } from "@solana/spl-token";
 import BN from "bn.js";
@@ -93,6 +94,14 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     20_000,
   );
   const pool = view?.pool ?? PublicKey.default;
+  // a fee token's creator is the vault that launched it; a coin on a fee-sale config launched from a wallet (a tail
+  // launched by our own wallet, or anyone's) has no vault behind it, so the vault's unwind note does not apply
+  const creatorKey = view?.creator.toBase58() ?? "";
+  const { data: creatorOwner } = useLoad(
+    async () => (creatorKey ? (await connection.getAccountInfo(new PublicKey(creatorKey)))?.owner.toBase58() ?? "none" : null),
+    [creatorKey],
+  );
+  const vaultBacked = creatorOwner === null ? null : creatorOwner === VAULT_PROGRAM_ID.toBase58();
   const { data: meta } = useLoad(
     () => readMetadata(connection, mint),
     [mintStr],
@@ -268,7 +277,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const observedAt = market.error ? 0 : market.data?.generatedAtMs ?? 0;
   const tradeBox = view && (
     <section className="trade-box token-order-entry" aria-label={tokenPage.trades}>
-      {bonding && ADDRESSES.streamConfigs.some((k) => k.equals(new PublicKey(view.state.config))) && (
+      {bonding && vaultBacked !== false && ADDRESSES.streamConfigs.some((k) => k.equals(new PublicKey(view.state.config))) && (
         <p className="form-notice">{tokenPage.streamUnwindNote}</p>
       )}
       {!bonding && !graduated && <p className="trade-paused">{simple.migrating}</p>}
