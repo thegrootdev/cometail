@@ -218,17 +218,18 @@ function splitLegs(a: {
 
 /** SPL Memo v2 (the same id vault.ts exports): it fails unless every account it lists signed the transaction. */
 const MEMO_PROGRAM = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
-/** The make-up's memo: this prefix, then the signature of the claim it makes up. */
+/** The make-up's memo: this prefix, the tail's mint, ":", and the signature of the claim it makes up. */
 export const TAIL_MAKEUP_MEMO = "cometail:tail-makeup:v1:";
+export const tailMakeUpMemo = (tailMint: PublicKey | string, claimSignature: string) => `${TAIL_MAKEUP_MEMO}${tailMint.toString()}:${claimSignature}`;
 
 /** A one-time make-up, from the wallet's own SOL, of a claim that was not split when it was made: the quarter the
  *  burn and the quarter the liquidity should have had, computed from the claim's amount exactly as tailSplit does.
  *  One transaction signed by the creator:
  *   1. the WSOL and $X token accounts, created if missing; half the claim wrapped into the WSOL account;
- *   2. a memo naming the claim, listing the creator as a signer (the memo program checks it signed);
+ *   2. a memo naming the tail and the claim, listing the creator as a signer (the memo program checks it signed);
  *   3-6. the split's legs (splitLegs), bound by the indexer to the memo as a claim's legs are bound to the claim. */
 export function tailMakeUpIxs(a: {
-  creator: PublicKey; claimSignature: string; claimedLamports: bigint; reserve: PublicKey; x: CompoundingPool; locked: LockedPosition;
+  creator: PublicKey; tailMint: PublicKey; claimSignature: string; claimedLamports: bigint; reserve: PublicKey; x: CompoundingPool; locked: LockedPosition;
   slippageBps?: number; marginBps?: number;
 }) {
   const split = tailSplit(a.claimedLamports);
@@ -242,7 +243,7 @@ export function tailMakeUpIxs(a: {
     createAssociatedTokenAccountIdempotentInstruction(a.creator, xAta, a.creator, a.x.tokenAMint, a.x.tokenAProgram),
     SystemProgram.transfer({ fromPubkey: a.creator, toPubkey: wsol, lamports: split.toBurn + split.toLiquidity }),
     createSyncNativeInstruction(wsol),
-    new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [meta(a.creator, false, true)], data: Buffer.from(TAIL_MAKEUP_MEMO + a.claimSignature, "utf8") }),
+    new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [meta(a.creator, false, true)], data: Buffer.from(tailMakeUpMemo(a.tailMint, a.claimSignature), "utf8") }),
     ...legs.ixs,
   ];
   return { ixs, split: { ...split, swapIn: legs.swapIn, liquiditySol: legs.liquiditySol }, minOut: legs.minOut, expectedOut: legs.out, liquidityDelta: legs.liquidityDelta };

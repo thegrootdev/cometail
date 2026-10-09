@@ -137,11 +137,15 @@ It uses no vault and no program of ours; $X is untouched.
   claim's SOL is traced first in, first out to the buybacks that spent it and credited with the $COMETAIL they
   bought (not tokens burned with them that they did not buy). Whatever the ledger cannot prove (a break in the
   balance chain, an unexplained movement, a slot with more than one consistent order) is shown as unknown, and no
-  total is shown before the history it sums has been read. A claim that was not split can be made up once from the
-  wallet (`tailMakeUpIxs`, on `/admin/tails`): an SPL memo `cometail:tail-makeup:v1:<claim signature>` listing the
-  wallet as a signer, then the split's legs from the wallet's WSOL account, bound to the memo as a claim's are to
-  the claim. It counts for the claim only if it is the first after it, signed by one of the tail's creators, with
-  exactly a quarter of the claim to the reserve and a quarter (to within the 0.2% liquidity margin, 1% allowed)
-  swapped and added, the add locked; a make-up next to a claim or another make-up is unclear and counts for
-  nothing. The claim stays "not split" and shows its make-up. `/api/tail-claims/:mint` serves it; the tail's token
+  total is shown before the history it sums has been read. A curve claim that was not split can be made up once
+  from the wallet (`tailMakeUpIxs`, on `/admin/tails`): an SPL memo `cometail:tail-makeup:v1:<tail mint>:<claim
+  signature>` listing the wallet as a signer, then the split's legs from the wallet's WSOL account, bound to the
+  memo as a claim's are to the claim. It counts only for the tail and the claim it names, only if it is the first
+  after the claim, signed by one of the tail's creators, with exactly a quarter of the claim to the reserve and a
+  quarter (to within the 0.2% liquidity margin, 1% allowed) swapped and added, the add locked. A make-up in the
+  same transaction as a claim of any curve, or as another make-up, is unclear and counts for nothing (and the claim
+  next to it is unclear too); graduated pool claims are not made up this way. The claim stays "not split" and shows
+  its make-up. The admin page sends one only when the worker's fresh record lists the claim as waiting for one,
+  the wallet's own history since the claim holds no make-up memo for it, no send from this browser is still
+  pending, and no other make-up was started from the page. `/api/tail-claims/:mint` serves it; the tail's token
   page shows it, and says plainly that the split is ours, done by hand, not enforced by code.

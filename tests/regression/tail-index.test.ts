@@ -103,61 +103,103 @@ describe("tail index: claims (review 156 R2, R3)", () => {
 describe("tail index: make-ups of unsplit claims", () => {
   const MEMO = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
   const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, creator);
-  const memo = (claim: string, signer: PublicKey | null = creator): [Ix, Ix[]] => [{ programId: MEMO, accounts: signer ? [signer] : [], data: Buffer.from(TAIL_MAKEUP_MEMO + claim, "utf8") }, []];
+  const TAIL = k().toBase58();
+  const sig = (s: string) => createHash("sha256").update(s).digest().toString("hex").replace(/[0OIl]/g, "1").slice(0, 88).padEnd(88, "A");
+  const X = sig("claimX");
+  const memoText = (claim: string, tail = TAIL) => `${TAIL_MAKEUP_MEMO}${tail}:${claim}`;
+  const memo = (claim: string, signer: PublicKey | null = creator, tail = TAIL, text?: string): [Ix, Ix[]] => [{ programId: MEMO, accounts: signer ? [signer] : [], data: Buffer.from(text ?? memoText(claim, tail), "utf8") }, []];
   const legs = (burn = 100n, swap = 51n, added = 49n): [Ix, Ix[]][] => [burnLeg(burn, wsol), buyLeg(swap, 5000n, 1, wsol), addLeg(4900n, added, 77n), lockLeg(77n)];
 
-  it("a signed memo naming the claim binds the legs after it, from the signer's WSOL account", () => {
-    const p = parseCreatorTx(view([memo("claimX"), ...legs()]), T);
+  it("a signed memo naming the tail and the claim binds the legs after it, from the signer's WSOL account", () => {
+    const p = parseCreatorTx(view([memo(X), ...legs()]), T);
     expect(p.claims).deep.eq([]);
-    expect(p.makeUps).deep.eq([{ kind: "makeUp", claim: "claimX", creator: creator.toBase58(), status: "split", toBurn: { lamports: "100", source: wsol.toBase58() }, buy: { inLamports: "51", outRaw: "5000" }, add: { position: position.toBase58(), addedRaw: "4900", addedLamports: "49", liquidity: "77" }, lockedLiquidity: "77" }]);
+    expect(p.makeUps).deep.eq([{ kind: "makeUp", tail: TAIL, claim: X, creator: creator.toBase58(), status: "split", toBurn: { lamports: "100", source: wsol.toBase58() }, buy: { inLamports: "51", outRaw: "5000" }, add: { position: position.toBase58(), addedRaw: "4900", addedLamports: "49", liquidity: "77" }, lockedLiquidity: "77" }]);
     // legs from another account, or before the memo, are not its legs
-    expect(parseCreatorTx(view([memo("claimX"), burnLeg(100n), buyLeg(51n, 5000n)]), T).makeUps[0].status).eq("unsplit");
-    expect(parseCreatorTx(view([...legs(), memo("claimX")]), T).makeUps[0].status).eq("unsplit");
-    // a memo listing no signer proves nothing: not a make-up
-    expect(parseCreatorTx(view([memo("claimX", null), ...legs()]), T).makeUps).deep.eq([]);
+    expect(parseCreatorTx(view([memo(X), burnLeg(100n), buyLeg(51n, 5000n)]), T).makeUps[0].status).eq("unsplit");
+    expect(parseCreatorTx(view([...legs(), memo(X)]), T).makeUps[0].status).eq("unsplit");
+    // a memo listing no signer proves nothing; a memo that names only a claim (no tail), or carries more, is not a make-up
+    expect(parseCreatorTx(view([memo(X, null), ...legs()]), T).makeUps).deep.eq([]);
+    expect(parseCreatorTx(view([memo(X, creator, TAIL, TAIL_MAKEUP_MEMO + X), ...legs()]), T).makeUps).deep.eq([]);
+    expect(parseCreatorTx(view([memo(X, creator, TAIL, memoText(X) + ":more"), ...legs()]), T).makeUps).deep.eq([]);
   });
-  it("next to a claim of the curve, or next to another make-up, it is ambiguous", () => {
-    expect(parseCreatorTx(view([claimLeg(400n), memo("claimX"), ...legs()]), T).makeUps.map((x) => [x.status, x.toBurn])).deep.eq([["ambiguous", null]]);
-    expect(parseCreatorTx(view([memo("a"), memo("b"), ...legs()]), T).makeUps.map((x) => x.status)).deep.eq(["ambiguous", "ambiguous"]);
+  it("next to a claim of any curve, or another make-up, it is ambiguous; and a claim next to a make-up is ambiguous", () => {
+    for (const pool of [curve, k()]) expect(parseCreatorTx(view([claimLeg(400n, pool), memo(X), ...legs()]), T).makeUps.map((x) => [x.status, x.toBurn])).deep.eq([["ambiguous", null]]);
+    expect(parseCreatorTx(view([memo(sig("a")), memo(sig("b")), ...legs()]), T).makeUps.map((x) => x.status)).deep.eq(["ambiguous", "ambiguous"]);
+    // the make-up's legs from the same WSOL account must not read as the claim's split
+    const c = parseCreatorTx(view([claimLeg(400n, curve), memo(X, creator, k().toBase58()), burnLeg(100n), buyLeg(51n, 5000n), addLeg(4900n, 49n, 77n), lockLeg(77n)]), T).claims[0];
+    expect([c.status, c.toBurn]).deep.eq(["ambiguous", null]);
   });
-  it("counts once: the first make-up after the claim, by a creator, with exactly tailSplit's quarters", () => {
-    const row = (signature: string, slot: number, legsOf: [Ix, Ix[]][], claim = "claimX") => ({ signature, idx: 0, slot, blockTime: slot, name: "m", data: parseCreatorTx(view([memo(claim), ...legsOf]), T).makeUps[0] });
-    const claim = { signature: "claimX", slot: 20, claimedLamports: "400" };
+  it("counts once: the first make-up after the claim, naming this tail, by a creator, with exactly tailSplit's quarters", () => {
+    const row = (signature: string, slot: number, legsOf: [Ix, Ix[]][], claim = X, tail = TAIL) => ({ signature, idx: 0, slot, blockTime: slot, name: "m", data: parseCreatorTx(view([memo(claim, creator, tail), ...legsOf]), T).makeUps[0] });
+    const claim = { signature: X, slot: 20, claimedLamports: "400" };
     const c = [creator.toBase58()];
-    expect(makeUpOf(claim, [row("early", 15, legs())], c)).eq(null); // before the claim
-    expect(makeUpOf(claim, [row("other", 25, legs(), "claimY")], c)).eq(null); // another claim's
-    expect(makeUpOf(claim, [row("burn99", 25, legs(99n))], c)).eq(null); // burn not exactly a quarter
-    expect(makeUpOf(claim, [row("burn101", 25, legs(101n))], c)).eq(null);
-    expect(makeUpOf(claim, [row("liq98", 25, legs(100n, 50n, 48n))], c)).eq(null); // liquidity under 99% of a quarter
-    expect(makeUpOf(claim, [row("liq101", 25, legs(100n, 52n, 49n))], c)).eq(null); // over a quarter
-    expect(makeUpOf(claim, [row("nolock", 25, legs().slice(0, 3))], c)).eq(null); // incomplete
-    expect(makeUpOf(claim, [row("stranger", 25, legs())], [k().toBase58()])).eq(null); // not a creator of the tail
-    const got = makeUpOf(claim, [row("second", 40, legs()), row("first", 30, legs()), row("bad", 26, legs(99n))], c)!;
+    expect(makeUpOf(claim, [row("early", 15, legs())], c, TAIL)).eq(null); // before the claim
+    expect(makeUpOf(claim, [row("other", 25, legs(), sig("claimY"))], c, TAIL)).eq(null); // another claim's
+    expect(makeUpOf(claim, [row("otherTail", 25, legs(), X, k().toBase58())], c, TAIL)).eq(null); // another tail's
+    expect(makeUpOf(claim, [row("burn99", 25, legs(99n))], c, TAIL)).eq(null); // burn not exactly a quarter
+    expect(makeUpOf(claim, [row("burn101", 25, legs(101n))], c, TAIL)).eq(null);
+    expect(makeUpOf(claim, [row("liq98", 25, legs(100n, 50n, 48n))], c, TAIL)).eq(null); // liquidity under 99% of a quarter
+    expect(makeUpOf(claim, [row("liq101", 25, legs(100n, 52n, 49n))], c, TAIL)).eq(null); // over a quarter
+    expect(makeUpOf(claim, [row("nolock", 25, legs().slice(0, 3))], c, TAIL)).eq(null); // incomplete
+    expect(makeUpOf(claim, [row("stranger", 25, legs())], [k().toBase58()], TAIL)).eq(null); // not a creator of the tail
+    const got = makeUpOf(claim, [row("second", 40, legs()), row("first", 30, legs()), row("bad", 26, legs(99n))], c, TAIL)!;
     expect([got.signature, got.toBurnLamports, got.liquidity.addedLamports, got.liquidity.liquidity]).deep.eq(["first", "100", "49", "77"]);
-    expect(makeUpOf(claim, [row("liq99", 25, legs(100n, 50n, 49n))], c)?.signature).eq("liq99"); // 99 of 100: the margin's leftover
+    expect(makeUpOf(claim, [row("liq99", 25, legs(100n, 50n, 49n))], c, TAIL)?.signature).eq("liq99"); // 99 of 100: the margin's leftover
   });
   it("the view: the claim stays not split, shows its make-up, and the totals count the make-up's legs", async () => {
     const store = await freshStore();
-    const m = k(), mm = m.toBase58(), c = creator.toBase58();
+    const m = new PublicKey(TAIL), mm = TAIL, c = creator.toBase58();
     const tails = parseTails(`${mm}:${k().toBase58()}:${target.toBase58()}`);
     await store.setMeta(`tail_sources:${mm}`, JSON.stringify({ v: 2, origin: { creator: c, signature: "first" }, creators: [c], graduated: false, pool: null, migration: null }));
     await store.setMeta(`walk_coverage:tail:${mm}:creator:${c}`, JSON.stringify({ status: "complete", atMs: 1 }));
     await store.setMeta("walk_coverage:reserve", JSON.stringify({ status: "complete", atMs: 1 }));
-    const mu = (signature: string, slot: number, legsOf: [Ix, Ix[]][]) => ({ signature, idx: 0, slot, blockTime: slot, name: `tailMakeUp:${mm}`, data: parseCreatorTx(view([memo("claimX"), ...legsOf]), T).makeUps[0] });
-    const rv = (sig: string, slot: number, legsOf: [Ix, Ix[]][], pre: bigint, post: bigint, logs: string[] = []) => ({ signature: sig, idx: 0, slot, blockTime: 1, name: "reserveTx", data: parseReserveTx(view(legsOf, { reserve: [pre, post], logs }), reserve) });
+    const mu = (signature: string, slot: number, legsOf: [Ix, Ix[]][]) => ({ signature, idx: 0, slot, blockTime: slot, name: `tailMakeUp:${mm}`, data: parseCreatorTx(view([memo(X), ...legsOf]), T).makeUps[0] });
+    const rv = (s: string, slot: number, legsOf: [Ix, Ix[]][], pre: bigint, post: bigint, logs: string[] = []) => ({ signature: s, idx: 0, slot, blockTime: 1, name: "reserveTx", data: parseReserveTx(view(legsOf, { reserve: [pre, post], logs }), reserve) });
     await store.insertTailEvents([
-      { signature: "claimX", idx: 0, slot: 20, blockTime: 20, name: `tailClaim:${mm}`, data: parseCreatorTx(view([claimLeg(400n)]), T).claims[0] },
+      { signature: X, idx: 0, slot: 20, blockTime: 20, name: `tailClaim:${mm}`, data: parseCreatorTx(view([claimLeg(400n)]), T).claims[0] },
       mu("bad", 25, legs(90n)), mu("makeup", 30, legs()), mu("again", 40, legs()),
       rv("bad", 25, [burnLeg(90n, wsol)], 0n, 90n), rv("makeup", 30, [burnLeg(100n, wsol)], 90n, 190n), rv("again", 40, [burnLeg(100n, wsol)], 190n, 290n),
       rv("buy", 50, [[ixOf(BURN_PROGRAM_ID, [9, 9, 9, 9, 9, 9, 9, 9], []), [transfer(reserve, k(), k(), 190n)]]], 290n, 100n, buybackLog(190n, 1900n, 1900n)),
     ], "walk:z", "{}");
     const v: any = (await tailView(store, tails, mm)).tails[0];
-    expect(v.claims.map((x: any) => [x.signature, x.status, x.keptLamports, x.makeUp?.signature, x.makeUp?.toBurnLamports])).deep.eq([["claimX", "unsplit", String(400n - 100n - 51n - 49n), "makeup", "100"]]);
+    expect(v.claims.map((x: any) => [x.signature, x.status, x.keptLamports, x.makeUp?.signature, x.makeUp?.toBurnLamports])).deep.eq([[X, "unsplit", String(400n - 100n - 51n - 49n), "makeup", "100"]]);
     // FIFO: the bad make-up's 90 went first, then 100 of this one
     expect(v.claims[0].makeUp.burn).deep.eq({ spentLamports: "100", waitingLamports: "0", boughtRaw: "1000", buybacks: ["buy"] });
     expect(v.totals).deep.include({ claims: 1, notSplit: 0, madeUp: 1, toBurnLamports: "100", boughtRaw: "1000", liquidityLamports: "49", liquidityRaw: "4900", lockedLiquidity: "77" });
     expect(v.makeUps.map((x: any) => [x.signature, x.status, x.counted])).deep.eq([["bad", "split", false], ["makeup", "split", true], ["again", "split", false]]);
     expect(v.positions).deep.eq([position.toBase58()]);
+    void m;
+  });
+  it("review 168 F3/F4: one make-up credits only the tail it names; a graduated pool claim is never made up by it", async () => {
+    const store = await freshStore();
+    const cfg = k(), c = creator.toBase58();
+    const [m1, m2] = [k(), k()];
+    const tails = parseTails(`${m1.toBase58()}:${cfg.toBase58()}:${target.toBase58()},${m2.toBase58()}:${cfg.toBase58()}:${target.toBase58()}`);
+    const both = sig("both");
+    // one transaction claims both tails' curves, unsplit, the same amount; later one make-up names tail 1
+    const claimTx = view([claimLeg(400n, tails[0].curve), claimLeg(400n, tails[1].curve)], { signature: both, slot: 5 });
+    const makeUpTx = view([memo(both, creator, m1.toBase58()), ...legs()], { signature: sig("mu"), slot: 9 });
+    const sigs = [{ signature: sig("mu"), slot: 9, err: null, blockTime: 9 }, { signature: both, slot: 5, err: null, blockTime: 5 }];
+    const deps: WalkDeps = { getSignatures: async (_a, o) => (o.before ? [] : o.limit === 1 ? sigs.slice(0, 1) : sigs), readView: async (s) => (s === both ? claimTx : makeUpTx) };
+    const sources = async (t: any) => { const src = { v: 2, origin: { creator: c, signature: "first" }, creators: [c], graduated: false, pool: null, migration: null }; await store.setMeta(`tail_sources:${t.mint.toBase58()}`, JSON.stringify(src)); return src; };
+    for (let i = 0; i < 2; i++) await tailIndexPass(deps, store, tails, reserve, sources);
+    const v1: any = (await tailView(store, tails, m1.toBase58())).tails[0], v2: any = (await tailView(store, tails, m2.toBase58())).tails[0];
+    expect(v1.claims.map((x: any) => [x.status, x.makeUp?.signature ?? null])).deep.eq([["unsplit", sig("mu")]]);
+    expect(v2.claims.map((x: any) => [x.status, x.makeUp ?? null])).deep.eq([["unsplit", null]]);
+    expect([v1.totals.toBurnLamports, v2.totals.toBurnLamports, v2.totals.notSplit, v2.makeUps.length]).deep.eq(["100", "0", 1, 0]);
+    // a graduated pool claim (half to the burn is its rule): a make-up naming it counts for nothing
+    const s3 = await freshStore(), m3 = k(), pool = k();
+    const t3 = parseTails(`${m3.toBase58()}:${cfg.toBase58()}:${target.toBase58()}`);
+    await s3.setMeta(`tail_sources:${m3.toBase58()}`, JSON.stringify({ v: 2, origin: { creator: c, signature: "first" }, creators: [c], graduated: true, pool: pool.toBase58(), migration: { signature: "mig", positions: [{ position: position.toBase58(), owner: c }] } }));
+    for (const key of [`tail:${m3.toBase58()}:creator:${c}`, `tail:${m3.toBase58()}:position:${position.toBase58()}`]) await s3.setMeta(`walk_coverage:${key}`, JSON.stringify({ status: "complete", atMs: 1 }));
+    const pc = sig("pool-claim");
+    await s3.insertTailEvents([
+      { signature: pc, idx: 0, slot: 20, blockTime: 20, name: `tailPoolClaim:${m3.toBase58()}`, data: { kind: "pool", position: position.toBase58(), owner: c, claimedLamports: "400", status: "unsplit", toBurn: null } },
+      { signature: sig("mu3"), idx: 0, slot: 30, blockTime: 30, name: `tailMakeUp:${m3.toBase58()}`, data: parseCreatorTx(view([memo(pc, creator, m3.toBase58()), ...legs()]), T).makeUps[0] },
+    ], "walk:z", "{}");
+    const v3: any = (await tailView(s3, t3, m3.toBase58())).tails[0];
+    expect(v3.claims.map((x: any) => [x.source, x.status, x.makeUp])).deep.eq([["pool", "unsplit", null]]);
+    expect([v3.totals.notSplit, v3.totals.madeUp, v3.totals.toBurnLamports]).deep.eq([1, 0, "0"]);
   });
 });
 

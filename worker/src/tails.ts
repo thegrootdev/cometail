@@ -10,8 +10,8 @@
 //     (the transfer from the claim's destination to the reserve; the SOL -> target buy from that account; the add
 //     to a position of the creator in the target pool; the lock of exactly what was added). Missing legs make a
 //     claim "unsplit" or "incomplete", and repeated legs "ambiguous": nothing is guessed.
-//   - A claim that was not split can be made up once, later, from the creator's own SOL: a transaction with a memo
-//     naming the claim (signed: the memo program checks it), followed by the split's legs from the signer's WSOL
+//   - A curve claim that was not split can be made up once, later, from the creator's own SOL: a transaction with a
+//     memo naming the tail and the claim (signed: the memo program checks it), followed by the split's legs from the signer's WSOL
 //     account. The first such transaction after the claim, by one of the tail's creators, with exactly tailSplit's
 //     quarter to the reserve and a liquidity quarter swapped and added to within the margin, counts for the claim
 //     (makeUpOf); the claim stays "not split" and shows its make-up. Every make-up found is listed, counted or not.
@@ -28,7 +28,7 @@
 import { utils } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 import { NATIVE_MINT, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { BurnClient } from "@cometail/client";
+import { BurnClient, TAIL_MAKEUP_MEMO } from "@cometail/client";
 import { deriveDammV2PoolAddress, deriveDbcPoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { burnParser } from "./burn";
 import { Chain, DAMM_V2_MIGRATION_CONFIGS, DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID, DBC_PROGRESS } from "./chain";
@@ -163,10 +163,17 @@ export type CurveClaim = {
   add: { position: string; addedRaw: string; addedLamports: string; liquidity: string } | null;
   lockedLiquidity: string | null;
 };
-/** A make-up, from the wallet's own SOL, of a claim that was not split (`claim` is that claim's signature). */
-export type MakeUp = Omit<CurveClaim, "kind" | "claimedLamports"> & { kind: "makeUp"; claim: string };
-/** The make-up's memo prefix (packages/client tail.ts); SPL Memo v2. */
-export const TAIL_MAKEUP_MEMO = "cometail:tail-makeup:v1:";
+/** A make-up, from the wallet's own SOL, of a curve claim that was not split: `tail` is the tail's mint and `claim`
+ *  that claim's signature, both named by its memo. */
+export type MakeUp = Omit<CurveClaim, "kind" | "claimedLamports"> & { kind: "makeUp"; tail: string; claim: string };
+export { TAIL_MAKEUP_MEMO };
+/** The memo's text after the prefix: `<tail mint>:<claim signature>`, nothing else. */
+function makeUpTarget(text: string): { tail: string; claim: string } | null {
+  if (!text.startsWith(TAIL_MAKEUP_MEMO)) return null;
+  const parts = text.slice(TAIL_MAKEUP_MEMO.length).split(":");
+  if (parts.length !== 2 || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(parts[0]) || !/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(parts[1])) return null;
+  return { tail: parts[0], claim: parts[1] };
+}
 const MEMO_PROGRAM_ID = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 /** Every creator claim of `t.curve` in the transaction, with the split legs bound to it, the graduation payouts,
@@ -184,21 +191,25 @@ export function parseCreatorTx(v: TxView, t: CurveTarget): { claims: CurveClaim[
       if (e.kind === "creatorSurplus" && e.pool === t.curve) payouts.push({ kind: "surplus", lamports: e.amount.toString() });
     }
   }
+  // make-up memos (a top-level memo naming a tail and a claim, listing its signer: the memo program fails unless it
+  // signed), and whether the transaction claims any curve at all
+  const memos = v.top.map((ix, at) => ({ ix, at, target: ix.programId.equals(MEMO_PROGRAM_ID) && ix.accounts.length >= 1 ? makeUpTarget(ix.data.toString("utf8")) : null }))
+    .filter((m): m is { ix: Ix; at: number; target: { tail: string; claim: string } } => m.target !== null);
+  const claimsAnyCurve = [...v.inner.values()].flatMap(decodeEvents).some((e) => e.kind === "creatorClaim");
   const claims = found.map((f): CurveClaim => {
     const base: CurveClaim = { kind: "curve", claimedLamports: f.quote.toString(), creator: "", status: "ambiguous", toBurn: null, buy: null, add: null, lockedLiquidity: null };
-    // more than one claim of this curve in one transaction, or a claim inside another program: the legs cannot be bound
-    if (found.length > 1 || f.wrapped || f.ix.accounts.length < 9) return base;
+    // more than one claim of this curve in one transaction, a claim inside another program, or a claim next to a
+    // make-up (of any tail: its legs would read as this claim's): the legs cannot be bound
+    if (found.length > 1 || f.wrapped || f.ix.accounts.length < 9 || memos.length > 0) return base;
     const creator = f.ix.accounts[8].toBase58();
     return { ...base, creator, ...legsAfter(v, f.at, f.ix.accounts[3].toBase58(), creator, t) };
   });
-  // make-ups: a top-level memo naming the claim, listing its signer (the memo program fails unless it signed); the
-  // legs after it are bound as a claim's are, from the signer's WSOL account. A make-up next to a claim of this
-  // curve, or next to another make-up, cannot be told apart from it: ambiguous, never counted.
-  const memos = v.top.map((ix, at) => ({ ix, at })).filter(({ ix }) => ix.programId.equals(MEMO_PROGRAM_ID) && ix.accounts.length >= 1 && ix.data.toString("utf8").startsWith(TAIL_MAKEUP_MEMO));
-  const makeUps = memos.map(({ ix, at }): MakeUp => {
-    const creator = ix.accounts[0].toBase58(), claim = ix.data.toString("utf8").slice(TAIL_MAKEUP_MEMO.length);
-    const base: MakeUp = { kind: "makeUp", claim, creator, status: "ambiguous", toBurn: null, buy: null, add: null, lockedLiquidity: null };
-    if (memos.length > 1 || found.length > 0) return base;
+  // make-ups: the legs after the memo are bound as a claim's are, from the signer's WSOL account. A make-up next to
+  // a claim of any curve, or next to another make-up, cannot be told apart from it: ambiguous, never counted.
+  const makeUps = memos.map(({ ix, at, target }): MakeUp => {
+    const creator = ix.accounts[0].toBase58();
+    const base: MakeUp = { kind: "makeUp", tail: target.tail, claim: target.claim, creator, status: "ambiguous", toBurn: null, buy: null, add: null, lockedLiquidity: null };
+    if (memos.length > 1 || claimsAnyCurve) return base;
     return { ...base, ...legsAfter(v, at, getAssociatedTokenAddressSync(NATIVE_MINT, ix.accounts[0], true).toBase58(), creator, t) };
   });
   return { claims, payouts, creatorUpdates, makeUps };
@@ -580,7 +591,8 @@ export async function tailView(store: Store, tails: TailSpec[], mint: string | n
       }),
     ].sort((a, b) => b.slot - a.slot || a.signature.localeCompare(b.signature) || a.idx - b.idx)
       .map((c) => {
-        const makeUp = c.status === "unsplit" ? makeUpOf(c, makeUpRows, s.creators) : null;
+        // a make-up is the curve split's two quarters: it makes up a curve claim, never a graduated pool claim
+        const makeUp = c.source === "curve" && c.status === "unsplit" ? makeUpOf(c, makeUpRows, s.creators, m) : null;
         if (!makeUp) return { ...c, makeUp: null };
         return { ...c, keptLamports: (BigInt(c.claimedLamports) - BigInt(makeUp.toBurnLamports) - BigInt(makeUp.liquidity.swapInLamports) - BigInt(makeUp.liquidity.addedLamports)).toString(),
           makeUp: { ...makeUp, burn: burnOf(makeUp.signature, makeUp.toBurnLamports, true) } };
@@ -612,7 +624,7 @@ export async function tailView(store: Store, tails: TailSpec[], mint: string | n
       },
       claims,
       // every make-up found, valid or not (the admin page offers one make-up per claim, ever)
-      makeUps: makeUpRows.map((r) => ({ signature: r.signature, idx: r.idx, slot: r.slot, blockTime: r.blockTime, claim: (r.data as MakeUp).claim, status: (r.data as MakeUp).status,
+      makeUps: makeUpRows.filter((r) => (r.data as MakeUp).tail === m).map((r) => ({ signature: r.signature, idx: r.idx, slot: r.slot, blockTime: r.blockTime, claim: (r.data as MakeUp).claim, status: (r.data as MakeUp).status,
         counted: claims.some((c) => c.makeUp?.signature === r.signature && c.makeUp.idx === r.idx) })),
       payouts: mine.map((p) => ({ signature: p.signature, idx: p.idx, slot: p.slot, blockTime: p.blockTime, kind: p.data.kind, lamports: p.data.lamports })),
       coverage: { claims: claimCoverage, reserve: reserveCoverage, reserveVerified: verified },
@@ -621,15 +633,15 @@ export async function tailView(store: Store, tails: TailSpec[], mint: string | n
   return { tails: out };
 }
 
-/** The make-up that counts for an unsplit claim: the first (by slot, then signature) after the claim, signed by one
- *  of the tail's creators, with every leg bound (split) and the amounts tailSplit gives for the claim: exactly a
+/** The make-up that counts for an unsplit curve claim of tail `mint`: the first (by slot, then signature) after the
+ *  claim whose memo names this tail and this claim, signed by one of the tail's creators, with every leg bound (split) and the amounts tailSplit gives for the claim: exactly a
  *  quarter to the reserve, and a quarter to liquidity, of which the swap and the add used at least 99% (the
  *  liquidity margin leaves a little in the wallet, as it does in a split claim). Anything else counts for nothing. */
-export function makeUpOf(c: { signature: string; slot: number; claimedLamports: string }, rows: TailEventRow[], creators: string[]) {
+export function makeUpOf(c: { signature: string; slot: number; claimedLamports: string }, rows: TailEventRow[], creators: string[], mint: string) {
   const quarter = BigInt(c.claimedLamports) / 4n;
   const ok = rows.filter((r) => {
     const d = r.data as MakeUp;
-    if (d.claim !== c.signature || d.status !== "split" || r.slot <= c.slot || !creators.includes(d.creator) || !d.toBurn || !d.buy || !d.add || d.lockedLiquidity === null) return false;
+    if (d.tail !== mint || d.claim !== c.signature || d.status !== "split" || r.slot <= c.slot || !creators.includes(d.creator) || !d.toBurn || !d.buy || !d.add || d.lockedLiquidity === null) return false;
     const used = BigInt(d.buy.inLamports) + BigInt(d.add.addedLamports);
     return BigInt(d.toBurn.lamports) === quarter && used <= quarter && used * 100n >= quarter * 99n;
   }).sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature) || a.idx - b.idx);

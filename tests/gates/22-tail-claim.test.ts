@@ -229,7 +229,7 @@ describe("gate 22: tail claims by a plain wallet", () => {
     const mine = damm.findPositionOwnedBy(svm, w.comet.positions, owner.publicKey)!;
     const locked0 = big(damm.getPosition(svm, mine.position).permanentLockedLiquidity);
     const r0 = big(balance(svm, w.state.reserve));
-    const built = tailMakeUpIxs({ creator: owner.publicKey, claimSignature: raw.view.signature, claimedLamports: claimable, reserve: w.state.reserve, x: xPool(w), locked: { position: mine.position, nftAccount: mine.nftAccount } });
+    const built = tailMakeUpIxs({ creator: owner.publicKey, tailMint: tm.publicKey, claimSignature: raw.view.signature, claimedLamports: claimable, reserve: w.state.reserve, x: xPool(w), locked: { position: mine.position, nftAccount: mine.nftAccount } });
     expectFail(svm, built.ixs, [w.stranger], "");
     const sent = sendView(svm, built.ixs, [owner], [w.state.reserve]);
     expect(sent.bytes, "fits one legacy transaction").lte(1232);
@@ -239,10 +239,10 @@ describe("gate 22: tail claims by a plain wallet", () => {
     expect(big(damm.getPosition(svm, mine.position).permanentLockedLiquidity)).eq(locked0 + built.liquidityDelta);
     const p = parseCreatorTx(sent.view, target);
     expect(p.claims).deep.eq([]);
-    expect(p.makeUps.map((x) => [x.claim, x.creator, x.status, x.toBurn?.lamports, x.add?.position, x.lockedLiquidity])).deep.eq([[raw.view.signature, owner.publicKey.toBase58(), "split", q.toString(), mine.position.toBase58(), built.liquidityDelta.toString()]]);
+    expect(p.makeUps.map((x) => [x.tail, x.claim, x.creator, x.status, x.toBurn?.lamports, x.add?.position, x.lockedLiquidity])).deep.eq([[tm.publicKey.toBase58(), raw.view.signature, owner.publicKey.toBase58(), "split", q.toString(), mine.position.toBase58(), built.liquidityDelta.toString()]]);
     // the view's rule accepts it for that claim (made after it, by its creator, exactly the quarters)
     const rowOf = (v: TxView, slot: number, data: any) => ({ signature: v.signature, idx: 0, slot, blockTime: null, name: "m", data });
-    const got = makeUpOf({ signature: raw.view.signature, slot: 1, claimedLamports: claimable.toString() }, [rowOf(sent.view, 2, p.makeUps[0])], [owner.publicKey.toBase58()]);
+    const got = makeUpOf({ signature: raw.view.signature, slot: 1, claimedLamports: claimable.toString() }, [rowOf(sent.view, 2, p.makeUps[0])], [owner.publicKey.toBase58()], tm.publicKey.toBase58());
     expect(got?.signature).eq(sent.view.signature);
     const r = parseReserveTx(sent.view, w.state.reserve)!;
     expect([r.ok, r.legs.map((l) => [l.dir, l.lamports, l.topLevel])]).deep.eq([true, [["in", q.toString(), true]]]);

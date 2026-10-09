@@ -4,7 +4,7 @@
 // split in the same transaction you sign here (half stays in your wallet, a quarter goes to the burn reserve, a
 // quarter becomes $COMETAIL liquidity in your own position, permanently locked). The split is ours, done in the
 // open; the site lists every claim with its transaction. Nothing here is for users.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Shell, Card, ConnectWallet } from "@/components/Shell";
@@ -17,10 +17,16 @@ import { uploadIdentity } from "@/lib/upload";
 import { cleanSymbolInput } from "@/lib/token-display";
 import { api, type TailClaim, type TailInfo } from "@/lib/api";
 import { COMETAIL_POOL, EXPLORER, OFFICIAL_MINT } from "@/lib/addresses";
-import { TAIL_CONFIG, cashoutTx, claimTx, graduatedClaimTx, lockedPositionTx, makeUpTx, readTail, type TailChain } from "@/lib/tails";
+import { TAIL_CONFIG, cashoutTx, claimTx, graduatedClaimTx, lockedPositionTx, makeUpBlocked, makeUpOnChain, makeUpTx, readTail, type TailChain } from "@/lib/tails";
 import { tailSplit } from "@cometail/client";
 
 const sol = (l: bigint) => `${(Number(l) / 1e9).toFixed(6)} SOL`;
+// a make-up sent from this browser is held as pending for longer than its blockhash can stay valid (about 150
+// blocks); after that it either landed (the wallet's history shows its memo) or never will
+const PENDING_MS = 180_000;
+const pendingKey = (mint: string, claim: string) => `cometail:tail-makeup-pending:${mint}:${claim}`;
+const pendingSince = (mint: string, claim: string): number | null => { try { const v = Number(window.localStorage.getItem(pendingKey(mint, claim))); return v > 0 ? v : null; } catch { return null; } };
+const markPending = (mint: string, claim: string) => { try { window.localStorage.setItem(pendingKey(mint, claim), String(Date.now())); } catch { /* the in-page lock still holds */ } };
 
 export default function AdminTailsPage() {
   const { connection } = useConnection();
@@ -34,10 +40,14 @@ export default function AdminTailsPage() {
   const [note, setNote] = useState("");
   const [simulation, setSimulation] = useState("");
   const [chosen, setChosen] = useState<string>("");
-  // the worker's record of this tail, for make-ups: null while unread, "unavailable" when it cannot be read
-  const [record, setRecord] = useState<TailInfo | "unavailable" | null>(null);
+  // the worker's record of this tail, for make-ups, kept with the mint it was read for: null while unread
+  const [record, setRecord] = useState<{ mint: string; info: TailInfo | null } | null>(null);
+  const recordRead = useRef(0);
   const [makeUpFor, setMakeUpFor] = useState("");
-  const [makeUpSim, setMakeUpSim] = useState("");
+  // a simulation is only good for the exact tail, claim, position and wallet it ran for
+  const [makeUpSim, setMakeUpSim] = useState<{ key: string; text: string } | null>(null);
+  // claims a make-up was started for in this page: set before anything is awaited, never cleared after a send
+  const makeUpStarted = useRef(new Set<string>());
   // launch form
   const [name, setName] = useState(""), [symbol, setSymbol] = useState(""), [description, setDescription] = useState("");
   const [image, setImage] = useState<TokenImage | null>(null);
@@ -47,8 +57,11 @@ export default function AdminTailsPage() {
   const configured = known.find((t) => t.mint === mint?.toBase58()) ?? null;
 
   const refresh = useCallback(async () => {
-    setReadError(""); setSimulation(""); setMakeUpSim("");
-    if (mint) void api.tail(mint.toBase58()).then((r) => setRecord(r.state === "ok" ? r.tail : "unavailable"));
+    setReadError(""); setSimulation(""); setMakeUpSim(null); setRecord(null);
+    if (mint) {
+      const ask = ++recordRead.current, m = mint.toBase58();
+      void api.tail(m).then((r) => { if (ask === recordRead.current) setRecord({ mint: m, info: r.state === "ok" ? r.tail : null }); });
+    }
     if (!publicKey || !mint) { setTail(null); return; }
     try {
       const t = await readTail(connection, publicKey, mint);
@@ -94,28 +107,56 @@ export default function AdminTailsPage() {
     const sig = await run(async () => claimTx(publicKey, mint, await readTail(connection, publicKey, mint), position).tx, [], 400_000);
     if (sig) await refresh();
   };
-  // make-ups: once per claim, ever, and only through a worker that records them (its record lists make-ups) and
-  // whose history of this tail is complete; every make-up it has seen for a claim, counted or not, closes that claim
-  const rec = record && record !== "unavailable" ? record : null;
-  const makeUpReady = !!rec && Array.isArray(rec.makeUps) && rec.coverage.claims.status === "complete";
-  const owed: TailClaim[] = rec && makeUpReady ? rec.claims.filter((c) => c.status === "unsplit" && !c.makeUp && !rec.makeUps!.some((m) => m.claim === c.signature)) : [];
+  // make-ups: once per claim, ever. Offered only from this tail's own record by a worker that records make-ups and
+  // has read the whole history; checked again at send against a fresh record, the wallet's own history since the
+  // claim (a make-up that landed shows there before the worker reads it), a pending send from this browser, and a
+  // lock taken before anything is awaited.
+  const mintStr = mint?.toBase58() ?? "";
+  const rec = record && record.mint === mintStr ? record.info : null;
+  const owed: TailClaim[] = rec ? rec.claims.filter((c) => c.source === "curve" && makeUpBlocked(rec, mintStr, c) === null) : [];
   const owedClaim = owed.find((c) => c.signature === makeUpFor) ?? owed[0] ?? null;
-  const simulateMakeUp = async () => {
-    if (!publicKey || !tail || !position || !owedClaim) return;
+  const simKey = owedClaim && position && publicKey ? `${mintStr}|${owedClaim.signature}|${owedClaim.claimedLamports}|${position.position.toBase58()}|${publicKey.toBase58()}` : "";
+  /** Why this claim cannot be made up right now, read fresh (null: it can). */
+  const makeUpCheck = async (claim: TailClaim, holdingLock = false): Promise<string | null> => {
+    if (!publicKey || !mint) return "connect the creator wallet";
+    if (!holdingLock && makeUpStarted.current.has(`${mintStr}:${claim.signature}`)) return "a make-up of this claim was already started from this page; reload to check it";
+    const since = pendingSince(mintStr, claim.signature);
+    if (since !== null && Date.now() - since < PENDING_MS) return `a make-up of this claim was sent from this browser ${Math.round((Date.now() - since) / 1000)} s ago: wait ${Math.ceil((PENDING_MS - (Date.now() - since)) / 1000)} s for it to land or expire`;
+    const fresh = await api.tail(mintStr);
+    const blocked = makeUpBlocked(fresh.state === "ok" ? fresh.tail : null, mintStr, claim);
+    if (blocked) return blocked;
     try {
-      const { tx } = makeUpTx(publicKey, tail, owedClaim, position);
+      const landed = await makeUpOnChain(connection, publicKey, mint, claim.signature);
+      if (landed) return `a make-up of this claim already landed: ${landed}`;
+    } catch (e: any) { return `could not read this wallet's history to rule out an earlier make-up: ${String(e?.message ?? e)}`; }
+    return null;
+  };
+  const simulateMakeUp = async () => {
+    if (!publicKey || !mint || !tail || !position || !owedClaim) return;
+    const key = simKey;
+    setMakeUpSim({ key, text: "checking…" });
+    const blocked = await makeUpCheck(owedClaim);
+    if (blocked) { setMakeUpSim({ key, text: `not possible: ${blocked}` }); return; }
+    try {
+      const { tx } = makeUpTx(publicKey, mint, tail, owedClaim, position);
       tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
       const r = await connection.simulateTransaction(tx);
-      setMakeUpSim(r.value.err ? `simulation FAILED: ${JSON.stringify(r.value.err)} ${(r.value.logs ?? []).filter((l) => /Error|failed|insufficient/i.test(l)).slice(-3).join(" | ")}` : `simulation OK: ${r.value.unitsConsumed ?? "?"} compute units`);
-    } catch (e: any) { setMakeUpSim(`simulation FAILED: ${String(e?.message ?? e)}`); }
+      setMakeUpSim({ key, text: r.value.err ? `simulation FAILED: ${JSON.stringify(r.value.err)} ${(r.value.logs ?? []).filter((l) => /Error|failed|insufficient/i.test(l)).slice(-3).join(" | ")}` : `simulation OK: ${r.value.unitsConsumed ?? "?"} compute units` });
+    } catch (e: any) { setMakeUpSim({ key, text: `simulation FAILED: ${String(e?.message ?? e)}` }); }
   };
   const makeUp = async () => {
-    if (!publicKey || !mint || !position || !owedClaim) return;
-    // built from a fresh read of the pool; the worker's record is read again first so a make-up it already saw is not sent twice
-    const fresh = await api.tail(mint.toBase58());
-    if (fresh.state !== "ok" || (fresh.tail.makeUps ?? []).some((m) => m.claim === owedClaim.signature)) { setMakeUpSim("This claim already has a make-up on record (or the record is unreadable): nothing sent."); return; }
-    const sig = await run(async () => makeUpTx(publicKey, await readTail(connection, publicKey, mint), owedClaim, position).tx, [], 400_000);
-    if (sig) { setNote(`Make-up sent: ${sig}. The tail page shows it once the worker has read it (about a minute).`); await refresh(); }
+    if (!publicKey || !mint || !position || !owedClaim || makeUpSim?.key !== simKey) return;
+    const claim = owedClaim, lock = `${mintStr}:${claim.signature}`;
+    if (makeUpStarted.current.has(lock)) return;
+    makeUpStarted.current.add(lock); // synchronously, before the first await: a second press finds it
+    const blocked = await makeUpCheck(claim, true);
+    if (blocked) { makeUpStarted.current.delete(lock); setMakeUpSim({ key: simKey, text: `not sent: ${blocked}` }); return; }
+    markPending(mintStr, claim.signature);
+    // from here the lock stays for this page: whether or not the wallet sent it, the wallet's history decides after a reload
+    const sig = await run(async () => makeUpTx(publicKey, mint, await readTail(connection, publicKey, mint), claim, position).tx, [], 400_000);
+    if (sig) setNote(`Make-up sent: ${sig}. The tail page shows it once the worker has read it (about a minute).`);
+    else setNote("The make-up was not confirmed here. Do not send it again: reload in three minutes; the page then checks this wallet's history for it.");
+    await refresh();
   };
   const cashout = async () => { if (publicKey && mint && tail) { const sig = await run(async () => cashoutTx(publicKey, mint, tail), [], 200_000); if (sig) await refresh(); } };
   const graduatedClaim = async () => { if (publicKey && mint && tail) { const sig = await run(() => graduatedClaimTx(connection, publicKey, mint, tail), [], 400_000); if (sig) await refresh(); } };
@@ -193,16 +234,17 @@ export default function AdminTailsPage() {
 
       {tail?.state && tail.isCreator && (
         <Card title="Make up a claim that was not split">
-          <p className="text-sm">For a claim of this tail&apos;s fees made without the split. One transaction you sign sends, from this wallet&apos;s SOL, what the split would have: a quarter of the claim to the burn reserve and a quarter as liquidity locked in the position above. A memo names the claim, and the tail page then shows the claim as made up, with this transaction. Once per claim.</p>
-          {record === null && <p className="mt-2 text-sm">Reading the worker&apos;s record…</p>}
-          {record === "unavailable" && <p className="mt-2 text-sm">The worker&apos;s record of this tail is unreadable: no make-up can be checked. <button className="pill" onClick={() => refresh()}>Retry</button></p>}
+          <p className="text-sm">For a claim of this tail&apos;s curve fees made without the split. One transaction you sign sends, from this wallet&apos;s SOL, what the split would have: a quarter of the claim to the burn reserve and a quarter as liquidity locked in the position above. A memo names the tail and the claim, and the tail page then shows the claim as made up, with this transaction. Once per claim: the page checks this wallet&apos;s own history for an earlier make-up before it sends.</p>
+          {(!record || record.mint !== mintStr) && <p className="mt-2 text-sm">Reading the worker&apos;s record…</p>}
+          {record && record.mint === mintStr && !rec && <p className="mt-2 text-sm">The worker&apos;s record of this tail is unreadable: no make-up can be checked. <button className="pill" onClick={() => refresh()}>Retry</button></p>}
           {rec && !Array.isArray(rec.makeUps) && <p className="mt-2 text-sm">The worker does not record make-ups yet (restart it on this release first): a make-up sent now would never show.</p>}
-          {rec && Array.isArray(rec.makeUps) && !makeUpReady && <p className="mt-2 text-sm">The worker has not finished reading this tail&apos;s history: wait for it.</p>}
-          {makeUpReady && owed.length === 0 && <p className="mt-2 text-sm">No claim is waiting for a make-up.</p>}
-          {makeUpReady && owed.length > 0 && owedClaim && (() => {
+          {rec && Array.isArray(rec.makeUps) && rec.coverage.claims.status !== "complete" && <p className="mt-2 text-sm">The worker has not finished reading this tail&apos;s history: wait for it.</p>}
+          {rec && Array.isArray(rec.makeUps) && rec.coverage.claims.status === "complete" && owed.length === 0 && <p className="mt-2 text-sm">No curve claim is waiting for a make-up.</p>}
+          {owed.length > 0 && owedClaim && (() => {
             const q = tailSplit(BigInt(owedClaim.claimedLamports));
+            const sim = makeUpSim && makeUpSim.key === simKey ? makeUpSim.text : "";
             return (<>
-              {owed.length > 1 && <ul className="mt-2 text-sm space-y-1 [overflow-wrap:anywhere]">{owed.map((c) => <li key={c.signature}><label><input type="radio" name="makeup" checked={owedClaim.signature === c.signature} onChange={() => { setMakeUpFor(c.signature); setMakeUpSim(""); }} /> {c.signature.slice(0, 10)}… · {sol(BigInt(c.claimedLamports))}</label></li>)}</ul>}
+              {owed.length > 1 && <ul className="mt-2 text-sm space-y-1 [overflow-wrap:anywhere]">{owed.map((c) => <li key={c.signature}><label><input type="radio" name="makeup" checked={owedClaim.signature === c.signature} onChange={() => { setMakeUpFor(c.signature); setMakeUpSim(null); }} /> {c.signature.slice(0, 10)}… · {sol(BigInt(c.claimedLamports))}</label></li>)}</ul>}
               <ul className="mt-2 text-sm space-y-1 [overflow-wrap:anywhere]">
                 <li>claim: <a href={EXPLORER("tx", owedClaim.signature)} target="_blank" rel="noreferrer">{owedClaim.signature}</a>{owedClaim.blockTime ? ` (${new Date(owedClaim.blockTime * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC)` : ""}</li>
                 <li>claimed, all kept: {sol(q.claimed)}</li>
@@ -212,10 +254,10 @@ export default function AdminTailsPage() {
               </ul>
               <div className="flex gap-2 mt-2">
                 <button className="pill" onClick={simulateMakeUp} disabled={!position || !tail.target}>Simulate</button>
-                <button className="button button-gold" onClick={makeUp} disabled={!position || !tail.target || !makeUpSim.startsWith("simulation OK") || status.state === "sending"}>Make up this claim</button>
+                <button className="button button-gold" onClick={makeUp} disabled={!position || !tail.target || !sim.startsWith("simulation OK") || status.state === "sending"}>Make up this claim</button>
               </div>
               {!position && <p className="mt-2 text-sm">Choose the locked position first.</p>}
-              {makeUpSim && <p className="mt-2 text-sm">{makeUpSim}</p>}
+              {sim && <p className="mt-2 text-sm">{sim}</p>}
             </>);
           })()}
         </Card>

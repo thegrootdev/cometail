@@ -4,7 +4,8 @@
 import { Connection, PublicKey, Transaction } from "@solana/web3.js";
 import { NATIVE_MINT, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { deriveDbcPoolAddress } from "@meteora-ag/dynamic-bonding-curve-sdk";
-import { BurnClient, compoundingPool, createLockedPositionIxs, tailCashoutIxs, tailClaimIxs, tailMakeUpIxs, type CompoundingPool } from "@cometail/client";
+import { BurnClient, compoundingPool, createLockedPositionIxs, tailCashoutIxs, tailClaimIxs, tailMakeUpIxs, tailMakeUpMemo, type CompoundingPool } from "@cometail/client";
+import type { TailInfo } from "./api";
 import { cpAmm } from "./damm";
 import { dbcState, derivedDammPool, MigrationProgress } from "./dbc";
 import { ADDRESSES, COMETAIL_POOL } from "./addresses";
@@ -77,12 +78,41 @@ export function claimTx(creator: PublicKey, mint: PublicKey, t: TailChain, posit
   return { tx: tx(creator, built.ixs), built };
 }
 
-/** The one-time make-up of a claim that was not split: tailSplit's quarters of its amount, from the wallet's SOL. */
-export function makeUpTx(creator: PublicKey, t: TailChain, claim: { signature: string; claimedLamports: string }, position: { position: PublicKey; nftAccount: PublicKey }) {
+/** The one-time make-up of a curve claim that was not split: tailSplit's quarters of its amount, from the wallet's SOL. */
+export function makeUpTx(creator: PublicKey, mint: PublicKey, t: TailChain, claim: { signature: string; claimedLamports: string }, position: { position: PublicKey; nftAccount: PublicKey }) {
   if (!t.target) throw new Error("target pool unreadable");
   const burn = new BurnClient();
-  const built = tailMakeUpIxs({ creator, claimSignature: claim.signature, claimedLamports: BigInt(claim.claimedLamports), reserve: burn.a.reserve, x: t.target, locked: position });
+  const built = tailMakeUpIxs({ creator, tailMint: mint, claimSignature: claim.signature, claimedLamports: BigInt(claim.claimedLamports), reserve: burn.a.reserve, x: t.target, locked: position });
   return { tx: tx(creator, built.ixs), built };
+}
+
+/** Why a claim cannot be made up now, from the worker's record of this tail (null: it can). The record must be this
+ *  tail's, from a worker that records make-ups, with the whole history read; the claim a curve claim, not split,
+ *  of exactly this amount, with no make-up of any kind on record. */
+export function makeUpBlocked(rec: TailInfo | null, mint: string, claim: { signature: string; claimedLamports: string }): string | null {
+  if (!rec) return "the worker's record of this tail is unreadable";
+  if (rec.mint !== mint) return "the worker's record is another tail's";
+  if (!Array.isArray(rec.makeUps)) return "the worker does not record make-ups yet (restart it on this release first)";
+  if (rec.coverage.claims.status !== "complete") return "the worker has not finished reading this tail's history";
+  const c = rec.claims.find((x) => x.signature === claim.signature && x.source === "curve");
+  if (!c) return "the worker does not list this claim as a curve claim of this tail";
+  if (c.status !== "unsplit" || c.makeUp) return "this claim is not waiting for a make-up";
+  if (c.claimedLamports !== claim.claimedLamports) return "the claim's amount differs from the worker's record";
+  if (rec.makeUps.some((m) => m.claim === claim.signature)) return "a make-up of this claim is already on record";
+  return null;
+}
+
+/** A make-up of this claim that landed, found in the wallet's own history since the claim (each signature carries
+ *  its memo's text); the worker's record is not needed for this, so a make-up it has not read yet still counts. */
+export async function makeUpOnChain(connection: Connection, wallet: PublicKey, mint: PublicKey, claimSignature: string): Promise<string | null> {
+  const needle = tailMakeUpMemo(mint, claimSignature);
+  let before: string | undefined;
+  for (;;) {
+    const page = await connection.getSignaturesForAddress(wallet, { before, until: claimSignature, limit: 1000 }, "confirmed");
+    for (const s of page) if (!s.err && s.memo?.includes(needle)) return s.signature;
+    if (page.length < 1000) return null;
+    before = page[page.length - 1].signature;
+  }
 }
 
 export function cashoutTx(creator: PublicKey, mint: PublicKey, t: TailChain) {
