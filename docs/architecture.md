@@ -120,8 +120,11 @@ It uses no vault and no program of ours; $X is untouched.
   swap size that lets both sides deposit fully, with a minimum out from the state just read); that $X and the rest
   of the quarter added to the wallet's own position; exactly the added liquidity permanently locked. The rest
   stays in the wallet. If a trade lands between the read and the send, the add fails and nothing moves. The
-  position is created once, by the wallet, and only $X pools in compounding mode with a constant fee and no
-  dynamic fee are accepted (the math is checked against cp-amm to the unit in gate 22).
+  position is any the wallet holds in $X's pool: one created once on `/admin/tails`, or one it already had (the
+  wallet that launched $X adds to $X's own locked creator position); the worker counts only the liquidity each
+  claim locks, never what the position held before. The claim creates its token accounts first when they are
+  missing. Only $X pools in compounding mode with a constant fee and no dynamic fee are accepted (the math is
+  checked against cp-amm to the unit in gate 22).
 - **After graduation.** The keeper migrates configured tails (`migrateTails`). The creator wallet collects the
   graduation payout itself (`tailCashoutIxs`), and claims the creator position's pool fees through the burn
   program's `owner_claim_position_fees`, which sends half to the reserve in the same instruction.

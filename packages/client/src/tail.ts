@@ -145,7 +145,9 @@ export function createLockedPositionIxs(a: { owner: PublicKey; pool: PublicKey; 
  *      from the pool state just read;
  *   4. that $X and the rest of the quarter added to the wallet's position as liquidity;
  *   5. exactly the added liquidity permanently locked.
- *  The rest (half, plus rounding and any dust the liquidity margin leaves) stays in the wallet. */
+ *  The rest (half, plus rounding and any dust the liquidity margin leaves) stays in the wallet. The token accounts
+ *  it uses (the tail's, WSOL, $X) are created first if missing: DBC's claim needs the tail's even when it moves none,
+ *  and the position can be one the wallet already held, so the one-time setup may never have run. */
 export function tailClaimIxs(a: {
   creator: PublicKey; curve: TailCurve; claimable: bigint; reserve: PublicKey; x: CompoundingPool; locked: LockedPosition;
   slippageBps?: number; marginBps?: number;
@@ -166,6 +168,9 @@ export function tailClaimIxs(a: {
   const tailAta = getAssociatedTokenAddressSync(a.curve.baseMint, a.creator, false, baseProgram);
   const xAta = getAssociatedTokenAddressSync(a.x.tokenAMint, a.creator, false, a.x.tokenAProgram);
   const ixs = [
+    createAssociatedTokenAccountIdempotentInstruction(a.creator, tailAta, a.creator, a.curve.baseMint, baseProgram),
+    createAssociatedTokenAccountIdempotentInstruction(a.creator, wsol, a.creator, NATIVE_MINT),
+    createAssociatedTokenAccountIdempotentInstruction(a.creator, xAta, a.creator, a.x.tokenAMint, a.x.tokenAProgram),
     new TransactionInstruction({
       programId: DBC_PROGRAM_ID,
       keys: [meta(DBC_POOL_AUTHORITY), meta(a.curve.pool, true), meta(tailAta, true), meta(wsol, true), meta(a.curve.baseVault, true), meta(a.curve.quoteVault, true),

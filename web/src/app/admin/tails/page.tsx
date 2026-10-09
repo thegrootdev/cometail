@@ -141,6 +141,7 @@ export default function AdminTailsPage() {
               ))}
             </ul>
           )}
+          {tail.positions.length > 0 && <p className="mt-2 text-sm">Claims add to this position and lock exactly what they add. The tail page counts only that, not what the position already held.</p>}
           {tail.positions.length > 1 && !configured?.positions.length && <p className="mt-2 text-sm">More than one position in this pool: choose the one this tail&apos;s claims should add to.</p>}
         </Card>
       )}

@@ -53,7 +53,7 @@ async function world() {
   const Rc: BN = dbc.getConfig(svm, plain).migrationQuoteThreshold;
   await dbc.buy(svm, w.buyer, C.pool, w.buyerQuote, ensureAta(svm, w.buyer, cm.publicKey, w.buyer.publicKey), Rc.muln(6).divn(5));
   const cmig = await dbc.migrateToDammV2(svm, w.keeper, C.pool, DAMM_V2_MIGRATION_CONFIG.customizable);
-  w.comet = { mint: cm.publicKey, pool: cmig.dammPool };
+  w.comet = { mint: cm.publicKey, pool: cmig.dammPool, creator: cometCreator, positions: [cmig.firstPosition, cmig.secondPosition] };
   send(svm, [await w.client.setup({ authority: owner.publicKey, cometailMint: cm.publicKey, pool: cmig.dammPool, treasury: w.treasury })], [owner]);
   w.state = w.client.decodeState(Buffer.from(svm.getAccount(w.client.a.burnState)!.data));
   // the fee-sale config (stream-50, mainnet parameters), fee claimer = the protocol owner
@@ -173,6 +173,41 @@ describe("gate 22: tail claims by a plain wallet", () => {
     expect(toReserve > 0n).true;
     expect(Number(toOwner - toReserve)).lte(1); // half each; the odd lamport goes to the other side
     expect(Number(toReserve - toOwner)).lte(1);
+  });
+
+  it("$COMETAIL's own creator wallet: claims add to its migration position, counted apart from what was locked there", async () => {
+    const w = await world();
+    const { svm } = w;
+    // the tail launched by the wallet that holds $COMETAIL's creator position, which never ran the one-time setup:
+    // no WSOL, tail or $COMETAIL token account yet
+    const owner: Keypair = w.comet.creator;
+    const tm = Keypair.generate();
+    const T = await dbc.createPoolIx({ config: w.config, baseMint: tm.publicKey, quoteMint: NATIVE_MINT, creator: owner.publicKey, payer: owner.publicKey, name: "tail of COMETAIL", symbol: "tCOMETAIL" });
+    send(svm, [T.ix], [owner, tm], { cu: 500_000 });
+    const tail = { pool: T.pool, baseMint: tm.publicKey, baseVault: T.baseVault, quoteVault: T.quoteVault };
+    const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, owner.publicKey);
+    for (const m of [NATIVE_MINT, tm.publicKey, w.comet.mint]) expect(svm.getAccount(getAssociatedTokenAddressSync(m, owner.publicKey))).null;
+    const mine = damm.findPositionOwnedBy(svm, w.comet.positions, owner.publicKey)!;
+    const locked0 = big(mine.state.permanentLockedLiquidity);
+    expect(locked0 > 0n).true; // $COMETAIL's own graduation locked it
+    const target = { curve: T.pool.toBase58(), targetPool: w.comet.pool.toBase58(), reserve: w.state.reserve.toBase58() };
+    let added = 0n;
+    for (const round of [1, 2]) {
+      await dbc.buy(svm, w.buyer, T.pool, w.buyerQuote, ensureAta(svm, w.buyer, tm.publicKey, w.buyer.publicKey), new BN(round * 4_000_000_000));
+      const claimable = big(dbc.getPool(svm, T.pool).creatorQuoteFee);
+      const r0 = big(balance(svm, w.state.reserve));
+      const built = tailClaimIxs({ creator: owner.publicKey, curve: tail, claimable, reserve: w.state.reserve, x: xPool(w), locked: { position: mine.position, nftAccount: mine.nftAccount } });
+      const sent = sendView(svm, built.ixs, [owner], [w.state.reserve]);
+      expect(sent.bytes, "fits one legacy transaction").lte(1232);
+      expect(big(balance(svm, w.state.reserve)) - r0).eq(built.split.toBurn);
+      added += built.liquidityDelta;
+      // the position's lock grows by exactly what the claims added; the indexer counts only that
+      expect(big(damm.getPosition(svm, mine.position).permanentLockedLiquidity)).eq(locked0 + added);
+      const { claims } = parseCreatorTx(sent.view, target);
+      expect(claims.map((c) => [c.status, c.add?.position, c.lockedLiquidity])).deep.eq([["split", mine.position.toBase58(), built.liquidityDelta.toString()]]);
+      console.log(JSON.stringify({ shared: round, claimable: claimable.toString(), bytes: sent.bytes, cu: sent.cu.toString() }));
+    }
+    expect(big(balance(svm, wsol)) > 0n).true; // the kept half, in the WSOL account the claim created
   });
 
   it("refuses a pool the math does not describe, and claims too small to split", async () => {
