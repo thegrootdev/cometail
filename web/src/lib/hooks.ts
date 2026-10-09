@@ -1,5 +1,6 @@
 "use client";
 import { DesignedError, friendlyError, simulationReason } from "./errors";
+import { utils } from "@coral-xyz/anchor";
 import { failures } from "@/content/cometail";
 import { useCallback, useEffect, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -96,6 +97,14 @@ async function simulateOnce(connection: Connection, tx: Transaction): Promise<{ 
  *  transaction is size-checked and simulated without signatures (sigVerify false), so a
  *  transaction that fails in that dry run stops here with plain copy instead of reaching the wallet
  *  (the dry run sees the chain at that moment; it is a filter, not a guarantee). */
+/** For a flow that must never send twice: run() then has the wallet only sign (never sign and send), calls
+ *  beforeSign before the wallet is asked, afterSign with the signed transaction's identity before it is sent, and
+ *  sends only if neither threw. */
+export interface TxGuard {
+  beforeSign: () => Promise<void>;
+  afterSign: (signed: { signature: string; blockhash: string; lastValidBlockHeight: number | null }) => Promise<void>;
+}
+
 export function useTx() {
   const { connection } = useConnection();
   const { sendTransaction, signTransaction, publicKey } = useWallet();
@@ -105,6 +114,7 @@ export function useTx() {
       build: () => Promise<Transaction>,
       signers: Keypair[] = [],
       computeUnits = 400_000,
+      guard?: TxGuard,
     ): Promise<string | null> => {
       if (!publicKey) {
         setStatus({ state: "error", message: "Connect a wallet first." });
@@ -161,10 +171,17 @@ export function useTx() {
           const reason = mapped === failures.simulationFailed ? simulationReason(dry.err, logs) : "";
           throw new DesignedError(reason ? `${mapped} ${failures.simulationReason} ${reason}` : mapped);
         }
-        if (signers.length > 0) {
+        if (signers.length > 0 || guard) {
           if (!signTransaction) throw new DesignedError(failures.walletCannotSign);
+          if (guard) await guard.beforeSign();
           const signed = await signTransaction(tx);
-          signed.partialSign(...signers);
+          if (signers.length > 0) signed.partialSign(...signers);
+          if (guard) {
+            // the identity of what the wallet signed (its blockhash, in case the wallet replaced ours), recorded before it is sent
+            const sig = signed.signature ? utils.bytes.bs58.encode(signed.signature) : null;
+            if (!sig || !signed.recentBlockhash) throw new Error("the wallet returned an unsigned transaction");
+            await guard.afterSign({ signature: sig, blockhash: signed.recentBlockhash, lastValidBlockHeight: signed.recentBlockhash === latest.blockhash ? latest.lastValidBlockHeight : null });
+          }
           signature = await connection.sendRawTransaction(signed.serialize(), {
             skipPreflight: false,
             preflightCommitment: "confirmed",

@@ -17,16 +17,12 @@ import { uploadIdentity } from "@/lib/upload";
 import { cleanSymbolInput } from "@/lib/token-display";
 import { api, type TailClaim, type TailInfo } from "@/lib/api";
 import { COMETAIL_POOL, EXPLORER, OFFICIAL_MINT } from "@/lib/addresses";
+import { recordSigned, releaseUnsigned, reserve, settle, stillReserved, type ReservationState } from "@/lib/makeup-reservation";
 import { TAIL_CONFIG, cashoutTx, claimTx, graduatedClaimTx, lockedPositionTx, makeUpBlocked, makeUpOnChain, makeUpTx, readTail, type TailChain } from "@/lib/tails";
 import { tailSplit } from "@cometail/client";
 
 const sol = (l: bigint) => `${(Number(l) / 1e9).toFixed(6)} SOL`;
-// a make-up sent from this browser is held as pending for longer than its blockhash can stay valid (about 150
-// blocks); after that it either landed (the wallet's history shows its memo) or never will
-const PENDING_MS = 180_000;
-const pendingKey = (mint: string, claim: string) => `cometail:tail-makeup-pending:${mint}:${claim}`;
-const pendingSince = (mint: string, claim: string): number | null => { try { const v = Number(window.localStorage.getItem(pendingKey(mint, claim))); return v > 0 ? v : null; } catch { return null; } };
-const markPending = (mint: string, claim: string) => { try { window.localStorage.setItem(pendingKey(mint, claim), String(Date.now())); } catch { /* the in-page lock still holds */ } };
+
 
 export default function AdminTailsPage() {
   const { connection } = useConnection();
@@ -46,8 +42,11 @@ export default function AdminTailsPage() {
   const [makeUpFor, setMakeUpFor] = useState("");
   // a simulation is only good for the exact tail, claim, position and wallet it ran for
   const [makeUpSim, setMakeUpSim] = useState<{ key: string; text: string } | null>(null);
-  // claims a make-up was started for in this page: set before anything is awaited, never cleared after a send
+  // claims a make-up was started for in this page: set before anything is awaited; cleared only when the
+  // reservation shows nothing was signed
   const makeUpStarted = useRef(new Set<string>());
+  // this browser's reservation for the selected claim, read through the shared lock and settled against the chain
+  const [resv, setResv] = useState<{ key: string; state: ReservationState | null; error?: string } | null>(null);
   // launch form
   const [name, setName] = useState(""), [symbol, setSymbol] = useState(""), [description, setDescription] = useState("");
   const [image, setImage] = useState<TokenImage | null>(null);
@@ -116,12 +115,19 @@ export default function AdminTailsPage() {
   const owed: TailClaim[] = rec ? rec.claims.filter((c) => c.source === "curve" && makeUpBlocked(rec, mintStr, c) === null) : [];
   const owedClaim = owed.find((c) => c.signature === makeUpFor) ?? owed[0] ?? null;
   const simKey = owedClaim && position && publicKey ? `${mintStr}|${owedClaim.signature}|${owedClaim.claimedLamports}|${position.position.toBase58()}|${publicKey.toBase58()}` : "";
+  const resvKey = owedClaim ? `${mintStr}|${owedClaim.signature}` : "";
+  const settleNow = useCallback(async () => {
+    if (!mint || !owedClaim) return;
+    const k = `${mint.toBase58()}|${owedClaim.signature}`;
+    try { setResv({ key: k, state: await settle(connection, mint.toBase58(), owedClaim.signature) }); }
+    catch (e: any) { setResv({ key: k, state: null, error: String(e?.message ?? e) }); }
+  }, [connection, mint?.toBase58(), owedClaim?.signature]);
+  useEffect(() => { void settleNow(); }, [settleNow]);
+  const resvNow = resv && resv.key === resvKey ? resv : null;
   /** Why this claim cannot be made up right now, read fresh (null: it can). */
   const makeUpCheck = async (claim: TailClaim, holdingLock = false): Promise<string | null> => {
     if (!publicKey || !mint) return "connect the creator wallet";
-    if (!holdingLock && makeUpStarted.current.has(`${mintStr}:${claim.signature}`)) return "a make-up of this claim was already started from this page; reload to check it";
-    const since = pendingSince(mintStr, claim.signature);
-    if (since !== null && Date.now() - since < PENDING_MS) return `a make-up of this claim was sent from this browser ${Math.round((Date.now() - since) / 1000)} s ago: wait ${Math.ceil((PENDING_MS - (Date.now() - since)) / 1000)} s for it to land or expire`;
+    if (!holdingLock && makeUpStarted.current.has(`${mintStr}:${claim.signature}`)) return "a make-up of this claim was already started from this page";
     const fresh = await api.tail(mintStr);
     const blocked = makeUpBlocked(fresh.state === "ok" ? fresh.tail : null, mintStr, claim);
     if (blocked) return blocked;
@@ -135,6 +141,8 @@ export default function AdminTailsPage() {
     if (!publicKey || !mint || !tail || !position || !owedClaim) return;
     const key = simKey;
     setMakeUpSim({ key, text: "checking…" });
+    const st = await settle(connection, mintStr, owedClaim.signature).catch((e: any) => ({ kind: "unknown", reason: String(e?.message ?? e) }) as const);
+    if (st.kind !== "none") { setMakeUpSim({ key, text: "not possible: this browser holds a reservation or a make-up for this claim (see above)" }); await settleNow(); return; }
     const blocked = await makeUpCheck(owedClaim);
     if (blocked) { setMakeUpSim({ key, text: `not possible: ${blocked}` }); return; }
     try {
@@ -148,15 +156,34 @@ export default function AdminTailsPage() {
     if (!publicKey || !mint || !position || !owedClaim || makeUpSim?.key !== simKey) return;
     const claim = owedClaim, lock = `${mintStr}:${claim.signature}`;
     if (makeUpStarted.current.has(lock)) return;
-    makeUpStarted.current.add(lock); // synchronously, before the first await: a second press finds it
+    makeUpStarted.current.add(lock); // synchronously, before the first await: a second press in this page finds it
+    const say = (text: string) => setMakeUpSim({ key: simKey, text });
+    // the shared reservation, before anything is read over the network: a second tab finds it
+    let id: string, held;
+    try { id = crypto.randomUUID(); held = await reserve(mintStr, claim.signature, id); }
+    catch (e: any) { makeUpStarted.current.delete(lock); say(`not sent: ${String(e?.message ?? e)}`); return; }
+    if (held) { makeUpStarted.current.delete(lock); say("not sent: this browser already holds a reservation or a make-up for this claim (see above)"); await settleNow(); return; }
     const blocked = await makeUpCheck(claim, true);
-    if (blocked) { makeUpStarted.current.delete(lock); setMakeUpSim({ key: simKey, text: `not sent: ${blocked}` }); return; }
-    markPending(mintStr, claim.signature);
-    // from here the lock stays for this page: whether or not the wallet sent it, the wallet's history decides after a reload
-    const sig = await run(async () => makeUpTx(publicKey, mint, await readTail(connection, publicKey, mint), claim, position).tx, [], 400_000);
+    if (blocked) {
+      if (await releaseUnsigned(mintStr, claim.signature, id).catch(() => false)) makeUpStarted.current.delete(lock);
+      say(`not sent: ${blocked}`); await settleNow(); return;
+    }
+    const sig = await run(async () => makeUpTx(publicKey, mint, await readTail(connection, publicKey, mint), claim, position).tx, [], 400_000, {
+      beforeSign: () => stillReserved(mintStr, claim.signature, id),
+      afterSign: (signed) => recordSigned(mintStr, claim.signature, id, signed),
+    });
+    // never signed under the reservation (a failed dry run, the wallet declined, the reservation lost): released here
+    const unsigned = await releaseUnsigned(mintStr, claim.signature, id).catch(() => false);
+    if (unsigned) makeUpStarted.current.delete(lock);
     if (sig) setNote(`Make-up sent: ${sig}. The tail page shows it once the worker has read it (about a minute).`);
-    else setNote("The make-up was not confirmed here. Do not send it again: reload in three minutes; the page then checks this wallet's history for it.");
-    await refresh();
+    else if (unsigned) setNote("The make-up was not signed, so nothing was sent. You can simulate and try again.");
+    else setNote("The make-up was signed but its confirmation did not come back here. Do not send another: this page reads its outcome from the chain and keeps the claim blocked until it has landed, or failed or expired without landing.");
+    await refresh(); await settleNow();
+  };
+  const releaseStuck = async () => {
+    if (!mint || !owedClaim || resvNow?.state?.kind !== "reserved") return;
+    await releaseUnsigned(mintStr, owedClaim.signature, resvNow.state.r.id).catch(() => false);
+    await settleNow();
   };
   const cashout = async () => { if (publicKey && mint && tail) { const sig = await run(async () => cashoutTx(publicKey, mint, tail), [], 200_000); if (sig) await refresh(); } };
   const graduatedClaim = async () => { if (publicKey && mint && tail) { const sig = await run(() => graduatedClaimTx(connection, publicKey, mint, tail), [], 400_000); if (sig) await refresh(); } };
@@ -243,6 +270,7 @@ export default function AdminTailsPage() {
           {owed.length > 0 && owedClaim && (() => {
             const q = tailSplit(BigInt(owedClaim.claimedLamports));
             const sim = makeUpSim && makeUpSim.key === simKey ? makeUpSim.text : "";
+            const st = resvNow?.state ?? null, free = st?.kind === "none";
             return (<>
               {owed.length > 1 && <ul className="mt-2 text-sm space-y-1 [overflow-wrap:anywhere]">{owed.map((c) => <li key={c.signature}><label><input type="radio" name="makeup" checked={owedClaim.signature === c.signature} onChange={() => { setMakeUpFor(c.signature); setMakeUpSim(null); }} /> {c.signature.slice(0, 10)}… · {sol(BigInt(c.claimedLamports))}</label></li>)}</ul>}
               <ul className="mt-2 text-sm space-y-1 [overflow-wrap:anywhere]">
@@ -252,9 +280,15 @@ export default function AdminTailsPage() {
                 <li>to $COMETAIL liquidity, locked: {sol(q.toLiquidity)}</li>
                 <li>from this wallet in all: {sol(q.toBurn + q.toLiquidity)}, plus the network fee</li>
               </ul>
+              {!resvNow && <p className="mt-2 text-sm">Reading this browser&apos;s make-up reservation…</p>}
+              {resvNow && !st && <p className="mt-2 text-sm">This browser cannot hold a make-up reservation ({resvNow.error}): no make-up is sent from it.</p>}
+              {st?.kind === "reserved" && <p className="mt-2 text-sm">A page in this browser reserved this make-up {new Date(st.r.at).toISOString().slice(11, 19)} UTC and has not signed it. If no other tab or window is making it up now, release it. A page whose reservation is released stops before it signs or sends. <button className="pill" onClick={releaseStuck}>Release the reservation</button></p>}
+              {st?.kind === "pending" && <p className="mt-2 text-sm [overflow-wrap:anywhere]">A make-up of this claim was signed ({st.r.signature}) and may still land. Nothing else is sent until it lands, or fails or expires without landing. <button className="pill" onClick={() => settleNow()}>Check again</button></p>}
+              {st?.kind === "landed" && <p className="mt-2 text-sm [overflow-wrap:anywhere]">The make-up of this claim landed: <a href={EXPLORER("tx", st.r.signature!)} target="_blank" rel="noreferrer">{st.r.signature}</a>. The tail page shows it once the worker has read it.</p>}
+              {st?.kind === "unknown" && <p className="mt-2 text-sm">This browser&apos;s make-up for this claim could not be read from the chain ({st.reason}): nothing else is sent. <button className="pill" onClick={() => settleNow()}>Check again</button></p>}
               <div className="flex gap-2 mt-2">
-                <button className="pill" onClick={simulateMakeUp} disabled={!position || !tail.target}>Simulate</button>
-                <button className="button button-gold" onClick={makeUp} disabled={!position || !tail.target || !sim.startsWith("simulation OK") || status.state === "sending"}>Make up this claim</button>
+                <button className="pill" onClick={simulateMakeUp} disabled={!position || !tail.target || !free}>Simulate</button>
+                <button className="button button-gold" onClick={makeUp} disabled={!position || !tail.target || !free || !sim.startsWith("simulation OK") || status.state === "sending"}>Make up this claim</button>
               </div>
               {!position && <p className="mt-2 text-sm">Choose the locked position first.</p>}
               {sim && <p className="mt-2 text-sm">{sim}</p>}

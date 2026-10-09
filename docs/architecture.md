@@ -145,7 +145,12 @@ It uses no vault and no program of ours; $X is untouched.
   quarter (to within the 0.2% liquidity margin, 1% allowed) swapped and added, the add locked. A make-up in the
   same transaction as a claim of any curve, or as another make-up, is unclear and counts for nothing (and the claim
   next to it is unclear too); graduated pool claims are not made up this way. The claim stays "not split" and shows
-  its make-up. The admin page sends one only when the worker's fresh record lists the claim as waiting for one,
-  the wallet's own history since the claim holds no make-up memo for it, no send from this browser is still
-  pending, and no other make-up was started from the page. `/api/tail-claims/:mint` serves it; the tail's token
+  its make-up. The admin page sends one only when the worker's fresh record lists the claim as waiting for one and
+  the wallet's own history since the claim holds no make-up memo for it, and only under a per-claim reservation
+  (`web/src/lib/makeup-reservation.ts`) taken under a Web Lock shared by every tab before any network read. The
+  wallet only signs; the page re-checks the reservation before the wallet is asked, records the signed
+  transaction's signature and blockhash in it before sending, and sends nothing if it was released or taken
+  meanwhile. A reservation never expires with time: a signed one is settled from the chain (landed: done for
+  good; failed, or never seen with its blockhash expired: released), and an unsigned one is released only by hand.
+  A browser without Web Locks or storage sends no make-up. `/api/tail-claims/:mint` serves it; the tail's token
   page shows it, and says plainly that the split is ours, done by hand, not enforced by code.
