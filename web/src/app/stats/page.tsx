@@ -11,6 +11,7 @@ import { Money } from "@/components/Money";
 import { api, type Stats, type StatsLaunch } from "@/lib/api";
 import { API_URL, EXPLORER } from "@/lib/addresses";
 import { units } from "@/lib/format";
+import { quoteAsset, WSOL } from "@/lib/quotes";
 import { shownName, shownSymbol, tickerText } from "@/lib/token-display";
 import { statsPage as copy } from "@/content/cometail";
 
@@ -33,8 +34,10 @@ function Out({ href, children }: { href: string; children: React.ReactNode }) {
 function Fig({ label, href, children, sub }: { label: string; href: string; children: React.ReactNode; sub?: React.ReactNode }) {
   return <div><span className="micro">{label}</span><strong><a className="stats-figure" href={href} target={href.startsWith("/") ? undefined : "_blank"} rel="noreferrer">{children}</a></strong>{sub ? <span className="micro">{sub}</span> : null}</div>;
 }
-function Lamports({ v }: { v: string | null | undefined }) {
-  return v === null || v === undefined ? <>{copy.unknown}</> : <Money lamports={v} />;
+function Lamports({ v, quote }: { v: string | null | undefined; quote?: { mint: string; decimals: number | null } }) {
+  if (v === null || v === undefined) return <>{copy.unknown}</>;
+  // a launch quoted in another token shows its own unit, never SOL
+  return quote && quote.mint !== WSOL ? <Money lamports={v} quote={quoteAsset(quote.mint, quote.decimals)} /> : <Money lamports={v} />;
 }
 function Footer({ readAtMs, href, label = copy.check }: { readAtMs: number | null | undefined; href: string; label?: string }) {
   return <p className="micro mt-3">{copy.read(when(readAtMs))} · <Out href={href}>{label} ↗</Out></p>;
@@ -64,6 +67,9 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
   const tailSum = (f: (t: (typeof tailRows)[number]) => string | null) => (s.tails ? sum(tailRows.map(f)) : null);
   const tailClaims = s.tails && tailRows.every((t) => t.claims !== null) ? tailRows.reduce((a, t) => a + (t.claims ?? 0), 0) : null;
   const madeUp = tailRows.reduce((a, t) => a + (t.madeUp ?? 0), 0);
+  const notSplit = tailRows.reduce((a, t) => a + (t.notSplit ?? 0), 0);
+  // split in the claim's own transaction = every claim that is neither unresolved/not split nor made up later
+  const splitAtClaim = tailClaims === null ? null : tailClaims - notSplit - madeUp;
   const v = s.vaults;
   return (
     <div className="stats-page">
@@ -119,13 +125,14 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
         <div className="burn-stats">
           {graduated.map((l) => <Fig key={l.mint} label={copy.liquidity.locked(display(l))} href={EXPLORER("address", l.dammPool!)}>{pctBps(l.lockedBps)}</Fig>)}
         </div>
+        {graduated.length === 0 && <p className="text-sm">{copy.liquidity.none}</p>}
         <p className="micro mt-3">{copy.liquidity.note}</p>
         <Footer readAtMs={F.readAtMs} href={raw} label={copy.json} />
       </Card>
 
       <Card title={copy.tails.title} className="burn-panel">
         <div className="burn-stats">
-          <Fig label={copy.tails.claims} href={`${API_URL}/api/tail-claims`} sub={madeUp ? copy.tails.madeUp(madeUp) : undefined}>{n(tailClaims)}</Fig>
+          <Fig label={copy.tails.claims} href={`${API_URL}/api/tail-claims`} sub={tailClaims === null ? undefined : copy.tails.statuses(splitAtClaim ?? 0, madeUp, notSplit)}>{n(tailClaims)}</Fig>
           <Fig label={copy.tails.claimed} href={`${API_URL}/api/tail-claims`}><Lamports v={tailSum((t) => t.claimedLamports)} /></Fig>
           <Fig label={copy.tails.toBurn} href={`${API_URL}/api/tail-claims`}><Lamports v={tailSum((t) => t.toBurnLamports)} /></Fig>
           <Fig label={copy.tails.liquidity} href={`${API_URL}/api/tail-claims`} sub={tailSum((t) => t.liquidityRaw) !== null ? `+ ${coin(tailSum((t) => t.liquidityRaw))} $COMETAIL` : undefined}><Lamports v={tailSum((t) => t.liquidityLamports)} /></Fig>
@@ -177,7 +184,10 @@ const display = (l: StatsLaunch) => tickerText(shownSymbol(l.mint, l.symbol)) ||
 
 function LaunchTable({ list }: { list: StatsLaunch[] }) {
   const C = copy.launches;
-  const rows = [...list].sort((a, b) => Number(BigInt(b.volumeLamports ?? "0") - BigInt(a.volumeLamports ?? "0")));
+  // SOL-quoted launches by volume first; amounts in other quote tokens are not comparable with SOL, so those follow by trades
+  const sol = (l: StatsLaunch) => l.quoteMint === WSOL;
+  const rows = [...list].sort((a, b) => Number(sol(b)) - Number(sol(a)) || (sol(a) ? Number(BigInt(b.volumeLamports ?? "0") - BigInt(a.volumeLamports ?? "0")) : b.trades - a.trades));
+  if (!rows.length) return <p className="text-sm mt-3">{C.none}</p>;
   return (
     <div className="table-scroll mt-3">
       <table className="stream-table fee-table">
@@ -191,8 +201,8 @@ function LaunchTable({ list }: { list: StatsLaunch[] }) {
                 <td data-label={C.by}>{l.team === null ? C.unknownOwner : l.team ? C.us : C.them}</td>
                 <td data-label={C.stage}>{l.stage === "graduated" ? C.graduatedStage : l.stage === "completed" ? C.completed : C.bonding}</td>
                 <td data-label={C.trades}><Out href={`${API_URL}/api/tokens/${l.mint}/trades?limit=100`}>{n(l.trades)}</Out></td>
-                <td className="money" data-label={C.volume}><Lamports v={l.volumeLamports} /></td>
-                <td className="money" data-label={C.fees}><Out href={EXPLORER("address", l.dbcPool)}><Lamports v={fees} /></Out>{l.dammPool ? <p className="micro"><Out href={EXPLORER("address", l.dammPool)}>{C.pool} ↗</Out></p> : null}</td>
+                <td className="money" data-label={C.volume}><Lamports v={l.volumeLamports} quote={{ mint: l.quoteMint, decimals: l.quoteDecimals }} /></td>
+                <td className="money" data-label={C.fees}><Out href={EXPLORER("address", l.dbcPool)}><Lamports v={fees} quote={{ mint: l.quoteMint, decimals: l.quoteDecimals }} /></Out>{l.dammPool ? <p className="micro"><Out href={EXPLORER("address", l.dammPool)}>{C.pool} ↗</Out></p> : null}</td>
                 <td data-label={C.locked}>{l.dammPool ? <Out href={EXPLORER("address", l.dammPool)}>{pctBps(l.lockedBps)}</Out> : "—"}</td>
               </tr>
             );

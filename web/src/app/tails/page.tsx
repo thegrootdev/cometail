@@ -74,13 +74,13 @@ export default function TailsPage() {
 /** Coins launched from the team's wallet whose every fee claim is split toward $COMETAIL (tail-claims). */
 function WalletTails() {
   const [tails, setTails] = useState<TailInfo[] | null | undefined>(undefined);
-  useEffect(() => { void api.tailList().then((r) => setTails(r ? r.tails : null)); }, []);
-  if (tails === undefined) return null;
+  const load = () => void api.tailList().then((r) => setTails(r ? r.tails : null));
+  useEffect(() => { load(); }, []);
   return (
     <section className="mt-4">
       <h2 className="section-title">{copy.walletTitle}</h2>
       <p className="text-sm mb-3">{copy.walletBody}</p>
-      {tails === null ? <p className="micro">{copy.unavailable}</p> : tails.length === 0 ? <p className="micro">{copy.walletEmpty}</p> : (
+      {tails === undefined ? <p className="micro">{copy.walletLoading}</p> : tails === null ? <p className="micro">{copy.unavailable} <button type="button" className="text-link" onClick={() => { setTails(undefined); load(); }}>{copy.retry}</button></p> : tails.length === 0 ? <p className="micro">{copy.walletEmpty}</p> : (
         <div className="table-scroll">
           <table className="stream-table fee-table">
             <thead><tr><th>Tail</th><th>{copy.walletClaims}</th><th>{copy.walletClaimed}</th><th>{copy.walletToBurn}</th><th>{copy.walletLocked}</th></tr></thead>
@@ -98,7 +98,7 @@ function WalletTailRow({ t }: { t: TailInfo }) {
   return (
     <tr>
       <td data-label="Tail"><CoinCell mint={t.mint} name={id?.name ?? null} symbol={id?.symbol ?? null} imageUrl={id?.imageUrl ?? null} href={`/token/${t.mint}`} /></td>
-      <td data-label={copy.walletClaims}>{n.claims === null ? copy.unavailable : n.claims}</td>
+      <td data-label={copy.walletClaims}>{n.claims === null ? copy.unavailable : <div>{n.claims}<p className="micro">{copy.walletStatuses(n.claims - (n.notSplit ?? 0) - (n.madeUp ?? 0), n.madeUp ?? 0, n.notSplit ?? 0)}</p></div>}</td>
       <td className="money" data-label={copy.walletClaimed}>{n.claimedLamports === null ? copy.unavailable : <Money lamports={n.claimedLamports} />}</td>
       <td className="money" data-label={copy.walletToBurn}>{n.toBurnLamports === null ? copy.unavailable : <Money lamports={n.toBurnLamports} />}</td>
       <td className="money" data-label={copy.walletLocked}>{n.liquidityLamports === null ? copy.unavailable : <div><Money lamports={n.liquidityLamports} /><p className="micro">+ {units(n.liquidityRaw ?? "0", 6, 0)} $COMETAIL</p></div>}</td>

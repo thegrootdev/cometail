@@ -21,14 +21,14 @@
 
 ## Why
 
-Meteora's Dynamic Bonding Curve (DBC) runs hundreds of thousands of launches, and every one of them pays a fee on every trade. Those fees are hard to see (they sit in each pool until someone claims them), they mostly do nothing once claimed, and a creator who wants SOL today cannot sell next month's fees. Only 1.4% of DBC curves graduate ([Pine Analytics, Q1 2026](https://pineanalytics.substack.com/p/meteora-q1-2026-quarterly-report)), so for most coins the fees are the only lasting value they produce. COMETAIL treats those fees as the asset.
+Meteora's Dynamic Bonding Curve (DBC) runs hundreds of thousands of launches, and every one of them pays a fee on every trade. Those fees are hard to see (they sit in each pool until someone claims them), they mostly do nothing once claimed, and a creator who wants SOL today cannot sell next month's fees. In Q1 2026 only 1.4% of DBC curves graduated ([Pine Analytics](https://pineanalytics.substack.com/p/meteora-q1-2026-quarterly-report)), so for most coins the fees are the only lasting value they produce. COMETAIL treats those fees as the asset.
 
 ## What is live
 
 - **Fee Index** ([`/fees`](https://cometail.fun/fees)). Every DBC pool on mainnet, from every launchpad, read from chain: what each coin's creator has earned, what is claimable right now (exact), and which launchpads pay their creators most. 427,797 pools on 224,900 configs, refreshed every five minutes.
-- **A launchpad whose fees work** ([`/launch`](https://cometail.fun/launch)). Six fixed price curves on DBC for 0.01 SOL. Coins graduate into DAMM v2 pools in compounding fee mode with the liquidity permanently locked. On the launch configs since October 7 the protocol's share of every fee is claimed through the burn program, which sends half of it to a reserve that can only buy $COMETAIL and burn it.
+- **A launchpad whose fees work** ([`/launch`](https://cometail.fun/launch)). Six preset price curves on DBC for 0.01 SOL. Coins graduate into DAMM v2 pools in compounding fee mode with the liquidity permanently locked. On the launch configs since October 7 the protocol's share of every fee is claimed through the burn program, which sends half of it to a reserve that can only buy $COMETAIL and burn it.
 - **$COMETAIL buyback and burn** (`programs/cometail_burn`, verified build). Claims fees through program-derived claimer configs, splits them 50/50 on chain, buys $COMETAIL in bounded chunks at most every ten minutes and burns all of it in the same instruction.
-- **Tails** ([`/tails`](https://cometail.fun/tails)). Coins we launched from our own wallet whose every creator fee claim is split in one transaction: half kept, a quarter to the burn reserve, a quarter added to $COMETAIL's pool as permanently locked liquidity. The split is done by us, in the open; the indexer lists every claim, split or not.
+- **Tails** ([`/tails`](https://cometail.fun/tails)). Coins we launched from our own wallet. A creator fee claim made on our tails page splits in its own transaction: half kept, a quarter to the burn reserve, a quarter added to $COMETAIL's pool as permanently locked liquidity. No code forces the split; the indexer lists every claim, split or not, and a claim that was not split can be made up once, later, in a transaction that names it.
 - **Fee sales** ([`/sell`](https://cometail.fun/sell), `programs/cometail_vault`, verified build). A creator moves a coin's DBC fee rights, or a locked DAMM v2 position, into a program vault; the vault launches a *fee token* on its own curve and pays the seller 25%, 50% or 75% of the raise when that curve completes. On mainnet today one vault is launched and harvesting (2.00 SOL of fees collected so far); its fee token has not graduated yet. After graduation the vault's fees fund DLMM limit orders below the market and burn what they fill. That DLMM step is tested against Meteora's mainnet binaries (LiteSVM gates) and on devnet, and fires on mainnet when the first fee token graduates. Holding a fee token gives no claim on the fees: the buy orders are finite and there is no price floor (every disclosure is on the vault page).
 - **Proof** ([`/stats`](https://cometail.fun/stats)). Every figure below, live, each with the time it was read and a link to check it; a public read API and a TypeScript SDK.
 
@@ -41,10 +41,10 @@ Read on 2026-10-09 at 14:35 UTC; live and linked at [cometail.fun/stats](https:/
 | Coins launched on our configs | 12 (4 by us, 8 by others) | [`/api/tokens`](https://api.cometail.fun/api/tokens?sort=newest&limit=100) |
 | Graduated to a Meteora pool | 2 ($COMETAIL and TAIL, both ours) | DBC pool accounts, `/api/stats` |
 | Trading volume | 2,066.08 SOL over 4,038 trades by 869 wallets (201.94 SOL on coins launched by others) | every indexed swap on the curves and graduated pools ([`/api/stats`](https://api.cometail.fun/api/stats)); $COMETAIL's 24 h volume matched DexScreener within 0.5% |
-| Trading fees generated | 20.45 SOL, of which 3.85 SOL paid to Meteora's protocol | the pools' own counters on chain: DBC `totalTradingQuoteFee` / `totalProtocolQuoteFee`, DAMM v2 `totalLpBFee` / `totalProtocolBFee` |
+| Trading fees recorded by the pools | 20.45 SOL, of which 3.85 SOL paid to Meteora's protocol (referral payouts are not in these counters) | the pools' own counters on chain: DBC `totalTradingQuoteFee` / `totalProtocolQuoteFee`, DAMM v2 `totalLpBFee` (including the compounding share) / `totalProtocolBFee` |
 | $COMETAIL burned | 4,828,868 in 25 buybacks, 0.663 SOL spent | the burn program's state account ([`/api/burn`](https://api.cometail.fun/api/burn)) |
 | Liquidity permanently locked | $COMETAIL pool 99.98%, TAIL pool 99.99% | DAMM v2 `permanentLockLiquidity` / `liquidity` |
-| Tail claims | 2 split (one made up later): 0.2354 SOL claimed, 0.0588 SOL to the burn, 0.0292 SOL + 187,089 $COMETAIL locked | [`/api/tail-claims`](https://api.cometail.fun/api/tail-claims) |
+| Tail claims | 2: one split when claimed, one made up later; 0.2354 SOL claimed, 0.0588 SOL to the burn, 0.0292 SOL + 187,089 $COMETAIL locked | [`/api/tail-claims`](https://api.cometail.fun/api/tail-claims) |
 | Fee-sale vaults | 1 launched, 2.00 SOL harvested, 1.448 SOL waiting for buybacks | vault accounts ([`/api/vaults`](https://api.cometail.fun/api/vaults)) |
 | Fee Index coverage | 427,797 DBC pools, 224,900 configs, 4,025 creator claims confirmed | [`/api/fees/status`](https://api.cometail.fun/api/fees/status) |
 
@@ -180,9 +180,9 @@ Vault program deployed and protocol initialized on October 4, 2026; burn program
 | Protocol treasury (admin's WSOL account) | [`3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD`](https://solscan.io/account/3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD) |
 | Keeper | [`Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7`](https://solscan.io/account/Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7) |
 | Config: Standard (plain; coins before 2026-10-07) | [`GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr`](https://solscan.io/account/GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr) |
-| Config: Long curve | [`CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f`](https://solscan.io/account/CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f) |
-| Config: Flat curve | [`25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6`](https://solscan.io/account/25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6) |
-| Config: Exponential | [`BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ`](https://solscan.io/account/BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ) |
+| Config: Long curve (coins before 2026-10-07) | [`CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f`](https://solscan.io/account/CNVrEew9HsMAMzhJf7PjcZ6XgQZtx5CK4JdH3rCNYd2f) |
+| Config: Flat curve (coins before 2026-10-07) | [`25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6`](https://solscan.io/account/25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6) |
+| Config: Exponential (coins before 2026-10-07) | [`BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ`](https://solscan.io/account/BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ) |
 | Config: Dollar-paired (USDC) | [`9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33`](https://solscan.io/account/9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33) |
 | Config: Stock-paired (NVDAx) | [`9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf`](https://solscan.io/account/9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf) |
 | Config: fee sale, take 25% | [`3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk`](https://solscan.io/account/3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk) |

@@ -420,3 +420,5 @@ h3 { font-size: 19px; }
   .mobile-nav a { font-size: 10.5px !important; white-space: nowrap; letter-spacing: -0.01em; }
   .mobile-nav .tab-icon { width: 22px; height: 22px; }
 }
+.home-numbers.is-last-known .home-number strong { color: #aab4d0; }
+.home-numbers-stale { grid-column: 1 / -1; color: #8a96b8; }

@@ -28,7 +28,7 @@ const big = (v: unknown): bigint | null => {
 const str = (v: bigint | null) => (v === null ? null : v.toString());
 interface Launch {
   mint: string; symbol: string; name: string; kind: TokenRow["tokenKind"]; stage: TokenRow["stage"]; createdAtMs: number | null; config: string;
-  creator: string; owner: string | null; team: boolean | null; quoteMint: string; dbcPool: string; dammPool: string | null;
+  creator: string; owner: string | null; team: boolean | null; quoteMint: string; quoteDecimals: number | null; dbcPool: string; dammPool: string | null;
   trades: number; traders: number; volumeLamports: string | null; volumeByVenue: Record<string, string> | null;
   fees: { curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null };
   lockedBps: number | null;
@@ -69,17 +69,21 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
     const tokens: TokenRow[] = await store.listTokens();
     const vaults = await store.listVaults();
     const depositorOf = new Map(vaults.map((v) => [v.vault, String(v.data?.depositor ?? "")]));
-    // a launch is ours when its creator is a team wallet, or when a vault holds it and a team wallet deposited into that vault
-    const ownerOf = (t: TokenRow) => (t.vault && t.creator === t.vault ? depositorOf.get(t.vault) ?? null : t.creator);
+    // the same owner rule as the metrics: a vault-held launch belongs to the vault's depositor (unknown until the vault
+    // record exists); without a vault only a wallet-held creator is a resolved owner; program or unknown custody is unattributed
+    const ownerOf = (t: TokenRow) => (t.vault ? depositorOf.get(t.vault) || null : t.custody === "wallet" ? t.creator : null);
     const isTeam = (t: TokenRow) => { const o = ownerOf(t); return o ? team.has(o) : null; };
 
-    // the trade index's completeness, the same rule the token answers use
-    const cursors = await store.listPoolCursors();
-    const pendingPools = cursors.filter((c) => c.cursor.status !== "ok").length;
+    // a launch's trades are complete only when every one of its pools (the curve and, once graduated, its pool) has a
+    // cursor that finished a catch-up; a pool the indexer has not reached yet has no cursor and counts as pending
+    const cursorOk = new Map((await store.listPoolCursors()).map((c) => [c.key, c.cursor.status === "ok"]));
+    const poolsOf = (t: TokenRow) => [t.dbcPool, ...(t.dammPool ? [t.dammPool] : [])];
+    const covered = (t: TokenRow) => poolsOf(t).every((p) => cursorOk.get(p) === true);
+    const pendingPools = tokens.reduce((n, t) => n + poolsOf(t).filter((p) => cursorOk.get(p) !== true).length, 0);
     const scannedAtMs = Number(await store.getMeta("tokens_scanned_at")) || null;
     const indexComplete = pendingPools === 0 && scannedAtMs !== null;
 
-    // the pool accounts, all in one read at one slot
+    // the pool accounts, read in batches of 100 (each batch at its own slot; the latest is reported)
     const keys: PublicKey[] = [];
     for (const t of tokens) { keys.push(new PublicKey(t.dbcPool)); if (t.dammPool) keys.push(new PublicKey(t.dammPool)); }
     let chainRead: { slot: number; atMs: number; byKey: Map<string, any> } | null = null;
@@ -114,11 +118,11 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
       const dammQuoteIsSol = dm ? dm.tokenBMint.toBase58() === WSOL : false;
       launches.push({
         mint: t.mint, symbol: t.symbol, name: t.name, kind: t.tokenKind, stage: t.stage, createdAtMs: t.createdAtMs, config: t.config,
-        creator: t.creator, owner: ownerOf(t), team: isTeam(t), quoteMint: t.quoteMint, dbcPool: t.dbcPool, dammPool: t.dammPool,
+        creator: t.creator, owner: ownerOf(t), team: isTeam(t), quoteMint: t.quoteMint, quoteDecimals: t.quoteDecimals ?? null, dbcPool: t.dbcPool, dammPool: t.dammPool,
         trades: tr.trades, traders: tr.traders.size,
         // volume in the quote's base units; only WSOL-quoted launches are summed into SOL totals
-        volumeLamports: indexComplete ? str(tr.lamports) : null,
-        volumeByVenue: indexComplete && tr.lamports !== null ? Object.fromEntries(Object.entries(tr.byVenue).map(([k, v]) => [k, v.toString()])) : null,
+        volumeLamports: scannedAtMs !== null && covered(t) ? str(tr.lamports) : null,
+        volumeByVenue: scannedAtMs !== null && covered(t) && tr.lamports !== null ? Object.fromEntries(Object.entries(tr.byVenue).map(([k, v]) => [k, v.toString()])) : null,
         fees: {
           // DBC's own counters on the curve: the trading fee net of Meteora's protocol share, and that share
           curveTradingLamports: cm ? cm.totalTradingQuoteFee.toString() : null,
@@ -128,7 +132,7 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
           poolProtocolLamports: t.dammPool ? (dm && dammQuoteIsSol ? dm.metrics.totalProtocolBFee.toString() : null) : "0",
         },
         // the share of the graduated pool's liquidity that is permanently locked, in basis points (exact integer division)
-        lockedBps: dm ? Number((BigInt(dm.permanentLockLiquidity.toString()) * 10000n) / BigInt(dm.liquidity.toString())) : null,
+        lockedBps: dm && BigInt(dm.liquidity.toString()) > 0n ? Number((BigInt(dm.permanentLockLiquidity.toString()) * 10000n) / BigInt(dm.liquidity.toString())) : null,
       });
     }
     const sol = launches.filter((l) => l.quoteMint === WSOL);
@@ -176,7 +180,8 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
         curveTradingLamports: curveTrading, curveProtocolLamports: curveProtocol, poolLpLamports: poolLp, poolProtocolLamports: poolProtocol,
         totalLamports: total([curveTrading, curveProtocol, poolLp, poolProtocol]),
         meteoraProtocolLamports: total([curveProtocol, poolProtocol]),
-        basis: "the pools' own lifetime counters on chain: DBC virtual pool metrics (totalTradingQuoteFee, totalProtocolQuoteFee) and DAMM v2 pool metrics (totalLpBFee, totalProtocolBFee)",
+        basis: "the pools' own lifetime counters on chain: DBC virtual pool metrics (totalTradingQuoteFee, totalProtocolQuoteFee) and DAMM v2 pool metrics (totalLpBFee, totalProtocolBFee, which includes the compounding share). Referral payouts are taken out of the protocol fee before these counters and are not included",
+        excludes: "referral payouts",
       },
       burn: burnLive ? {
         readAtMs: burn.generatedAtMs, slot: burn.observedSlot ?? null, program: burn.program, reserve: burn.setup?.reserve ?? null, mint: burn.cometail?.mint ?? null,

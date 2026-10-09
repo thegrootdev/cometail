@@ -129,7 +129,7 @@ export interface BurnView {
 /** The public proof figures (worker stats.ts, /api/stats). Every null is unknown, never zero. */
 export interface StatsLaunch {
   mint: string; symbol: string; name: string; kind: "plain" | "stream"; stage: "bonding" | "completed" | "graduated"; createdAtMs: number | null; config: string;
-  creator: string; owner: string | null; team: boolean | null; quoteMint: string; dbcPool: string; dammPool: string | null;
+  creator: string; owner: string | null; team: boolean | null; quoteMint: string; quoteDecimals: number | null; dbcPool: string; dammPool: string | null;
   trades: number; traders: number; volumeLamports: string | null; volumeByVenue: Record<string, string> | null;
   fees: { curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null };
   lockedBps: number | null;

@@ -1,6 +1,7 @@
 // The public proof figures (worker/src/stats.ts, /api/stats): launches are attributed by their owner (a vault-held
-// launch by its depositor), volume is summed from the indexed trades only while the index is complete and every
-// trade has its quote leg, and a pool account that cannot be read leaves its fees unknown, never zero.
+// launch by its depositor; without a vault only a wallet-held creator is an owner), volume is summed from the indexed
+// trades only once every pool of the launch has a finished cursor and every trade has its quote leg, and a pool
+// account that cannot be read leaves its fees unknown, never zero.
 import { Keypair } from "@solana/web3.js";
 import { expect } from "chai";
 import fs from "fs";
@@ -37,13 +38,15 @@ describe("public proof figures", () => {
     const ours = token({ creator: me, stage: "graduated" });
     const held = token({ creator: vault, vault, custody: "program" as any, tokenKind: "stream" });
     const theirs = token({});
-    const orphan = token({ creator: key(), vault: key() }); // its vault is not indexed: owner unknown
+    const orphan = token({ creator: key(), vault: key(), custody: "program" as any }); // its vault is not indexed: owner unknown
     orphan.creator = orphan.vault!;
-    await store.upsertTokens([ours, held, theirs, orphan]);
+    const pda = token({ custody: "program" as any }); // a program-held creator with no vault: not a proven outside owner
+    const unknown = token({ custody: "unknown" as any });
+    await store.upsertTokens([ours, held, theirs, orphan, pda, unknown]);
     await store.upsertVault(vault, { depositor: me, status: { launched: {} }, accounting: { harvestedGross: "5" } });
     await store.setMeta("tokens_scanned_at", "1000");
     const v: any = await statsViewer(blindChain, store, { cluster: "test", team: [me], feeIndex: null, burnView: null, tailView: null })();
-    expect(v.launches).to.include({ total: 4, team: 2, outside: 1, unattributed: 1 });
+    expect(v.launches).to.include({ total: 6, team: 2, outside: 1, unattributed: 3 });
     expect(v.launches.graduated).to.deep.eq({ total: 1, team: 1, outside: 0 });
     expect(v.vaults).to.include({ total: 1, launched: 1 });
     // no pool account could be read: every fee figure is unknown
@@ -59,7 +62,22 @@ describe("public proof figures", () => {
     await store.insertTrades([trade(a.dbcPool, w1, "100"), trade(a.dbcPool, w2, "50"), trade(b.dbcPool, w1, "7"), trade(b.dammPool!, w2, "3", "damm")]);
     await store.setMeta("tokens_scanned_at", "1000");
     const opts = { cluster: "test", team: [], feeIndex: null, burnView: null, tailView: null };
+    const ok = { head: "h", tail: null, target: null, newHead: null, status: "ok" as const };
+
+    // just discovered: the indexer has not reached these pools, so there is no cursor yet: nothing is proven
     let v: any = await statsViewer(blindChain, store, opts)();
+    expect(v.trading).to.include({ complete: false, pendingPools: 3, volumeLamports: null, traders: null });
+    expect(v.launches.list.every((l: any) => l.volumeLamports === null)).to.eq(true);
+
+    // the curves are caught up, the graduated pool not yet: only that launch stays unknown
+    await store.setPoolCursor(a.dbcPool, ok); await store.setPoolCursor(b.dbcPool, ok);
+    v = await statsViewer(blindChain, store, opts)();
+    expect(v.trading).to.include({ complete: false, pendingPools: 1, volumeLamports: null });
+    expect(v.launches.list.find((l: any) => l.mint === a.mint).volumeLamports).to.eq("150");
+    expect(v.launches.list.find((l: any) => l.mint === b.mint).volumeLamports).to.eq(null);
+
+    await store.setPoolCursor(b.dammPool!, ok);
+    v = await statsViewer(blindChain, store, opts)();
     expect(v.trading).to.include({ complete: true, trades: 4, traders: 2, volumeLamports: "160" });
     expect(v.launches.list.find((l: any) => l.mint === b.mint).volumeByVenue).to.deep.eq({ curve: "7", damm: "3" });
 
@@ -70,7 +88,7 @@ describe("public proof figures", () => {
     expect(v.trading.volumeLamports).to.eq(null);
 
     // a pool still catching up: no volume and no trader count at all
-    await store.setPoolCursor("pool:x", { head: null, tail: null, target: null, newHead: null, status: "pending" });
+    await store.setPoolCursor(a.dbcPool, { ...ok, status: "pending" });
     v = await statsViewer(blindChain, store, opts)();
     expect(v.trading).to.include({ complete: false, pendingPools: 1, volumeLamports: null, traders: null });
   });
