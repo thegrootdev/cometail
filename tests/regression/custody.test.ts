@@ -1,4 +1,4 @@
-// Regression for spike 01 (A-H): a program-derived address holds DBC creator rights and
+// Regression: a program-derived address holds DBC creator rights and
 // DAMM v2 positions and exercises every right through CPI, against the live binaries.
 import { BN } from "@coral-xyz/anchor";
 import { Keypair } from "@solana/web3.js";

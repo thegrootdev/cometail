@@ -260,7 +260,7 @@ describe("gate 20: burn program", () => {
     expectFail(w.svm, [redirected as any], [w.anyone], "AccountMismatch");
   });
 
-  it("provenance: a claim reports only what it paid; funds already in the inbox are reported as carried (review 133)", async () => {
+  it("provenance: a claim reports only what it paid; funds already in the inbox are reported as carried", async () => {
     const w = await world();
     await doSetup(w);
     const fresh = await dbc.createConfig(w.svm, { payer: w.owner, feeClaimer: w.client.a.claimer, leftoverReceiver: w.owner.publicKey, quoteMint: NATIVE_MINT, params: dbc.configParams("plain") });

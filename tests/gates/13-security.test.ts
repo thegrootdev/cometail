@@ -1,5 +1,5 @@
-// Gate 13: regressions for the security pass over 35ec647..16b35a2 (eleven findings), with the
-// verifier's four focused invariants folded in: one active stream per position, the active
+// Gate 13: regressions for the security pass (eleven findings), with four focused
+// invariants folded in: one active stream per position, the active
 // count follows custody, unrelated LP additions do not break registration, and registration
 // preserves creator-position identity. Every case here failed or was unreachable before the fix.
 import { BN } from "@coral-xyz/anchor";
@@ -72,7 +72,7 @@ function harvestArgs(w: any, cv: any, stream: PublicKey) {
 }
 
 describe("gate 13: security regressions", () => {
-  it("F7 + F8 + F5 (verifier 01, 02): a bundled creator position has its own index and cannot enter again; withdrawal requires that index, hands the PDA account back, closes both indices and takes the active count to 0; the sources enter again afterwards; launch refuses a vault whose streams were all withdrawn", async () => {
+  it("a bundled creator position has its own index and cannot enter again; withdrawal requires that index, hands the PDA account back, closes both indices and takes the active count to 0; the sources enter again afterwards; launch refuses a vault whose streams were all withdrawn", async () => {
     const w = await world();
     const { svm, client, creator } = w;
     const ext = await external(w, true);
@@ -84,14 +84,14 @@ describe("gate 13: security regressions", () => {
     const dep = await client.depositDbcRightsMigrated({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint, dammPool: ext.dammPool, creatorPosition: ext.creatorPos.position, creatorNftAccount: pda });
     send(svm, [xfer, handPositionNftToVaultIx(nftMint, creator.publicKey, cv.vault), dep], [creator], { label: "deposit_dbc_rights_migrated" });
     expect(vaultOf(w, cv).activeStreams).eq(1);
-    // verifier 01: the bundled position cannot be recorded again as a standalone stream
+    // case 1: the bundled position cannot be recorded again as a standalone stream
     const again = await client.depositPosition({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 1, dammPool: ext.dammPool, position: ext.creatorPos.position, nftMint, nftAccount: pda, baseMint: ext.mint });
     expectFail(svm, [again], [creator], "already in use");
     // F8: the position index is required, and must belong to this stream
     const s0 = deriveStream(cv.vault, 0);
     expectFail(svm, [await client.withdrawStream({ vault: cv.vault, depositor: creator.publicKey, stream: s0, kind: "dbc", indexKey: ext.pool, dbcPool: ext.pool, dbcConfig: ext.config, nftAccount: pda, nftMint })], [creator], "AccountMismatch");
     send(svm, [await client.withdrawStream({ vault: cv.vault, depositor: creator.publicKey, stream: s0, kind: "dbc", indexKey: ext.pool, position: ext.creatorPos.position, dbcPool: ext.pool, dbcConfig: ext.config, nftAccount: pda, nftMint })], [creator], { label: "withdraw_stream.migrated" });
-    // verifier 02: the active count follows custody
+    // case 2: the active count follows custody
     expect(vaultOf(w, cv).activeStreams).eq(0);
     expect(vaultOf(w, cv).streamCount).eq(1); // the PDA index is monotonic
     expect(closed(svm, s0)).true;
@@ -120,10 +120,10 @@ describe("gate 13: security regressions", () => {
     expect(vaultOf(w, cv).activeStreams).eq(2);
   });
 
-  it("F2 + F3 + F9 (verifier 03, 04): registration survives an unrelated 1% LP addition; the partner position is rejected whether it sits in a vault ATA or in its PDA account handed to the vault; a dust position cannot pose as the creator position at a migrated deposit", async () => {
+  it("registration survives an unrelated 1% LP addition; the partner position is rejected whether it sits in a vault ATA or in its PDA account handed to the vault; a dust position cannot pose as the creator position at a migrated deposit", async () => {
     const w = await world();
     const { svm, client, creator, buyer, owner, anyone } = w;
-    // verifier 03: open curve, rights deposited, then the external migration and a 1% addition by someone else
+    // case 3: open curve, rights deposited, then the external migration and a 1% addition by someone else
     const ext = await external(w, false);
     const cv = await newVault(w, creator);
     send(svm, [await dbc.transferPoolCreatorIx(svm, ext.pool, creator.publicKey, cv.vault), await client.depositDbcRights({ vault: cv.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: ext.pool, dbcConfig: ext.config, baseMint: ext.mint })], [creator]);
@@ -137,11 +137,11 @@ describe("gate 13: security regressions", () => {
     const L = damm.getPool(svm, mig.dammPool).liquidity.divn(100);
     send(svm, [await damm.addLiquidityIx(svm, { pool: mig.dammPool, position: addition.position, owner: buyer.publicKey, tokenAAccount: ext.buyerBase, tokenBAccount: ext.buyerQuote, liquidityDelta: L })], [buyer], { cu: 400_000 });
     const s0 = deriveStream(cv.vault, 0);
-    // verifier 04 (a): the partner NFT moved into a vault-owned ATA is not the creator position
+    // case 4 (a): the partner NFT moved into a vault-owned ATA is not the creator position
     const dest = ataIx(owner.publicKey, partner.state.nftMint, cv.vault, TOKEN_2022_PROGRAM_ID);
     send(svm, [dest.ix, createTransferCheckedInstruction(partner.nftAccount, partner.state.nftMint, dest.address, owner.publicKey, 1, 0, [], TOKEN_2022_PROGRAM_ID)], [owner]);
     expectFail(svm, [await client.registerStreamPosition({ vault: cv.vault, stream: s0, payer: anyone.publicKey, dbcPool: ext.pool, dbcConfig: ext.config, dammPool: mig.dammPool, position: partner.position, nftAccount: dest.address })], [anyone], "AccountMismatch");
-    // verifier 04 (b): even in its own PDA account handed to the vault, the 20% position fails the creator-share bound
+    // case 4 (b): even in its own PDA account handed to the vault, the 20% position fails the creator-share bound
     const partner2 = await external(w, true, dbc.configParams("plain"));
     const cv2 = await newVault(w, creator);
     send(svm, [await dbc.transferPoolCreatorIx(svm, partner2.pool, creator.publicKey, cv2.vault), handPositionNftToVaultIx(partner2.partnerPos.state.nftMint, owner.publicKey, cv2.vault)], [creator, owner]);
@@ -159,13 +159,13 @@ describe("gate 13: security regressions", () => {
     expectFail(svm, [await client.depositDbcRightsMigrated({ vault: cv2.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: partner2.pool, dbcConfig: partner2.config, baseMint: partner2.mint, dammPool: partner2.dammPool, creatorPosition: dust.position, creatorNftAccount: dust.nftAccount })], [creator], "AccountMismatch");
     // the real one passes on cv2
     send(svm, [handPositionNftToVaultIx(partner2.creatorPos.state.nftMint, creator.publicKey, cv2.vault), await client.depositDbcRightsMigrated({ vault: cv2.vault, depositor: creator.publicKey, streamIndex: 0, dbcPool: partner2.pool, dbcConfig: partner2.config, baseMint: partner2.mint, dammPool: partner2.dammPool, creatorPosition: partner2.creatorPos.position, creatorNftAccount: partner2.creatorPos.nftAccount })], [creator]);
-    // verifier 03: the genuine registration on the first vault passes after the LP addition
+    // case 3: the genuine registration on the first vault passes after the LP addition
     send(svm, [await client.registerStreamPosition({ vault: cv.vault, stream: s0, payer: anyone.publicKey, dbcPool: ext.pool, dbcConfig: ext.config, dammPool: mig.dammPool, position: genuine.position, nftAccount: genuine.nftAccount })], [anyone], { label: "register_stream_position.after_lp_addition" });
     expect(streamOf(w, s0).position.equals(genuine.position)).true;
     expect(damm.getPosition(svm, genuine.position).delegatePermission).eq(0);
   });
 
-  it("F9 (verifier 04): with a 20/80 creator/partner config the larger partner position is refused even in its own PDA account handed to the vault, and the smaller genuine creator position registers", async () => {
+  it("with a 20/80 creator/partner config the larger partner position is refused even in its own PDA account handed to the vault, and the smaller genuine creator position registers", async () => {
     const w = await world();
     const { svm, client, creator, buyer, owner, anyone } = w;
     const ext = await external(w, false, configWith("plain", (p) => { p.liquidityDistribution.creatorPermanentLockedLiquidityPercentage = 20; p.liquidityDistribution.partnerPermanentLockedLiquidityPercentage = 80; }));

@@ -1,4 +1,4 @@
-// Regression for spikes 03, 08 and 09: the four configs, built from configs/*.json, launched
+// Regression: the four configs, built from configs/*.json, launched
 // with a program-derived creator, filled with native WSOL, migrated through Meteora's live
 // Customizable config, with the measured economics asserted exactly.
 import { BN } from "@coral-xyz/anchor";
@@ -131,7 +131,7 @@ describe("configs: economics through the live Customizable migration config (nat
   }
 });
 
-// review 133: the burn configs' preflight compares today's presets with the plan before anything is sent
+// the burn configs' preflight compares today's presets with the plan before anything is sent
 import { todayMatchesPlan, sameExceptClaimer } from "../mainnet/burn-plan";
 import { Keypair as Kp } from "@solana/web3.js";
 describe("burn configs preflight (tests/mainnet/burn-plan.ts)", () => {

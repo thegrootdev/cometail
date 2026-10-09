@@ -38,8 +38,8 @@ Authorization expires after five minutes. A per-wallet process-local limiter all
 12 attempts/hour; it is supplemental and resets on restart. Before public traffic,
 apply an edge request rate limit to `/api/metadata`, with a shared budget across
 instances, and monitor R2 storage/request usage. Wallet signatures prove wallet
-control, not scarcity of wallets. The lead should review the upload endpoint before
-production enablement.
+control, not scarcity of wallets. Review the upload endpoint before production
+enablement.
 
 Missing configuration fails with a designed 503 state, before a chain transaction.
 R2 outages also fail closed. This adapter has no browser-side key and no fallback

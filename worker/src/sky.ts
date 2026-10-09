@@ -3,8 +3,8 @@
 // creator rights, eligibility (docs/architecture.md, "Eligibility"), progress, the creator's
 // claimable backlog and realized curve income. For migrated pools, every permanently locked
 // DAMM v2 position is a row of its own: its NFT holder, custody, pending quote fees and whether
-// the size rule would admit it (PLAN 8.1: creators and position-NFT owners ranked by claimable
-// backlog). The scan is the lead list.
+// the size rule would admit it (creators and position-NFT owners ranked by claimable
+// backlog).
 import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, unpackMint, getExtensionTypes, ExtensionType } from "@solana/spl-token";
 import { AccountLayout } from "@solana/spl-token";

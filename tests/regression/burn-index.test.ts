@@ -1,4 +1,4 @@
-// The burn program's history and its view (review 133): the index never skips a transaction (5,001
+// The burn program's history and its view: the index never skips a transaction (5,001
 // signatures, an unreadable one mid-walk, new ones arriving during a backfill, restarts), burn events live
 // in their own table (a vault event of the same signature and index cannot drop them), retries are
 // idempotent, the view reads state and reserve from one snapshot, and burns are listed apart from splits.
@@ -162,7 +162,7 @@ describe("burn view: state and reserve from one read", () => {
 });
 
 import { chainDeps } from "../../worker/src/burnindex";
-describe("burn index and view: missing logs and stale completion (review 135)", () => {
+describe("burn index and view: missing logs and stale completion", () => {
   it("a transaction without its logs (or with truncated logs) is unreadable: the pass stops at it and resumes when it can be read", async () => {
     const c = chain(5);
     let logsMissing = true;

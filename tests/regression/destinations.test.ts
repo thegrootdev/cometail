@@ -1,4 +1,4 @@
-// Regression for spike 05: zero-amount claims still need an initialized, distinct token A
+// Regression: zero-amount claims still need an initialized, distinct token A
 // destination; a vault-owned WSOL placeholder works and stays empty.
 import { BN } from "@coral-xyz/anchor";
 import { Keypair, SystemProgram } from "@solana/web3.js";

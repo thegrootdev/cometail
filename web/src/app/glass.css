@@ -378,7 +378,7 @@ h3 { font-size: 19px; }
 .burn-panel .burn-stats strong { font-size: 16px; font-weight: 800; overflow-wrap: anywhere; }
 .burn-more > summary { cursor: pointer; display: flex; align-items: center; min-height: 44px; font-weight: 800; font-size: 14px; color: var(--ion); }
 
-/* Status notes beside the compact figures (review 142): last known, partial, stale, the FDV basis. */
+/* Status notes beside the compact figures: last known, partial, stale, the FDV basis. */
 .quick-stat small { font-size: 11px; font-weight: 700; color: #8a96b8; }
 .coin-age abbr { text-decoration: none; cursor: help; }
 .coin-card.is-last-known .coin-cap strong { color: #aab4d0; }

@@ -140,7 +140,7 @@ async function main() {
   const badge = badgeOf(stock);
   if (stockIs2022) { const b = await readBadge(connection, stock); note({ step: "stock token badge", status: b.ok ? "PASS" : "FAIL", detail: b.ok ? b.detail : `${b.detail}: a Meteora operator must create the badge first` }); }
   else note({ step: "stock token badge", status: "PASS", detail: "not needed for an SPL quote" });
-  // The reviewed protocol treasury remains the admin WSOL ATA, separate from TREASURY.
+  // The protocol treasury remains the admin WSOL ATA, separate from TREASURY.
   // the budget: rent and fees of the work still pending (nothing when everything is recorded)
   const treasury = getAssociatedTokenAddressSync(NATIVE_MINT, admin);
   const client = new VaultClientStep6(connection);

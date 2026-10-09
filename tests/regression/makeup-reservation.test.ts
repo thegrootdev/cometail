@@ -1,5 +1,5 @@
 // The make-up reservation (web/src/lib/makeup-reservation.ts) that keeps /admin/tails from paying a tail claim's
-// make-up twice from one browser (review 168 F1, re-review 170): taken under a lock every tab shares before any
+// make-up twice from one browser (two tabs, a lagging index): taken under a lock every tab shares before any
 // network read; never expiring with time; a signed one settled only from the chain; a page that lost its
 // reservation stops before signing or sending; no locks or no storage, no make-up.
 import { expect } from "chai";
@@ -39,7 +39,7 @@ function chain(o: { status?: Status[]; height?: number; valid?: boolean; throws?
 const M = "Mint1111111111111111111111111111111111111111", C = "Claim111";
 const signed = { signature: "Sig1", blockhash: "Hash1", lastValidBlockHeight: 100 };
 
-describe("make-up reservation (re-review 170)", () => {
+describe("make-up reservation", () => {
   it("two tabs at once: exactly one reserves, before either reads anything", async () => {
     browser();
     const [a, b] = await Promise.all([reserve(M, C, "tab-a"), reserve(M, C, "tab-b")]);
@@ -82,7 +82,7 @@ describe("make-up reservation (re-review 170)", () => {
       [{ status: [{ err: null, confirmationStatus: "finalized" }] }, "landed", true],
       [{ status: [{ err: { InstructionError: [1, 1] }, confirmationStatus: "confirmed" }] }, "none", false],
       [{ status: [{ err: null, confirmationStatus: "processed" }] }, "pending", true],
-      // re-review 172: a failure seen only at processed can be rolled back: held, even with the blockhash expired
+      // a failure seen only at processed can be rolled back: held, even with the blockhash expired
       [{ status: [{ err: { InstructionError: [1, 1] }, confirmationStatus: "processed" }], height: 99 }, "pending", true],
       [{ status: [{ err: { InstructionError: [1, 1] }, confirmationStatus: "processed" }], height: 101 }, "pending", true],
       [{ status: [{ err: { InstructionError: [1, 1] } } as any] }, "pending", true], // no confirmation level given
@@ -106,7 +106,7 @@ describe("make-up reservation (re-review 170)", () => {
       expect((await settle(chain({ status: [null], valid }), M, C)).kind).eq(kind);
     }
   });
-  it("re-review 172: a processed failure holds the claim until a confirmed outcome settles it, either way", async () => {
+  it("a processed failure holds the claim until a confirmed outcome settles it, either way", async () => {
     const failed = { err: { InstructionError: [1, 1] }, confirmationStatus: "processed" };
     for (const [later, kind] of [[{ err: null, confirmationStatus: "confirmed" }, "landed"], [{ err: { InstructionError: [1, 1] }, confirmationStatus: "confirmed" }, "none"]] as const) {
       browser();

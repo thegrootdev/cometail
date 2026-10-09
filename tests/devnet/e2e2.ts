@@ -1,4 +1,4 @@
-// Devnet end-to-end, second vault (PLAN step 11): a tail from a plain launch deposited as a
+// Devnet end-to-end, second vault: a tail from a plain launch deposited as a
 // standalone position stream, with the keeper and the indexer running as the real worker
 // processes (keeper loop, indexer loop with the API) rather than in-process passes, and the
 // trades going through the app's own transaction helpers. The script only waits and checks.

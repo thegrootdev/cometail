@@ -1,4 +1,4 @@
-// The liquidity plan of a tail claim (packages/client/src/tail.ts, review 156 R1): the swap size where both sides of
+// The liquidity plan of a tail claim (packages/client/src/tail.ts): the swap size where both sides of
 // the add deposit fully, for claims tiny next to the pool through claims larger than its reserves, checked against a
 // brute-force search; after the 0.2% margin, what stays in the wallet is the margin and rounding, on both sides.
 import { PublicKey } from "@solana/web3.js";
@@ -16,9 +16,9 @@ function oracle(p: CompoundingPool, total: bigint) {
   return best;
 }
 
-describe("tail liquidity plan (review 156 R1)", () => {
+describe("tail liquidity plan", () => {
   const cases: [string, CompoundingPool, bigint][] = [
-    ["the reviewer's fixture: a claim equal to the pool's SOL", pool(1_000_000_000_000n, 1_000_000_000n, 100_000_000_000_000_000_000n), 1_000_000_000n],
+    ["the large-claim fixture: a claim equal to the pool's SOL", pool(1_000_000_000_000n, 1_000_000_000n, 100_000_000_000_000_000_000n), 1_000_000_000n],
     ["tiny claim", pool(1_000_000_000_000n, 30_000_000_000n, 10n ** 24n), 50_000n],
     ["1% of the pool", pool(500_000_000_000_000n, 40_000_000_000n, 10n ** 27n), 400_000_000n],
     ["10% of the pool", pool(500_000_000_000_000n, 40_000_000_000n, 10n ** 27n), 4_000_000_000n],
@@ -37,7 +37,7 @@ describe("tail liquidity plan (review 156 R1)", () => {
     expect(leftA, `$X left ${leftA}`).lte(0.0021);
     expect(leftB, `SOL left ${leftB}`).lte(0.0021);
   });
-  it("the reviewer's fixture swaps below half: the optimum moved with price impact", () => {
+  it("the large-claim fixture swaps below half: the optimum moved with price impact", () => {
     const [, p, total] = cases[0];
     expect(liquidityPlan(p, total).swapIn < total / 2n).true;
   });

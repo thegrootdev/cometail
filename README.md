@@ -250,7 +250,5 @@ const api = new CometailClient({ baseUrl: "https://api.cometail.fun" });
 - [`docs/hosting.md`](docs/hosting.md): services and the reverse proxy.
 - [`docs/api.md`](docs/api.md): the read API and the feed.
 - [`docs/presets.md`](docs/presets.md): the launch presets, for any launchpad.
-- [`docs/mainnet-runbook.md`](docs/mainnet-runbook.md): the ordered mainnet procedure.
-- [`docs/devnet-checklist.md`](docs/devnet-checklist.md): the browser pass on devnet.
 
 Built on Meteora: DBC for the curves, DAMM v2 for the pools after completion, DLMM for the buy orders. All three are load-bearing.

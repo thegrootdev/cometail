@@ -89,7 +89,7 @@ describe("feed: the type filter", () => {
   });
 });
 
-// ---- the review's findings, reproduced against the actual module ----
+// ---- edge cases, reproduced against the actual module ----
 import { FeeIndex, claimTolerance, type IndexPool } from "../../worker/src/feeindex";
 import { tailsRollup } from "../../worker/src/api";
 
@@ -103,7 +103,7 @@ async function index(conn: any = {}, pct = 100) {
   return { fi, store };
 }
 
-describe("fee index: claims, windows, ranking (review 120)", () => {
+describe("fee index: claims, windows, ranking", () => {
   it("a claim landing after the scan started is inside the window; an unreadable transaction stays pending, then unconfirmed", async () => {
     const conn = { getSignaturesForAddress: async () => [{ signature: "s116", slot: 116, err: null }, { signature: "s111", slot: 111, err: null }, { signature: "s99", slot: 99, err: null }], getTransaction: async () => null, rpcEndpoint: "http://x" };
     const { fi } = await index(conn);
@@ -165,7 +165,7 @@ describe("fee index: claims, windows, ranking (review 120)", () => {
   });
 });
 
-describe("tails rollup (review 120)", () => {
+describe("tails rollup", () => {
   it("pages, sums every harvest of the last 24 hours, joins foreign sources by mint, and says unavailable instead of zero", async () => {
     const store = openStore("sqlite::memory:"); await store.init();
     const now = Date.now(), sec = Math.floor(now / 1000);
@@ -308,7 +308,7 @@ function metaplexData(name: string, symbol: string, uri: string): Buffer {
   return Buffer.concat([Buffer.from([4]), Buffer.alloc(64), str(name), str(symbol), str(uri)]);
 }
 
-describe("fee index: lifetime against claimable (TBI, 6qoh...dBLV; review 127)", () => {
+describe("fee index: lifetime against claimable (TBI, 6qoh...dBLV)", () => {
   it("TBI: claimable is exact, lifetime is the raw counter estimate, already claimed is only bounded (100 lamports at most)", () => {
     // pool 9DMBff...: totalTradingQuoteFee 353031534845, creator 70%, creatorQuoteFee 247122074291 (a simulated claim paid exactly this)
     const estimate = creatorShare(353_031_534_845n, 70);
@@ -473,7 +473,7 @@ describe("metadata on IPFS: the public ipfs.io family stopped serving (429, suns
     // a coin's own dedicated gateway still serves: kept as it is, not probed
     expect(await liveImage(`https://lizard.mypinata.cloud/ipfs/${V0}/logo`, async () => { throw new Error("not probed"); })).eq(`https://lizard.mypinata.cloud/ipfs/${V0}/logo`);
     expect(await liveImage(`ipfs://${V0}`, async (u) => u.startsWith(IPFS_GATEWAYS[0]))).eq(IPFS_GATEWAYS[0] + V0);
-    // a subdomain gateway of the stopped family goes through the live gateways too (review 127)
+    // a subdomain gateway of the stopped family goes through the live gateways too
     const sub: string[] = [];
     expect(await liveImage(`https://${TBI}.ipfs.dweb.link/logo.png`, async (u) => { sub.push(u); return u.startsWith(IPFS_GATEWAYS[1]); })).eq(`${IPFS_GATEWAYS[1]}${TBI}/logo.png`);
     expect(sub).deep.eq([`${IPFS_GATEWAYS[0]}${TBI}/logo.png`, `${IPFS_GATEWAYS[1]}${TBI}/logo.png`]);

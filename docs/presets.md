@@ -63,8 +63,8 @@ mint and a Token-2022 mint with the MetadataPointer extension):
 | Stock, USDC | `3SGJgHzALLPm15owz5Tw83SQdaBzd8AoSFyMZHy3NxBe` | `9YSXk1YcKXHcTodgu4MuvKdRu7kW64Af61cKERH2Wtcd` |
 | Stock, tokenized stock | `AKQKx6QymFZ3A8y7QfBdNxnkdCFGMLVFBU1Dkpe9LQNa` | `BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN` |
 
-Mainnet: created by the protocol owner on the day (docs/mainnet-runbook.md); addresses land in
-`configs/mainnet.json` and here.
+Mainnet: created by the protocol owner; the addresses are in `configs/mainnet.json` and in the
+README's address table.
 
 Every preset's on-chain parameters are read back and compared with its file, field by field
 (quote mint and decimals, threshold, curve segments, fees, liquidity split, migration

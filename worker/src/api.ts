@@ -55,7 +55,7 @@ async function refuseIfTaken(host: string, port: number): Promise<void> {
   if (taken) throw new Error(`API port ${host}:${port} is already in use by another process; refusing to start`);
 }
 
-/** The metrics of PLAN 8.7, each line independent versus demo by the actor that owns it: a launch by
+/** The traction metrics, each line independent versus demo by the actor that owns it: a launch by
  *  its creator (a vault-held launch by that vault's depositor), a vault (its income, bids, fills,
  *  burns, refunds) by its depositor. A line whose owner cannot be resolved yet (an event before its
  *  vault's snapshot, a program-held launch without a vault record) is "unattributed", never
@@ -113,7 +113,7 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
   // trader's own class (the fee payer is always known), with the quote they paid
   // only a swap's own signer is a buyer; a purchase known by its fee payer alone (a sponsored or
   // routed swap whose signer could not be paired) is unattributed
-  // PLAN 8.7 buyers are stream-token buyers: trades on the vaults' pools; plain-launch traders are
+  // buyers are stream-token buyers: trades on the vaults' pools; plain-launch traders are
   // reported apart so the expanded trade index does not inflate the line
   const buyerSets = { independent: new Set<string>(), demo: new Set<string>(), unattributed: new Set<string>() };
   const buyVolume = triple(); let buys = 0, sells = 0;

@@ -1,4 +1,4 @@
-// Regression for spike 02: DLMM limit orders with a program-derived owner, against the live
+// Regression: DLMM limit orders with a program-derived owner, against the live
 // DLMM binary. Place, stranger cancel rejected, fill, cancel + close, partial fill, 50 bins
 // in a v0 transaction with a lookup table.
 import { BN } from "@coral-xyz/anchor";

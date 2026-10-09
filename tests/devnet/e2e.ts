@@ -1,4 +1,4 @@
-// Devnet end-to-end (PLAN step 11): two plain launches, a vault holding both tails (one still
+// Devnet end-to-end: two plain launches, a vault holding both tails (one still
 // bonding, one graduated), the stream token launched and filled, the keeper migrating,
 // registering, cashing out, harvesting, laddering bids and settling a fill, and the indexer
 // reading it all back. Devnet-only small-threshold configs with the presets' economics, so a

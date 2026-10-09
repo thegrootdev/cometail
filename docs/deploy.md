@@ -96,7 +96,7 @@ TPUs (the default, without `--use-rpc`) has been more reliable than `--use-rpc`.
 | Build | Bytes | sha256 (raw ELF) |
 |---|---|---|
 | `opt-level = "z"`, 2026-10-07 (first candidate, retired) | 363,824 | 899ae204591ac30f73a500ab042e03ed1eaf2c6fbf3a9fc95b5c1ecadc3c463d |
-| `opt-level = "z"`, 2026-10-07 (review 133: measured claims, owner claims) | 387,864 | e1a73961c7a5d2f6f2351e5120365fd982b4f37b2853dfd475dbeb9297647b46 |
+| `opt-level = "z"`, 2026-10-07 (measured claims, owner claims) | 387,864 | e1a73961c7a5d2f6f2351e5120365fd982b4f37b2853dfd475dbeb9297647b46 |
 
 Devnet: deployed 2026-10-07 at slot 508,351,514 with `--max-len 363824` (program-data rent 1.84910476 SOL on devnet;
 re-quote mainnet with `solana rent 363869 -um` on the day), the dump hashing to the build above.

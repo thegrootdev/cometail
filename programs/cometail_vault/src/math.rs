@@ -128,8 +128,8 @@ mod tests {
         assert!(price_q64(100, 10).unwrap() > p1);
         for step in [10u16, 100] { for bin in -50..50 { assert!(price_q64(step, bin).unwrap() <= price_q64(step, bin + 1).unwrap()); } }
     }
-    /// Values produced by compiling the pinned upstream `u64x64_math.rs` directly (the
-    /// verifier's probe, spikes/14-acceptance/math-prices.csv).
+    /// Values produced by compiling the pinned upstream `u64x64_math.rs` directly (a separate
+    /// probe build).
     #[test]
     fn matches_upstream_rows() {
         assert_eq!(price_q64(100, 3), Some(19_005_698_865_887_024_741));
@@ -169,7 +169,7 @@ mod tests {
     }
     #[test]
     fn bounds() {
-        // cap exactly price(3) with ST = X: bins up to 3 qualify, 4 does not (the verifier's adjacent-cap case)
+        // cap exactly price(3) with ST = X: bins up to 3 qualify, 4 does not (the adjacent-cap case)
         let cap = price_q64(100, 3).unwrap();
         assert_eq!(bin_bound(100, cap, true), Some(3));
         assert!(!bin_within_cap(100, 4, cap, true));

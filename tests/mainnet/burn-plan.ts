@@ -1,4 +1,4 @@
-// Pure checks for tests/mainnet/burn-configs.ts (review 133): before anything is simulated or sent, today's
+// Pure checks for tests/mainnet/burn-configs.ts: before anything is simulated or sent, today's
 // preset must match the planned parameters exactly (so the replacement cannot silently change economics),
 // and a new config's bytes, simulated or created, must equal today's except the fee claimer.
 import { PublicKey } from "@solana/web3.js";

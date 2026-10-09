@@ -1,6 +1,6 @@
 // The tail index (worker/src/tails.ts) on synthetic transactions built from the pinned layouts:
 //   - the walk: pages, completion, unreadable stops, resumes, idempotence;
-//   - claims found and recorded whether split or not, each leg bound to its own instruction (review 156 R2, R3);
+//   - claims found and recorded whether split or not, each leg bound to its own instruction;
 //   - the reserve's gross ledger: balance-linked order inside a slot, mixed inflow and buyback in one transaction,
 //     tokens burned but not bought, breaks and ambiguity reported as unknown (R4, R5);
 //   - the view: nothing totals to zero before its history is complete (R6).
@@ -57,7 +57,7 @@ async function freshStore() {
   return store;
 }
 
-describe("tail index: claims (review 156 R2, R3)", () => {
+describe("tail index: claims", () => {
   it("a full split is bound leg by leg; a claim with nothing after it is recorded as not split", () => {
     const full = parseCreatorTx(view([claimLeg(400n), burnLeg(100n), buyLeg(51n, 5000n), addLeg(4900n, 49n, 77n), lockLeg(77n)]), T).claims;
     expect(full).deep.eq([{ kind: "curve", claimedLamports: "400", creator: creator.toBase58(), status: "split", toBurn: { lamports: "100", source: dest.toBase58() }, buy: { inLamports: "51", outRaw: "5000" }, add: { position: position.toBase58(), addedRaw: "4900", addedLamports: "49", liquidity: "77" }, lockedLiquidity: "77" }]);
@@ -170,7 +170,7 @@ describe("tail index: make-ups of unsplit claims", () => {
     expect(v.positions).deep.eq([position.toBase58()]);
     void m;
   });
-  it("review 168 F3/F4: one make-up credits only the tail it names; a graduated pool claim is never made up by it", async () => {
+  it("one make-up credits only the tail it names; a graduated pool claim is never made up by it", async () => {
     const store = await freshStore();
     const cfg = k(), c = creator.toBase58();
     const [m1, m2] = [k(), k()];
@@ -203,7 +203,7 @@ describe("tail index: make-ups of unsplit claims", () => {
   });
 });
 
-describe("tail index: the reserve's gross ledger (review 156 R4, R5)", () => {
+describe("tail index: the reserve's gross ledger", () => {
   const row = (signature: string, slot: number, legs: [Ix, Ix[]][], pre: bigint, post: bigint, logs: string[] = []): ReserveRow => ({ signature, slot, tx: parseReserveTx(view(legs, { reserve: [pre, post], logs, signature, slot }), reserve)! });
   const inflow = (amount: bigint, from = other): [Ix, Ix[]] => [transfer(from, reserve, creator, amount), []];
   const buyback = (spent: bigint): [Ix, Ix[]] => [ixOf(BURN_PROGRAM_ID, [9, 9, 9, 9, 9, 9, 9, 9], []), [transfer(reserve, k(), k(), spent)]];
@@ -330,7 +330,7 @@ describe("tail index: walk and view", () => {
     expect(v.claims[1].burn).deep.eq({ spentLamports: "60", waitingLamports: "40", boughtRaw: "600", buybacks: ["buy"] });
     expect(v.totals.boughtRaw).eq("600");
     expect(v.coverage.reserveVerified).eq(true);
-    // an unclear claim: its legs are unknown, so no total of legs (re-review 1)
+    // an unclear claim: its legs are unknown, so no total of legs
     const amb = parseCreatorTx(view([claimLeg(400n), burnLeg(50n), burnLeg(50n)]), T).claims[0];
     expect(amb.status).eq("ambiguous");
     await store.insertTailEvents([{ signature: "claim3", idx: 0, slot: 30, blockTime: 3, name: `tailClaim:${m.toBase58()}`, data: amb }], "walk:z", "{}");
@@ -339,7 +339,7 @@ describe("tail index: walk and view", () => {
     expect(v.claims[0].keptLamports).eq(null);
   });
 
-  it("two tails claimed in one transaction: both claims stored and listed under their own tail (re-review 2)", async () => {
+  it("two tails claimed in one transaction: both claims stored and listed under their own tail", async () => {
     const store = await freshStore();
     const curve2 = k();
     const [m1, m2, cfg] = [k(), k(), k()];
@@ -359,7 +359,7 @@ describe("tail index: walk and view", () => {
     void curve2;
   });
 
-  it("sources: the origin from the curve's first transaction, every handover from followed creators, the migration's positions (re-review 3)", async () => {
+  it("sources: the origin from the curve's first transaction, every handover from followed creators, the migration's positions", async () => {
     const store = await freshStore();
     const [m, cfg] = [k(), k()];
     const [t] = parseTails(`${m.toBase58()}:${cfg.toBase58()}:${target.toBase58()}`);
@@ -408,7 +408,7 @@ describe("tail index: walk and view", () => {
     expect(((await tailView(fresh, [t], null)).tails[0] as any).coverage.claims.status).eq("unavailable");
   });
 
-  it("re-review 160: A creates, hands to B, B claims 400, the migration gives B the position, B hands to C, B claims 600 from the position; the worker starts afterwards", async () => {
+  it("A creates, hands to B, B claims 400, the migration gives B the position, B hands to C, B claims 600 from the position; the worker starts afterwards", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tail-160-"));
     const file = `sqlite:${path.join(dir, "store.sqlite")}`;
     const [m, cfg] = [k(), k()];
@@ -465,7 +465,7 @@ describe("tail index: walk and view", () => {
     expect(((await tailView(store, [t], null)).tails[0] as any).coverage.claims.status).eq("unavailable");
     await store.close();
 
-    // upgrade (review 162): a record saved by the previous version, with the empty positions list that version
+    // upgrade: a record saved by the previous version, with the empty positions list that version
     // cached, and creator walks already complete. It must not read as complete until the migration is read again
     // and the recovered position is walked; its origin, creators and history are kept.
     const old = openStore(`sqlite:${path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tail-162-")), "store.sqlite")}`); await old.init();

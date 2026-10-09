@@ -3,8 +3,8 @@
 One process, configured from the environment, in one of three modes: `keeper` (the loop that
 operates vaults with the bounded hot key), `indexer` (follows the program and the pools into the
 store, scans the pool map, serves the read API), or `once` (a single keeper pass). Hosting runs
-one instance of each of the first two (`docs/hosting.md`); the production environment file is
-written by the mainnet runbook (`docs/mainnet-runbook.md`, step 6).
+one instance of each of the first two (`docs/hosting.md`); the production environment file
+holds the variables below.
 
 ## Configuration
 
