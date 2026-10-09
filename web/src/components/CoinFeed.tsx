@@ -8,7 +8,7 @@ import { API_URL, CLUSTER, OFFICIAL_MINT, isListed, isOfficial } from "@/lib/add
 import { useMarket, normalizeToken, rawUnits, type MarketEnvelope, type MarketToken, type TokenList } from "@/lib/market";
 import { quoteAsset, quoteRate } from "@/lib/quotes";
 import { usdValue } from "@/lib/usd";
-import { tickerText } from "@/lib/token-display";
+import { shownName, shownSymbol, tickerText } from "@/lib/token-display";
 import { short } from "@/lib/format";
 import { home as copy, market } from "@/content/cometail";
 import { DataState, TokenAvatar } from "./Experience";
@@ -53,12 +53,12 @@ export function CoinCard({ token: t, observedAt, official = false }: { token: Ma
   const fdv = fdvValue(t, observedAt);
   const lastKnown = !observedAt;
   return (
-    <Link className={`coin-card ${official ? "coin-official" : ""} ${lastKnown ? "is-last-known" : ""}`} href={`/token/${t.mint}`} aria-label={`${market.view} ${t.name || short(t.mint)}`}>
+    <Link className={`coin-card ${official ? "coin-official" : ""} ${lastKnown ? "is-last-known" : ""}`} href={`/token/${t.mint}`} aria-label={`${market.view} ${shownName(t.mint, t.name) || short(t.mint)}`}>
       <TokenAvatar seed={t.mint} image={t.imageUrl || undefined} />
       <span className="coin-main">
         <span className="coin-title">
-          <strong>{t.name?.trim() || short(t.mint)}</strong>
-          {official ? <span className="coin-badge">{copy.official}</span> : <span className="coin-ticker">{tickerText(t.symbol) || "—"}</span>}
+          <strong>{shownName(t.mint, t.name?.trim()) || short(t.mint)}</strong>
+          {official ? <span className="coin-badge">{copy.official}</span> : <span className="coin-ticker">{tickerText(shownSymbol(t.mint, t.symbol)) || "—"}</span>}
         </span>
         <span className="coin-progress">
           <span className={`coin-bar ${done ? "is-done" : ""}`} role="progressbar" aria-label={market.progress} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined}>

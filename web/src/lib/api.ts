@@ -126,7 +126,26 @@ export interface BurnView {
   splits?: { signature: string; slot: number; blockTime: number | null; source: string; pool: string | null; claimant: string | null; claimedLamports: string; carriedLamports: string; toReserveLamports: string; toOtherLamports: string; other: string }[];
   splitsTotal?: number; splitsNextCursor?: string | null;
 }
+/** The public proof figures (worker stats.ts, /api/stats). Every null is unknown, never zero. */
+export interface StatsLaunch {
+  mint: string; symbol: string; name: string; kind: "plain" | "stream"; stage: "bonding" | "completed" | "graduated"; createdAtMs: number | null; config: string;
+  creator: string; owner: string | null; team: boolean | null; quoteMint: string; dbcPool: string; dammPool: string | null;
+  trades: number; traders: number; volumeLamports: string | null; volumeByVenue: Record<string, string> | null;
+  fees: { curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null };
+  lockedBps: number | null;
+}
+export interface Stats {
+  schemaVersion: number; cluster: string; generatedAtMs: number; team: string[];
+  launches: { readAtMs: number | null; total: number; team: number; outside: number; unattributed: number; graduated: { total: number; team: number; outside: number }; list: StatsLaunch[] };
+  trading: { readAtMs: number | null; complete: boolean; pendingPools: number; trades: number; traders: number | null; volumeLamports: string | null; outsideVolumeLamports: string | null };
+  fees: { readAtMs: number | null; slot: number | null; curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null; totalLamports: string | null; meteoraProtocolLamports: string | null };
+  burn: { readAtMs: number; slot: number | null; program: string; reserve: string | null; mint: string | null; burnedRaw: string; buybacks: number; spentLamports: string; splitLamports: string; toReserveLamports: string; lastBuyAtSec: number | null; supplyRaw: string | null; decimals: number | null; reconciled: boolean | null } | null;
+  tails: { readAtMs: number; list: { mint: string; claims: number | null; notSplit: number | null; madeUp: number | null; claimedLamports: string | null; toBurnLamports: string | null; liquidityLamports: string | null; liquidityRaw: string | null; complete: boolean }[] } | null;
+  vaults: { readAtMs: number | null; total: number; launched: number; list: { vault: string; depositor: string; team: boolean; status: string | null; stMint: string | null; harvestedLamports: string | null; toDepositorLamports: string | null; toProtocolLamports: string | null; waitingLamports: string | null; routedLamports: string | null; burnedStRaw: string | null; readAtMs: number }[] };
+  feeIndex: { readAtMs: number | null; mode: string | null; pools: number | null; configs: number | null; claimsConfirmed: number | null; historySinceMs: number | null; refreshMinutes: number | null } | null;
+}
 export const api = {
+  stats: () => get<Stats>("/api/stats"),
   burn: () => get<BurnView>("/api/burn"),
   /** A tail and its claims; "missing" only for a real 404 (not a tail), "error" for anything else. */
   tail: async (mint: string): Promise<{ state: "ok"; tail: TailInfo } | { state: "missing" } | { state: "error" }> => {

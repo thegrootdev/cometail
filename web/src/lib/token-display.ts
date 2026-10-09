@@ -88,3 +88,17 @@ export function tickerText(raw: string | null | undefined): string {
 export function cleanSymbolInput(raw: string): string {
   return raw.replace(/^[\s$]+/, "").replace(/\s+/g, "").toUpperCase();
 }
+
+// How a few of our own coins read on the site, by mint. On chain, the first TAIL coin (2026-10-05) carries the
+// name "COMETAIL" from before the relaunch, and $tCOMETAIL's ticker was stored upper case; the site shows them as
+// they are meant to read. Metadata on chain is unchanged; every other coin shows its metadata as stored.
+const SHOWN: Record<string, { name?: string; symbol?: string }> = {
+  GNJmutvZ6achDMR35WqYuo8xdqQxUmvVocLU2tpwGqcP: { name: "TAIL" },
+  FM9a1rMfsmSiSFnj9DRY7WqmWZCYGcSW2V8TUTeMksRV: { symbol: "tCOMETAIL" },
+};
+export function shownName(mint: string | null | undefined, name: string | null | undefined): string | null {
+  return (mint && SHOWN[mint]?.name) || name || null;
+}
+export function shownSymbol(mint: string | null | undefined, symbol: string | null | undefined): string | null {
+  return (mint && SHOWN[mint]?.symbol) || symbol || null;
+}

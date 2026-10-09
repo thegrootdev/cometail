@@ -1,7 +1,7 @@
 "use client";
 import { TokenAvatar } from "./Experience";
 import { identity as copy } from "@/content/cometail";
-import { tokenForMint, type TokenIdentity, tickerText } from "@/lib/token-display";
+import { tokenForMint, type TokenIdentity, tickerText, shownName, shownSymbol } from "@/lib/token-display";
 export function TokenHeading({
   token,
   mint,
@@ -20,9 +20,9 @@ export function TokenHeading({
         size={large ? "large" : "normal"}
       />
       <span className="token-heading-text">
-        <strong>{known?.name?.trim() || copy.pendingName}</strong>
+        <strong>{shownName(mint || known?.mint, known?.name?.trim()) || copy.pendingName}</strong>
         <small>
-          {tickerText(known?.symbol) || copy.pendingSymbol}
+          {tickerText(shownSymbol(mint || known?.mint, known?.symbol)) || copy.pendingSymbol}
         </small>
       </span>
     </span>

@@ -4,9 +4,10 @@
 import Link from "next/link";
 import { TokenAvatar } from "./Experience";
 import { short } from "@/lib/format";
-import { tickerText } from "@/lib/token-display";
+import { shownName, shownSymbol, tickerText } from "@/lib/token-display";
 
-export function CoinCell({ mint, name, symbol, imageUrl, href }: { mint: string; name: string | null; symbol: string | null; imageUrl: string | null; href: string }) {
+export function CoinCell({ mint, name: rawName, symbol: rawSymbol, imageUrl, href }: { mint: string; name: string | null; symbol: string | null; imageUrl: string | null; href: string }) {
+  const name = shownName(mint, rawName), symbol = shownSymbol(mint, rawSymbol);
   const title = name?.trim() || tickerText(symbol) || short(mint);
   const sub = name?.trim() ? tickerText(symbol) || short(mint) : short(mint);
   return (

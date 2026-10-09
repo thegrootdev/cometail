@@ -1,7 +1,7 @@
 "use client";
 import { isListed } from "@/lib/addresses";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { bareSymbol } from "@/lib/token-display";
+import { bareSymbol, shownName, shownSymbol } from "@/lib/token-display";
 import Link from "next/link";
 import { experience as copy } from "@/content/cometail";
 import { SkyStream, api } from "@/lib/api";
@@ -199,7 +199,7 @@ export function StarAtlas({
     return placed
       .sort((a, b) => a.y - b.y || a.x - b.x)
       .map((c) => {
-        const chars = Math.max((bareSymbol(c.s.token?.symbol) || "PENDING").length, feeLabel(c.s).length);
+        const chars = Math.max((bareSymbol(shownSymbol(c.s.baseMint, c.s.token?.symbol)) || "PENDING").length, feeLabel(c.s).length);
         const left = c.x + 12, right = left + chars * glyph;
         let top = c.y + 8;
         for (const box of boxes) {
@@ -294,7 +294,7 @@ export function StarAtlas({
             key={s.pool}
             href={`/token/${s.baseMint}`}
             tabIndex={0}
-            aria-label={`${copy.viewToken} ${s.token?.name || identity.pendingName} · ${feeLabel(s)} ${copy.accrued}`}
+            aria-label={`${copy.viewToken} ${shownName(s.baseMint, s.token?.name) || identity.pendingName} · ${feeLabel(s)} ${copy.accrued}`}
           >
             <g transform={`translate(${x} ${y}) rotate(-24)`}>
               <circle
@@ -331,7 +331,7 @@ export function StarAtlas({
               fontSize={compact ? 16 : 11}
               fill="#92a7be"
             >
-              {bareSymbol(s.token?.symbol) || identity.pendingTicker}
+              {bareSymbol(shownSymbol(s.baseMint, s.token?.symbol)) || identity.pendingTicker}
             </text>
             <text
               x={x + 12}

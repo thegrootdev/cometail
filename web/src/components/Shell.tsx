@@ -95,6 +95,12 @@ export function Shell({
         <div>
           <span className="footer-signature">{copy.footer}</span>
           <span className="micro">{product.domain}</span>
+          <span className="footer-links micro">
+            <Link href="/stats">{nav.stats}</Link>
+            <Link href="/stats#verified">{nav.verified}</Link>
+            <Link href="/tails">{nav.tails}</Link>
+            <a href={product.github} target="_blank" rel="noopener noreferrer">{nav.source}</a>
+          </span>
         </div>
         <span className="footer-right">
           <SocialPills />

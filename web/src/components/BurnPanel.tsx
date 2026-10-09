@@ -65,7 +65,7 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
       </ul>
     )}
     {!compact && (olderCursor === undefined ? data.burnsNextCursor : olderCursor) && <button type="button" className="button button-secondary mt-3" disabled={paging} onClick={() => void more()}>{copy.showMore}</button>}
-    <p className="micro mt-3"><a className="text-link" href={EXPLORER("address", data.program)} target="_blank" rel="noreferrer">{copy.program} {short(data.program)} ↗</a>{compact && data.cometail ? <> · <Link className="text-link" href={`/token/${data.cometail.mint}`}>{copy.more} ↗</Link></> : null}</p>
+    <p className="micro mt-3"><a className="text-link" href={EXPLORER("address", data.program)} target="_blank" rel="noreferrer">{copy.program} {short(data.program)} ↗</a> · <a className="text-link" href={`https://verify.osec.io/status/${data.program}`} target="_blank" rel="noreferrer">{copy.verified} ↗</a>{compact && data.cometail ? <> · <Link className="text-link" href={`/token/${data.cometail.mint}`}>{copy.more} ↗</Link></> : null}</p>
   </> : null;
   return (
     <Card title={copy.title} className={compact ? "burn-panel burn-compact" : "burn-panel mt-6"}>

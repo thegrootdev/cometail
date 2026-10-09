@@ -6,7 +6,7 @@ import { Money } from "@/components/Money";
 import { addresses, identity } from "@/content/cometail";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
-import type { TokenIdentity } from "@/lib/token-display";
+import { tickerText, type TokenIdentity } from "@/lib/token-display";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { PublicKey } from "@solana/web3.js";
@@ -94,8 +94,8 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
     <Shell>
       <BackToSky />
       <PageHeader eyebrow={c.vaultKicker} title={identity.vaultName}>
-        {v?.stMint && <TokenHeading token={data?.stToken} mint={String(v.stMint)} large />}
-        {v ? (
+        {v?.stMint && STATUS(v) !== "open" && <TokenHeading token={data?.stToken} mint={String(v.stMint)} large />}
+        {v && STATUS(v) === "open" ? null : v ? (
           <Link href={`/token/${String(v.stMint)}`} className="button button-primary">
             Trade the fee token ↗
           </Link>
@@ -106,7 +106,10 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
         )}
       </PageHeader>
       <SocialLinks links={data?.stToken?.links} tokenName={data?.stToken?.name} />
-      <div className="vault-addresses"><CopyAddress address={vaultStr} label={addresses.vault} />{v?.stMint && <CopyAddress address={String(v.stMint)} />}</div>
+      <div className="vault-addresses"><CopyAddress address={vaultStr} label={addresses.vault} />{v?.stMint && STATUS(v) !== "open" && <CopyAddress address={String(v.stMint)} />}</div>
+      {v && (STATUS(v) === "open" || STATUS(v) === "launched" || STATUS(v) === "live") && (
+        <p className="vault-stage text-sm mt-3">{STATUS(v) === "open" ? vaultPage.stage.open : STATUS(v) === "launched" ? vaultPage.stage.launched(tickerText(data?.stToken?.symbol) || "the fee token", `${sol(str(acc.income))}`) : vaultPage.stage.live}</p>
+      )}
       {loading && <DataState kind="loading" />}
       {!loading && error && <DataState kind="error" onRetry={reload} />}
       {!loading && !error && !data && (
@@ -281,7 +284,7 @@ function VaultDetail({ vaultStr }: { vaultStr: string }) {
                 <DataState
                   compact
                   title="No bids placed yet"
-                  body="Buyback orders appear here when the keeper routes available income."
+                  body={STATUS(v) === "launched" ? vaultPage.noBidsLaunched : vaultPage.noBidsLive}
                 />
               )}
               <ul className="space-y-1 text-sm">

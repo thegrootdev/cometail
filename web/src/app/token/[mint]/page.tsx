@@ -10,7 +10,7 @@ import { formatUsd, usdValue } from "@/lib/usd";
 import { CopyAddress } from "@/components/CopyAddress";
 import { Money } from "@/components/Money";
 import { SocialLinks } from "@/components/SocialLinks";
-import { metadataLinks, tickerText } from "@/lib/token-display";
+import { metadataLinks, shownName, shownSymbol, tickerText } from "@/lib/token-display";
 import { TokenMarket, TokenTrades } from "@/components/Market";
 import { OutsideCoinFees, type FeeCoinResult } from "@/components/OutsideCoin";
 import { BurnPanel } from "@/components/BurnPanel";
@@ -160,7 +160,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const logo = feeCoin?.imageUrl ?? artwork?.image ?? undefined;
   const isCreator = !!(publicKey && view && view.creator.equals(publicKey));
   const dec = view?.decimals ?? 6;
-  const ticker = meta?.symbol || "tokens";
+  const ticker = shownSymbol(mintStr, meta?.symbol) || "tokens";
   /** Lamports kept back on a buy for the network fee and the token account. */
   const TRADE_RESERVE = 10_000_000n;
   const amountRaw = () => {
@@ -368,14 +368,14 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       <header className="token-top">
         <TokenAvatar seed={mintStr} image={logo} size="large" />
         <div className="token-top-text">
-          <h1>{meta?.name || feeCoin?.name || short(mintStr)}</h1>
+          <h1>{shownName(mintStr, meta?.name || feeCoin?.name) || short(mintStr)}</h1>
           <div className="token-top-sub">
-            {tickerText(meta?.symbol) && <span className="token-ticker">{tickerText(meta?.symbol)}</span>}
+            {tickerText(shownSymbol(mintStr, meta?.symbol)) && <span className="token-ticker">{tickerText(shownSymbol(mintStr, meta?.symbol))}</span>}
             <span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span>
           </div>
         </div>
       </header>
-      <SocialLinks links={artwork?.links} tokenName={meta?.name} />
+      <SocialLinks links={artwork?.links} tokenName={shownName(mintStr, meta?.name) ?? undefined} />
       {!outside && <QuickStats token={marketToken} observedAt={observedAt} />}
       {!outside && (view || marketToken) && <PriceChart mint={mintStr} token={marketToken} observedAt={observedAt} />}
       {loading && <DataState kind="loading" />}
@@ -456,7 +456,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
             ))}
           </div>
           {lower === "trades"
-            ? <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={meta?.symbol ?? null} quote={asset} rate={rate} />
+            ? <TokenTrades mint={mintStr} onChain={!!view} decimals={dec} symbol={shownSymbol(mintStr, meta?.symbol)} quote={asset} rate={rate} />
             : <section className="holders-card"><h2 className="sr-only">{simple.holdersTitle}</h2><HolderList mint={mintStr} creator={view.creator.toBase58()} decimals={dec} /></section>}
         </section>
       )}

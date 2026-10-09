@@ -10,6 +10,7 @@
 //   GET /api/tokens/:mint/trades?limit=&cursor=   its trades, newest first
 //   Token answers carry an envelope: schemaVersion, cluster, generatedAtMs, observedSlot, coverage, solUsd, data.
 //   GET /api/metrics                the submission metrics, independent actors apart from the demo set
+//   GET /api/stats                  the public proof figures, each with its read time and source (stats.ts)
 // It binds to the loopback interface and expects a reverse proxy in front for TLS. CORS is
 // limited to the configured origins, and each client address gets a token bucket; the
 // client address is taken from X-Forwarded-For only when the connection comes from loopback.
@@ -22,7 +23,7 @@ import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed"
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null; tailView?: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null; tailView?: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null; stats?: (() => Promise<unknown>) | null }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -475,6 +476,13 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         if (!opts.burnHistory) return send(503, { error: "burn view not enabled on this server" }, any);
         const page = await opts.burnHistory(url.pathname.endsWith("burns") ? "burns" : "splits", url.searchParams.get("before"), Math.min(100, limit));
         return page === "invalid" ? send(400, { error: "bad cursor" }, any) : send(200, { schemaVersion: 1, cluster: opts.cluster ?? "devnet", generatedAtMs: Date.now(), ...(page as object) }, any);
+      }
+      if (url.pathname === "/api/stats") {
+        // the public proof page's figures (stats.ts): any origin may read them
+        const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=30" };
+        if (!opts.stats) return send(503, { error: "stats not enabled on this server" }, any);
+        try { return send(200, await opts.stats(), any); }
+        catch (e) { log("stats failed", { error: String((e as Error).message ?? e) }); return send(503, { error: "stats unavailable" }, any); }
       }
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }
       if (url.pathname === "/api/metrics") {

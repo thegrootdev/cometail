@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
 import { CoinFeed } from "@/components/CoinFeed";
-import { BurnStat } from "@/components/BurnPanel";
+import { HomeNumbers } from "@/components/HomeNumbers";
 import { home } from "@/content/cometail";
-// Home is the coin feed: one promise, one launch button, a live burn line, then every coin.
+// Home is the coin feed: one promise, one launch button, three live figures (/stats), then every coin.
 // How it works and the details stay one tap away, folded.
 export default function Home() {
   return (
@@ -15,8 +15,9 @@ export default function Home() {
         <Link className="button button-primary button-launch" href="/launch">
           <span aria-hidden="true">+</span> {home.launch}
         </Link>
+        <HomeNumbers />
         <div className="home-links">
-          <BurnStat />
+          <Link className="home-sell" href="/fees">{home.feeIndex} →</Link>
           <Link className="home-sell" href="/sell">{home.sell} →</Link>
         </div>
       </section>

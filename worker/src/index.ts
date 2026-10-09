@@ -18,6 +18,7 @@ import { keeperPass } from "./keeper";
 import { LookupTables } from "./lut";
 import { log } from "./tx";
 import { chainWalkDeps, refreshSources, reserveAddress, tailIndexPass, tailView } from "./tails";
+import { statsViewer } from "./stats";
 
 export const WORKER_VERSION = "0.1.0";
 
@@ -49,7 +50,10 @@ async function main() {
       })();
     }
     // exit status 2 = the API port is taken; the service unit does not restart on it
-    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster , feeIndex, burnView: burnViewer(chain, store, { cluster: cfg.cluster, burnConfigs: cfg.burnConfigs.map((k) => k.toBase58()), legacyConfigs: cfg.migrateConfigs.map((k) => k.toBase58()).filter((k) => !cfg.burnConfigs.some((b) => b.toBase58() === k)), feeIndex }), burnHistory: async (kind, before, limit) => { const c = parseBurnCursor(before); return c === "invalid" ? "invalid" : burnHistory(store, kind, c, limit); }, tailView: (mint) => tailView(store, cfg.tails, mint) }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
+    const burnView = burnViewer(chain, store, { cluster: cfg.cluster, burnConfigs: cfg.burnConfigs.map((k) => k.toBase58()), legacyConfigs: cfg.migrateConfigs.map((k) => k.toBase58()).filter((k) => !cfg.burnConfigs.some((b) => b.toBase58() === k)), feeIndex });
+    const tails = (mint: string | null) => tailView(store, cfg.tails, mint);
+    const stats = statsViewer(chain, store, { cluster: cfg.cluster, team: cfg.demoActors, feeIndex, burnView, tailView: tails });
+    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster , feeIndex, burnView, burnHistory: async (kind, before, limit) => { const c = parseBurnCursor(before); return c === "invalid" ? "invalid" : burnHistory(store, kind, c, limit); }, tailView: tails, stats }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
     let passes = 0;
     while (!stopping) {
       let added = 0;

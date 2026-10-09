@@ -8,7 +8,6 @@ export const product = {
   url: "https://cometail.fun",
   description:
     "A Meteora DBC launchpad where every launch grows a tail of fees, and a market where any creator can sell that tail.",
-  protocolTicker: "$TAIL",
   streamTickerPrefix: "t",
   builtOn: "Built on Meteora",
   socialX: "COMETAIL on X",
@@ -57,6 +56,10 @@ export const nav = {
   sky: "All tokens",
   fees: "Fee Index",
   portfolio: "Portfolio",
+  tails: "Tails",
+  stats: "Proof",
+  verified: "Verified builds",
+  source: "Source code",
 } as const;
 
 export const feeIndex = {
@@ -121,7 +124,7 @@ export const burnPanel = {
   notSetUp: "The burn program is not set up on this network yet.",
   unknown: "unknown",
   burned: "Burned", spent: "SOL spent", buybacks: "Buybacks", reserve: "Waiting to buy",
-  dueNow: (sol: string) => `A buyback of ${sol} SOL can run now; the keeper runs it within minutes, and anyone can.`,
+  dueNow: (sol: string) => `A buyback of ${sol} SOL can run now. Anyone can trigger it; our bot does within minutes.`,
   dueAt: (t: string) => `Next buyback can run after ${t} (one every ten minutes at most).`,
   waitingForFunds: "Waiting for the reserve to reach the 0.001 SOL minimum.",
   nextUnknown: "The next buyback time is unknown right now.",
@@ -131,7 +134,7 @@ export const burnPanel = {
   claimableNow: "Waiting to be claimed (new configs)", supply: "$COMETAIL supply now",
   accountingNote: "Exact: the program's own counters, the reserve and the supply, read together. What each claim paid is measured by the program; those sums need the whole history read, and show unknown until it is. The program splits the new launch configs' fees 50/50; owners claiming older configs through it get exactly half back. Older claims made elsewhere, and the tails' share, reach the reserve as direct transfers.",
   listTitle: (shown: number, total: number) => (total > shown ? `Burns (newest ${shown} of ${total})` : `Every burn (${total})`), showMore: "Show older burns", historyPartial: "History is still loading; some burns may be missing below.", historyUnavailable: "Burn history is not available right now.",
-  noBurns: "No burns yet.", program: "Burn program", more: "All burns",
+  noBurns: "No burns yet.", program: "Burn program", verified: "verified build", more: "All burns",
 } as const;
 
 /** A coin from another launchpad on its token page: the Fee Index panel in place of the market panel. */
@@ -152,14 +155,112 @@ export const outsideCoin = {
 } as const;
 
 export const tailsPage = {
-  eyebrow: "Fee tokens",
+  eyebrow: "Coins whose fees feed another coin",
   title: "Tails",
-  body: "Every tail: a token launched on a coin's future fees. Its fees buy the tail back below the market and burn what they buy.",
+  body: "A tail is a coin whose fees work for another coin. There are two kinds here: fee tokens, launched on a coin's future fees, and coins we launched from our own wallet, whose fees feed $COMETAIL.",
+  walletTitle: "From our wallet",
+  walletBody: "Every time we claim one of these coins' creator fees, we split the claim in the same transaction: half stays with us, a quarter goes to the $COMETAIL burn and a quarter is locked as $COMETAIL liquidity. Each claim is listed on the coin's page.",
+  walletClaims: "Claims split", walletClaimed: "Fees claimed", walletToBurn: "To the burn", walletLocked: "Locked as liquidity",
+  vaultTitle: "Fee tokens",
+  vaultBody: "A token launched on a coin's future fees. Those fees buy the fee token back below the market and burn what they buy.",
+  walletEmpty: "None yet.",
   source: "Fees from", raise: "Raise", flowing: "Fees in", buybacks: "Buybacks filled", placed: (sol: string) => `placed ${sol}`.trimEnd() + " ", burned: "Tail tokens burned", unwind: "Unwind opens",
   unavailable: "unavailable", more: "Show more", of: (n: number, total: number) => `${n} of ${total}`,
   live: "Live", launched: "On its curve", open: "Not launched", unwound: "Unwound",
   empty: "No tails yet.", unwindAvailable: "open now", noUnwind: "not applicable",
   fromCoin: "This coin's fees fund a tail",
+  notLaunched: (n: number) => `${n} vault${n === 1 ? "" : "s"} not launched yet, not shown`,
+} as const;
+
+export const statsPage = {
+  eyebrow: "Proof",
+  title: "COMETAIL in numbers",
+  body: "Every figure here is read from Solana mainnet, or from our indexer that follows it, with the time it was read and a link to check it. A figure we cannot prove right now reads \"unknown\", never a guess.",
+  loading: "Reading the chain…",
+  error: "The figures could not be read just now.",
+  retry: "Try again",
+  unknown: "unknown",
+  read: (when: string) => `Read ${when}`,
+  check: "Check it",
+  json: "The raw figures (JSON)",
+  trading: {
+    title: "Trading",
+    volume: "Volume",
+    trades: "Trades",
+    traders: "Wallets that traded",
+    outside: "Volume on coins launched by others",
+    note: "Every swap on our launches' curves and on their pools after graduation, summed from the trades we index from chain. Volume is the SOL side of each trade.",
+    partial: "The trade index is still catching up, so volume and wallets read unknown until it completes.",
+  },
+  fees: {
+    title: "Fees",
+    total: "Trading fees generated",
+    curve: "To creators and launchpads on the curves",
+    pool: "To liquidity in graduated pools",
+    meteora: "Paid to Meteora's protocol",
+    note: "From the pools' own lifetime counters on chain: DBC's trading and protocol fee totals on each curve, DAMM v2's LP and protocol fee totals on each graduated pool.",
+  },
+  launches: {
+    title: "Launches",
+    total: "Coins launched on our curves",
+    graduated: "Graduated to a Meteora pool",
+    ours: "Launched by us",
+    outside: "Launched by others",
+    unattributed: "Owner unknown",
+    note: "\"Us\" means the team's own wallets, listed in the raw figures. A coin a vault holds counts for whoever deposited it.",
+    coin: "Coin", by: "By", stage: "Stage", trades: "Trades", volume: "Volume", fees: "Fees", locked: "Locked",
+    us: "us", them: "others", unknownOwner: "unknown", graduatedStage: "graduated", bonding: "on its curve", completed: "curve complete",
+    pool: "pool", curvePool: "curve",
+  },
+  burn: {
+    title: "$COMETAIL buyback and burn",
+    burned: "$COMETAIL burned",
+    buybacks: "Buybacks",
+    spent: "SOL spent on buybacks",
+    supply: "$COMETAIL supply now",
+    split: "Fees split by the burn program",
+    note: "The burn program's own counters, read from its state account. It can only buy $COMETAIL and burn it; its build is verified against this repository.",
+    page: "Every buyback",
+  },
+  liquidity: {
+    title: "Locked liquidity",
+    note: "Share of each graduated pool's liquidity that is permanently locked: no one can withdraw it.",
+    locked: (sym: string) => `${sym} pool locked`,
+  },
+  tails: {
+    title: "Tails",
+    claims: "Fee claims split",
+    claimed: "Fees claimed",
+    toBurn: "Sent to the burn",
+    liquidity: "Added as locked liquidity",
+    madeUp: (n: number) => `${n} made up later`,
+    note: "Coins we launched from our own wallet. Each fee claim is split in the open: half kept, a quarter to the $COMETAIL burn, a quarter locked as $COMETAIL liquidity.",
+    page: "Every claim",
+  },
+  vaults: {
+    title: "Fee sales",
+    vaults: "Vaults",
+    launched: "Fee tokens launched",
+    harvested: "Fees harvested by vaults",
+    waiting: "Waiting for buybacks",
+    note: "A vault holds a coin's fee rights and launches a fee token. Its buybacks start when that fee token's curve completes; until then harvested fees wait in the vault.",
+  },
+  feeIndex: {
+    title: "Fee Index",
+    pools: "Meteora DBC pools tracked",
+    configs: "Launch configs tracked",
+    claims: "Creator fee claims confirmed",
+    refresh: (m: number) => `Refreshed every ${m} minutes`,
+    open: "Open the Fee Index",
+  },
+  verified: {
+    title: "Verified programs",
+    note: "Both programs were rebuilt from this repository by OtterSec's public verifier, and the result matches the bytes deployed on mainnet.",
+    vault: "Vault program",
+    burn: "Burn program",
+    record: "Verified build",
+    source: "Source",
+  },
 } as const;
 
 export const hero = {
@@ -219,6 +320,13 @@ export const amounts = {
 } as const;
 
 export const vaultPage = {
+  stage: {
+    open: "Not launched yet. The seller has put fee rights in this vault but has not launched its fee token, so there is nothing to trade.",
+    launched: (sym: string, waiting: string) => `Buybacks have not started. They start when ${sym}'s curve completes and it graduates to its own pool. Until then, the fees this vault collects wait here: ${waiting} so far.`,
+    live: "Buybacks are running: the fees this vault collects fund standing buy orders below the market, and whatever they buy is burned.",
+  },
+  noBidsLaunched: "Buy orders start when the fee token graduates to its pool.",
+  noBidsLive: "Buy orders appear when the vault has fees to route. Anyone can trigger that; our bot does it within minutes.",
   streams: "Fee sources in this vault",
   income: "Fees collected",
   cashout: "Payout at completion",
@@ -520,7 +628,7 @@ export const experience = {
   curveEstimateBody:
     "Claimable now is exact: it is what a claim pays today. Already claimed comes from the curve's lifetime fee counter, which Meteora's per-trade rounding can push a little high, so it is an upper bound (exact at a 100% creator share). Pool fees after graduation are not included.",
   tokenKicker: "Token",
-  vaultKicker: "Fee vault",
+  vaultKicker: "A coin's future fees, for sale",
   disconnected: "Connect to continue",
   disclosures: "How it works",
   openState: "Open · you can still withdraw",
@@ -623,10 +731,12 @@ export const identity = {
 
 /** The simplified home: one promise, one launch button, the coin feed (2026-10-07 redesign). */
 export const home = {
-  title: "Launch a coin in seconds.",
-  body: "Anyone can buy it on its curve. When the curve fills, it graduates to a Meteora pool. Coin creators earn a share of every trade.",
+  title: "Launch a coin. Its fees keep working.",
+  body: "Launch on Meteora for 0.01 SOL. You earn on every trade, the pool your coin graduates to is locked for good, and part of every fee buys $COMETAIL and burns it.",
   launch: "Launch a coin",
   sell: "Sell your coin's fees",
+  feeIndex: "Fee Index: what every Meteora coin pays its creator",
+  numbers: { label: "Live, from chain", traded: "traded", fees: "in trading fees", burned: "$COMETAIL burned", proof: "How we count" },
   burned: "$COMETAIL burned",
   burnedLastKnown: "last known: the burn figures are not answering",
   feedTitle: "Coins",
