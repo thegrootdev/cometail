@@ -82,6 +82,11 @@ describe("make-up reservation (re-review 170)", () => {
       [{ status: [{ err: null, confirmationStatus: "finalized" }] }, "landed", true],
       [{ status: [{ err: { InstructionError: [1, 1] }, confirmationStatus: "confirmed" }] }, "none", false],
       [{ status: [{ err: null, confirmationStatus: "processed" }] }, "pending", true],
+      // re-review 172: a failure seen only at processed can be rolled back: held, even with the blockhash expired
+      [{ status: [{ err: { InstructionError: [1, 1] }, confirmationStatus: "processed" }], height: 99 }, "pending", true],
+      [{ status: [{ err: { InstructionError: [1, 1] }, confirmationStatus: "processed" }], height: 101 }, "pending", true],
+      [{ status: [{ err: { InstructionError: [1, 1] } } as any] }, "pending", true], // no confirmation level given
+      [{ status: [{ err: { InstructionError: [1, 1] }, confirmationStatus: "finalized" }] }, "none", false],
       [{ status: [null], height: 100 }, "pending", true], // blockhash still valid (height == last valid)
       [{ status: [null], height: 101 }, "none", false], // expired and never seen: can never land
       [{ status: [null, { err: null, confirmationStatus: "confirmed" }], height: 101 }, "landed", true], // seen on the last look
@@ -99,6 +104,17 @@ describe("make-up reservation (re-review 170)", () => {
       browser();
       await reserve(M, C, "tab-a"); await recordSigned(M, C, "tab-a", { ...signed, lastValidBlockHeight: null });
       expect((await settle(chain({ status: [null], valid }), M, C)).kind).eq(kind);
+    }
+  });
+  it("re-review 172: a processed failure holds the claim until a confirmed outcome settles it, either way", async () => {
+    const failed = { err: { InstructionError: [1, 1] }, confirmationStatus: "processed" };
+    for (const [later, kind] of [[{ err: null, confirmationStatus: "confirmed" }, "landed"], [{ err: { InstructionError: [1, 1] }, confirmationStatus: "confirmed" }, "none"]] as const) {
+      browser();
+      await reserve(M, C, "tab-a"); await recordSigned(M, C, "tab-a", signed);
+      expect((await settle(chain({ status: [failed], height: 101 }), M, C)).kind).eq("pending");
+      expect((await reserve(M, C, "tab-b"))?.id).eq("tab-a"); // a second page is still blocked
+      expect((await settle(chain({ status: [later] }), M, C)).kind).eq(kind);
+      expect((await reserve(M, C, "tab-b")) === null).eq(kind === "none");
     }
   });
   it("no Web Locks or no storage: nothing is reserved, so nothing is sent; unreadable data counts as held", async () => {

@@ -2,7 +2,7 @@
 // reservation in localStorage is taken, changed and released only inside a Web Lock shared by every tab of the
 // site, before anything is read over the network. It names the page that holds it; once the wallet has signed, it
 // also holds the transaction's signature and blockhash, recorded before the transaction is sent. A reservation
-// never expires with time: a signed one is released only when the chain shows the transaction failed, or that it
+// never expires with time: a signed one is released only when the chain shows the transaction failed (confirmed), or that it
 // never landed and its blockhash has expired; one that landed stays (the make-up is done). One with no signature
 // may belong to a page that is still building; only the owner releases it by hand, and a page whose reservation
 // was released or replaced stops before its wallet signs or before it sends. Without Web Locks or storage, no
@@ -89,9 +89,11 @@ export async function settle(connection: Connection, mint: string, claim: string
   const status = async () => (await connection.getSignatureStatuses([r.signature!], { searchTransactionHistory: true })).value[0];
   try {
     const s = await status();
-    if (s && s.err === null && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized")) return { kind: "landed", r };
-    if (s && s.err !== null) return (await releaseSigned(mint, claim, r)) ? { kind: "none" } : settle(connection, mint, claim);
-    if (s) return { kind: "pending", r }; // processed: it may still be confirmed
+    // only a confirmed (or finalized) outcome settles it, success or failure: a processed one can still be rolled back
+    const settled = !!s && (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized");
+    if (s && settled && s.err === null) return { kind: "landed", r };
+    if (s && settled) return (await releaseSigned(mint, claim, r)) ? { kind: "none" } : settle(connection, mint, claim);
+    if (s) return { kind: "pending", r }; // processed (or no level given), whatever its result: it may still change
     // not seen: it can still land while its blockhash is valid
     const expired = r.lastValidBlockHeight != null
       ? (await connection.getBlockHeight("confirmed")) > r.lastValidBlockHeight
