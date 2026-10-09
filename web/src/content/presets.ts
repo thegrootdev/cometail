@@ -24,7 +24,7 @@ export const presetsPage = {
   feesToggle: "How fees work",
   common: "Common to all: fees in the quote token, a 1% curve fee with 75% of the fee after Meteora’s cut going to the creator, graduation into a compounding pool, 80% of the liquidity permanently locked in your position, immutable metadata, a fixed supply of 1,000,000,000, a 0.01 SOL creation fee.",
   devnetNote: "On devnet the Standard curve the site launches with is 1/80 of these sizes, so a test curve fills with half a SOL.",
-  raise: "Raise to graduate", start: "Starting market cap", graduation: "Graduation market cap", quoteIs: "Quote", config: "Config",
+  raise: "Raise to graduate", start: "Starting FDV", graduation: "FDV at graduation", quoteIs: "Quote", config: "Config",
   launchWith: "Launch with this preset",
   notOnCluster: "Not created on this network yet.", soon: "Available after the next worker release", explorer: "View config",
   forLaunchpads: "For other launchpads",

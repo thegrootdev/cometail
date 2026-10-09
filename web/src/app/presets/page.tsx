@@ -7,7 +7,7 @@ import { product } from "@/content/cometail";
 import { LAUNCH_PRESETS } from "@/lib/launch-presets";
 import { ADDRESSES, CLUSTER, EXPLORER } from "@/lib/addresses";
 
-export const metadata = { title: `${c.title} · ${product.name}`, description: c.body };
+export const metadata = { title: c.title, description: c.body };
 
 const configOf = (key: string): string | null => LAUNCH_PRESETS.find(p => p.id === key)?.config?.toBase58() ?? null;
 

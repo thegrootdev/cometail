@@ -7,7 +7,7 @@ export const product = {
   domain: "cometail.fun",
   url: "https://cometail.fun",
   description:
-    "A Meteora DBC launchpad where every launch grows a tail of fees, and a market where any creator can sell that tail.",
+    "A fee layer for Meteora: launch a coin whose fees keep working, see what every DBC coin pays its creator, and sell a coin's future fees for SOL.",
   streamTickerPrefix: "t",
   builtOn: "Built on Meteora",
   socialX: "COMETAIL on X",
@@ -49,11 +49,26 @@ export const failures = {
   actionFailed: "That didn’t work. Try again in a moment.",
 } as const;
 
+/** Page titles (the root layout appends " · COMETAIL"). */
+export const pageTitles = {
+  launch: "Launch a coin", sell: "Sell your coin's fees", sky: "All tokens", fees: "Fee Index", tails: "Tails",
+  stats: "Proof: COMETAIL in numbers", portfolio: "Portfolio", vault: "Fee vault", coin: "Coin", admin: "Admin",
+  statsDescription: "Every COMETAIL figure read from Solana mainnet, with the time it was read and a link to check it.",
+  feesDescription: "What every Meteora DBC coin pays its creator, from every launchpad, read from chain.",
+} as const;
+
+/** The wallet button's states (the adapter's BaseWalletMultiButton). */
+export const walletLabels = {
+  "change-wallet": "Change wallet", connecting: "Connecting…", "copy-address": "Copy address", copied: "Copied",
+  disconnect: "Disconnect", "has-wallet": "Connect wallet", "no-wallet": "Connect wallet",
+};
+
 export const nav = {
   home: "Coins",
   launch: "Launch",
   sell: "Sell fees",
   sky: "All tokens",
+  skyShort: "Tokens",
   fees: "Fee Index",
   portfolio: "Portfolio",
   tails: "Tails",
@@ -78,7 +93,7 @@ export const feeIndex = {
   eligibleOnly: "Can launch a tail", mine: "My coins", search: "Name, symbol or mint",
   coin: "Coin", launchpad: "Launchpad", last24h: "Creator · 24 h (est.)", lifetime: "Creator · lifetime (est.)", claimable: "Claimable now (exact)",
   noneClaimed: "nothing claimed yet: all of it is claimable", claimed: "already claimed", claimedAtMost: "already claimed, at most", tail: "Tail",
-  ours: "COMETAIL", canTail: "Config allows a tail", cannotTail: "Cannot launch a tail", window: (h: number) => (h === 0 ? "no history yet" : `over ${h} h only`),
+  ours: "COMETAIL", canTail: "Fees can be sold here", cannotTail: "Fees cannot be sold here", window: (h: number) => (h === 0 ? "no history yet" : `only ${h} h of history so far`),
   tailNote: "The deposit also checks the coin's mint (no freeze authority, metadata-only extensions).",
   estimateNote: "Claimable now is exact: it is what the creator's claim pays today. Lifetime is the pool's lifetime fee counter times the creator's share. Meteora rounds that share down on every trade, so lifetime can be a little high, by under a lamport per trade (it is exact at a 100% share). Already claimed is therefore at most lifetime minus claimable, and nothing has been claimed only when the two are equal. The 24-hour figure is an estimate the same way.",
   rankedByLifetime: (since: string) => `Ranked by lifetime: the index has held 24-hour history only since ${since}.`, rankedByDay: "Ranked by the last 24 hours, then lifetime.",
@@ -150,7 +165,7 @@ export const outsideCoin = {
   unavailable: "The Fee Index is not answering right now.", retry: "Try again",
   stage: "Stage", graduated: "Graduated", bonding: "On its curve", migrating: "Migrating", creatorShare: (pct: number) => `creator ${pct}% of trading fees`,
   launchpad: "Launchpad", ours: "COMETAIL", wallet: "Wallet", creator: "Creator",
-  tail: "Tail", canTail: "Its fees can launch a tail", cannotTail: "Its config cannot launch a tail",
+  tail: "Fee sale", canTail: "Its creator can sell its future fees here", cannotTail: "Its launch config does not allow a fee sale here",
   sell: "Sell these fees", trades: "Trades on the explorer", index: "Fee Index",
 } as const;
 
@@ -169,6 +184,7 @@ export const tailsPage = {
   live: "Live", launched: "On its curve", open: "Not launched", unwound: "Unwound",
   empty: "No tails yet.", unwindAvailable: "open now", noUnwind: "not applicable",
   fromCoin: "This coin's fees fund a tail",
+  feedsCoin: "Tails whose fees feed this coin",
   notLaunched: (n: number) => `${n} vault${n === 1 ? "" : "s"} not launched yet, not shown`,
 } as const;
 
@@ -469,9 +485,9 @@ export const experience = {
   syncing: "Contacting the index",
   offline: "Connection interrupted",
   reconnect: "Try again",
-  atlas: "Token map",
+  atlas: "Fees ready to claim, by coin",
   atlasNote:
-    "The longer a tail, the more fees that coin has earned: fees ready to claim plus fees collected in the last 30 days, compared within each paying token. When collection history is unavailable, we use an estimate from the curve. Gold sparks mark newly seen fees.",
+    "The longer a comet's trail, the more fees that coin has earned: fees ready to claim plus fees collected in the last 30 days, compared within each paying token. When collection history is unavailable, we use an estimate from the curve. Gold sparks mark newly seen fees.",
   atlasEmpty: "An open sky. Room for your coin.",
   atlasEmptyBody:
     "No coins have been indexed in this view yet. They appear here as the data arrives.",
@@ -482,7 +498,7 @@ export const experience = {
   accrued: "Ready to claim",
   harvested: "Collected · 30 days",
   tailScale:
-    "Tails compare fee income within each paying token",
+    "Trails compare fee income within each paying token",
   chartLimit:
     "Up to 60 coins on desktop, 12 on mobile; the list below has all of them.",
   activity: "Activity is observed, never simulated.",
@@ -539,8 +555,8 @@ export const experience = {
     "The connection didn’t complete. Try again to read the latest state.",
   missing: "Nothing at this address",
   missingBody:
-    "This account may be on another cluster, or it may not have been created yet.",
-  back: "Back to all tokens",
+    "Nothing is recorded at this address on Solana yet. Check the address, or come back in a minute if it was just created.",
+  back: "Back to the coins",
   invalid: "This address doesn’t look right.",
   portfolioKicker: "Your corner of the sky",
   portfolioBody:

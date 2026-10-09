@@ -46,7 +46,6 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
         <div><dt>{copy.toTreasury}</dt><dd><Money lamports={data.totals?.toOtherLamports ?? null} /></dd></div>
         <div><dt>{copy.sentDirect}</dt><dd>{data.sentDirectLamports ? <Money lamports={data.sentDirectLamports} /> : copy.unknown}</dd></div>
         <div><dt>{copy.tailsShare}</dt><dd>{data.commitment ? <Money lamports={data.commitment.tailsShareLamports} /> : copy.unknown}</dd></div>
-        <div><dt>{copy.olderClaims}</dt><dd>{data.commitment?.olderConfigClaimsLamports ? <Money lamports={data.commitment.olderConfigClaimsLamports} /> : copy.unknown}</dd></div>
         <div><dt>{copy.claimableNow}</dt><dd>{data.claimableNow?.programConfigsLamports ? <Money lamports={data.claimableNow.programConfigsLamports} /> : copy.unknown}</dd></div>
         <div><dt>{copy.supply}</dt><dd>{coin(data.cometail?.supplyRaw)}</dd></div>
       </dl>

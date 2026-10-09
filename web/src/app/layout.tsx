@@ -11,7 +11,6 @@ export const metadata: Metadata = {
   metadataBase: new URL(product.url),
   title: { default: product.name, template: `%s · ${product.name}` },
   description: product.description,
-  alternates: { canonical: "/" },
   icons: {
     icon: [{ url: "/brand/favicon-32.png", sizes: "32x32" }, { url: "/brand/favicon-64.png", sizes: "64x64" }],
     apple: "/brand/apple-touch-icon.png",

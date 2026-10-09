@@ -405,7 +405,8 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           <div className="token-side">{tradeBox}</div>
         </div>
       )}
-      {view && (
+      {/* an outside coin's fees are in its Fee Index card below; this card stays only for its creator, to claim */}
+      {view && (!outside || !!(publicKey && view.creator.equals(publicKey))) && (
         <section className="panel creator-card">
           <h2 className="panel-heading">{simple.creatorFees}</h2>
           <p className="creator-body">{simple.creatorFeesBody}</p>
@@ -444,7 +445,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           </details>
         </section>
       )}
-      <TailLink mint={mintStr} />
+      <TailLink mint={mintStr} pool={marketToken?.dammPool ?? null} />
       {isOfficial(mintStr) && <BurnPanel />}
       {!isOfficial(mintStr) && <TailPanel mint={mintStr} />}
       {outside && <OutsideCoinFees result={feeResult} pool={view ? pool.toBase58() : null} isCreator={!!(publicKey && view && view.creator.equals(publicKey))} onRetry={reloadFee} />}
@@ -477,19 +478,28 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   );
 }
 
-/** When this coin's fees are deposited in a vault, the tail they fund: a link to its vault and to the Tails page. */
-function TailLink({ mint }: { mint: string }) {
+/** The tails this coin's fees fund (a vault holding them) and the wallet tails that feed this coin (their claims add
+ *  liquidity to its pool): links to each and to the Tails page. */
+function TailLink({ mint, pool }: { mint: string; pool: string | null }) {
   const [vaults, setVaults] = useState<string[]>([]);
+  const [feeders, setFeeders] = useState<string[]>([]);
   useEffect(() => {
     let live = true;
     // every vault holding this coin's fees, on any launchpad's config (the worker joins streams by source mint)
     void api.tails({ source: mint, limit: 100 }).then((r) => { if (live && r) setVaults(r.tails.map((t) => t.vault)); });
+    if (pool) void api.tailList().then((r) => { if (live && r) setFeeders(r.tails.filter((t) => t.targetPool === pool).map((t) => t.mint)); });
     return () => { live = false; };
-  }, [mint]);
-  if (!vaults.length) return null;
+  }, [mint, pool]);
+  if (!vaults.length && !feeders.length) return null;
   return (
     <p className="form-notice mt-3">
-      {tailsPage.fromCoin}: {vaults.map((v, i) => <span key={v}>{i ? ", " : ""}<Link className="text-link" href={`/vault/${v}`}>{short(v)} ↗</Link></span>)} · <Link className="text-link" href="/tails">{tailsPage.title} ↗</Link>
+      {vaults.length > 0 && <>{tailsPage.fromCoin}: {vaults.map((v, i) => <span key={v}>{i ? ", " : ""}<Link className="text-link" href={`/vault/${v}`}>{short(v)} ↗</Link></span>)} · </>}
+      {feeders.length > 0 && <>{tailsPage.feedsCoin}: {feeders.map((m, i) => <span key={m}>{i ? ", " : ""}<TailName mint={m} /></span>)} · </>}
+      <Link className="text-link" href="/tails">{tailsPage.title} ↗</Link>
     </p>
   );
+}
+function TailName({ mint }: { mint: string }) {
+  const m = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mint)}`);
+  return <Link className="text-link" href={`/token/${mint}`}>{tickerText(shownSymbol(mint, m.data?.data?.symbol)) || short(mint)}</Link>;
 }

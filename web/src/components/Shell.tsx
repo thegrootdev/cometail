@@ -2,12 +2,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
-import { nav, product, experience as copy } from "@/content/cometail";
+import { nav, product, experience as copy, walletLabels } from "@/content/cometail";
 import { PriceReference } from "./Money";
 import { CLUSTER } from "@/lib/addresses";
 const WalletButton = dynamic(
   () =>
-    import("@solana/wallet-adapter-react-ui").then((m) => m.WalletMultiButton),
+    // the adapter's own button with our words ("Connect wallet", not the library's "Select Wallet")
+    import("@solana/wallet-adapter-react-ui").then((m) => function WalletMultiButton() { return <m.BaseWalletMultiButton labels={walletLabels} />; }),
   {
     ssr: false,
     loading: () => (
@@ -49,7 +50,9 @@ export function Shell({
     { href: "/fees", label: nav.fees, icon: "fees" },
     { href: "/portfolio", label: nav.portfolio, icon: "portfolio" },
   ];
-  const desktop = [...links.slice(0, 1), { href: "/sky", label: nav.sky, icon: "" }, ...links.slice(1)];
+  const desktop = [...links.slice(0, 1), { href: "/sky", label: nav.sky, icon: "" }, ...links.slice(1, 4), { href: "/tails", label: nav.tails, icon: "" }, { href: "/stats", label: nav.stats, icon: "" }, ...links.slice(4)];
+  // the phone bar: every page a first-time visitor looks for, short labels
+  const phone = [links[0], { href: "/sky", label: nav.skyShort, icon: "sky" }, links[1], links[2], links[3], { href: "/tails", label: nav.tails, icon: "tails" }, links[4]];
   return (
     <div className="site-frame">
       <a className="skip-link" href="#content">
@@ -110,7 +113,7 @@ export function Shell({
         </span>
       </footer>
       <nav className="mobile-nav" aria-label={copy.menu}>
-        {links.map((l) => (
+        {phone.map((l) => (
           <Link
             key={l.href}
             href={l.href}
@@ -131,6 +134,8 @@ function TabIcon({ name }: { name: string }) {
     launch: <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v8M8 12h8" /></>,
     sell: <><circle cx="9" cy="12" r="5" /><path d="M14 8.5a5 5 0 1 1 0 7" /><path d="M9 10v4" /></>,
     fees: <><path d="M5 19V11M10 19V6M15 19v-6M20 19V9" /></>,
+    sky: <><path d="M12 4.5l1.6 3.4 3.7.5-2.7 2.6.7 3.7L12 13l-3.3 1.7.7-3.7-2.7-2.6 3.7-.5z" /><path d="M5 19.5h.01M19 18h.01M18.5 5.5h.01" /></>,
+    tails: <><circle cx="16.5" cy="7.5" r="3" /><path d="M14.2 9.8 5 19M12.5 8 6 14.5M16 10.5 10.5 16" /></>,
     portfolio: <><rect x="4" y="7.5" width="16" height="11.5" rx="2.5" /><path d="M9 7.5V6a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 6v1.5M4 12.5h16" /></>,
   };
   return <svg className="tab-icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;

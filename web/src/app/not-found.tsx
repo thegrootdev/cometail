@@ -6,8 +6,8 @@ export default function NotFound() {
   return (
     <Shell>
       <DataState title={copy.notFound} body={copy.notFoundBody}>
-        <Link className="button button-primary" href="/sky">
-          {copy.back} ↗
+        <Link className="button button-primary" href="/">
+          ← {copy.back}
         </Link>
       </DataState>
     </Shell>

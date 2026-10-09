@@ -43,6 +43,7 @@ export default function SkyPage() {
       return { lead, sources: sorted, claimable: sum((s) => s.claimableLamports) ?? "0", realized30d: sum((s) => s.realized30dLamports) };
     });
   }, [shown]);
+  const anyRealized = coins.some((c) => c.realized30d !== null);
   return (
     <Shell wide>
       <PageHeader
@@ -50,10 +51,10 @@ export default function SkyPage() {
         title={sky.title}
         body={copy.atlasNote}
       >
-        <Badge tone="ion">SOLANA / METEORA</Badge>
       </PageHeader>
       <StarAtlas
-        streams={coins.map((c) => c.lead)}
+        // one comet per coin, carrying the coin's whole claimable (its curve and its locked positions), as its row below does
+        streams={coins.map((c) => ({ ...c.lead, claimableLamports: c.claimable, realized30dLamports: c.realized30d }))}
         loading={loading}
         error={!!error}
         onRetry={reload}
@@ -90,7 +91,7 @@ export default function SkyPage() {
                 <th>{copy.source}</th>
                 <th>{copy.stage}</th>
                 <th>{copy.accrued}</th>
-                <th>{copy.harvested}</th>
+                {anyRealized && <th>{copy.harvested}</th>}
                 <th>{copy.eligibility}</th>
                 <th />
               </tr>
@@ -113,11 +114,11 @@ export default function SkyPage() {
                     </Badge>
                   </td>
                   <td className="money" data-label={copy.accrued}><Money quote={quoteAsset(s.quoteMint)} lamports={claimable} /></td>
-                  <td data-label={copy.harvested}>
+                  {anyRealized && <td data-label={copy.harvested}>
                     {realized30d === null
                       ? "—"
                       : <Money quote={quoteAsset(s.quoteMint)} lamports={realized30d} />}
-                  </td>
+                  </td>}
                   <td data-label={copy.eligibility}>
                     <ul className="source-list">
                       {sources.map((row) => (

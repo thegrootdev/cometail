@@ -180,7 +180,7 @@ export function Badge({
 }
 export function BackToSky() {
   return (
-    <Link href="/sky" className="text-link">
+    <Link href="/" className="text-link">
       ← {copy.back}
     </Link>
   );

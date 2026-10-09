@@ -194,13 +194,14 @@ export function StarAtlas({
     });
     // Labels must not sit on each other: in reading order, push a label below any earlier
     // label whose box it overlaps (the comet keeps its own head; only the text moves).
-    const glyph = compact ? 9 : 6.5, lineHeight = compact ? 40 : 30;
+    // the labels carry a 3px outline: measure them a little wide so neighbours keep a gap
+    const glyph = compact ? 10 : 7.5, lineHeight = compact ? 40 : 32;
     const boxes: { left: number; right: number; top: number; bottom: number }[] = [];
     return placed
       .sort((a, b) => a.y - b.y || a.x - b.x)
       .map((c) => {
         const chars = Math.max((bareSymbol(shownSymbol(c.s.baseMint, c.s.token?.symbol)) || "PENDING").length, feeLabel(c.s).length);
-        const left = c.x + 12, right = left + chars * glyph;
+        const left = c.x + 12, right = left + chars * glyph + 8;
         let top = c.y + 8;
         for (const box of boxes) {
           if (left < box.right && right > box.left && top < box.bottom && top + lineHeight > box.top) top = box.bottom + 2;
@@ -214,7 +215,7 @@ export function StarAtlas({
   return (
     <div className="atlas-surface">
       <div className="atlas-toolbar">
-        <span className="micro">{copy.atlas} / SOLANA</span>
+        <span className="micro">{copy.atlas}</span>
         <span
           className={`live-status ${error ? "is-offline" : ""}`}
           title={
@@ -272,23 +273,6 @@ export function StarAtlas({
             opacity={0.13 + hash(`so${i}`) * 0.33}
           />
         ))}
-        <g className="atlas-coordinates">
-          <text x="20" y="25">
-            00h
-          </text>
-          <text x={width / 2 - 10} y="25">
-            12h
-          </text>
-          <text x={width - 48} y="25">
-            24h
-          </text>
-          <text x="20" y="397">
-            −60°
-          </text>
-          <text x={width - 56} y="397">
-            +60°
-          </text>
-        </g>
         {comets.map(({ s, x, y, len, labelY }) => (
           <a
             key={s.pool}
@@ -387,21 +371,16 @@ export function AtlasStats({ streams }: { streams: SkyStream[] }) {
   })}</span>;
   return (
     <div className="atlas-stats">
-      <Stat label={copy.known} value={String(streams.length)} tone="plain" />
+      <Stat label={copy.known} value={String(new Set(streams.map((s) => s.baseMint)).size)} tone="plain" />
       <Stat
         label={copy.accrued}
         value={streams.length ? totals("claimableLamports") : "—"}
         tone="dust"
       />
-      <Stat
-        label={copy.harvested}
-        value={
-          streams.some((s) => s.realized30dLamports !== null)
-            ? totals("realized30dLamports")
-            : "—"
-        }
-        tone="plain"
-      />
+      {/* collection history is shown only once the index has it; until then the column is left out, not dashed */}
+      {streams.some((s) => s.realized30dLamports !== null) && (
+        <Stat label={copy.harvested} value={totals("realized30dLamports")} tone="plain" />
+      )}
     </div>
   );
 }
