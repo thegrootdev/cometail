@@ -2,28 +2,70 @@
   <a href="https://cometail.fun"><img src="web/public/brand/og.png" alt="COMETAIL" width="640"></a>
 </p>
 
-<p align="center"><b>A token launchpad on Meteora where a creator can sell a coin's future trading fees for SOL today.</b><br>
+<p align="center"><b>A fee layer for Meteora. Every Dynamic Bonding Curve coin earns fees on every trade; COMETAIL makes those fees visible, puts them to work and lets a creator sell them.</b><br>
 <i>Launch a comet. Sell the tail.</i></p>
 
 <p align="center">
+  <a href="https://github.com/thegrootdev/cometail/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/thegrootdev/cometail/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Solana mainnet-beta" src="https://img.shields.io/badge/Solana-mainnet--beta-9945FF?logo=solana&logoColor=white">
-  <img alt="Anchor 1.2.0" src="https://img.shields.io/badge/Anchor-1.2.0-2563EB">
   <img alt="Meteora DBC, DAMM v2, DLMM" src="https://img.shields.io/badge/Meteora-DBC%20%C2%B7%20DAMM%20v2%20%C2%B7%20DLMM-F5C451">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white">
-  <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white">
-  <a href="https://cometail.fun"><img alt="cometail.fun" src="https://img.shields.io/badge/site-cometail.fun-5BC8FF"></a>
+  <a href="https://verify.osec.io/status/5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg"><img alt="vault program verified" src="https://img.shields.io/badge/vault%20program-verified-2EA043"></a>
+  <a href="https://verify.osec.io/status/BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1"><img alt="burn program verified" src="https://img.shields.io/badge/burn%20program-verified-2EA043"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="https://x.com/cometailfun"><img alt="@cometailfun on X" src="https://img.shields.io/badge/X-%40cometailfun-000000?logo=x&logoColor=white"></a>
 </p>
 
-<p align="center">Live on Solana mainnet since October 4, 2026 · <a href="https://cometail.fun">cometail.fun</a> · <a href="https://cometail.fun/sell">sell your fees</a> · <a href="https://cometail.fun/launch">launch a token</a> · <a href="https://cometail.fun/sky">explore tokens</a></p>
+<p align="center">Live on Solana mainnet since October 4, 2026 · <a href="https://cometail.fun">cometail.fun</a> · <a href="https://cometail.fun/stats">the numbers, with sources</a> · <a href="https://cometail.fun/fees">Fee Index</a> · <a href="https://cometail.fun/launch">launch a coin</a> · <a href="https://cometail.fun/sell">sell your fees</a></p>
 
-<!-- Demo video: link goes here after the launch. -->
+<!-- Demo video: link goes here. -->
 
-## What it does
+## Why
 
-- **Launch a token.** Six fixed price curves on Meteora's Dynamic Bonding Curve (DBC), 0.01 SOL to launch. Every trade pays a 1% fee: 60% of it is yours while the coin is on its curve, 32% once it trades in its pool. When the curve completes, the liquidity moves to a DAMM v2 pool and locks for good (80% in your position, 20% in the protocol's).
-- **Sell your fees.** A coin that still earns fees can turn its future fees into SOL now. Its creator fee rights (or a permanently locked DAMM v2 position) go into a vault, and the vault launches a *fee token* on its own curve. When that curve completes you receive your chosen share of the raise (25%, 50% or 75%) in SOL. From then on the coin's fees buy the fee token back and burn it. If the curve has not completed thirty days after launch, you can unwind and take your fee rights back.
-- **For buyers of a fee token.** Holding it gives no claim on the fees. The fees fund standing buy orders on a DLMM pair below the market price, and whatever those orders buy is burned. Finite orders, no guaranteed floor; every disclosure is on the vault page.
+Meteora's Dynamic Bonding Curve (DBC) runs hundreds of thousands of launches, and every one of them pays a fee on every trade. Those fees are hard to see (they sit in each pool until someone claims them), they mostly do nothing once claimed, and a creator who wants SOL today cannot sell next month's fees. Only 1.4% of DBC curves graduate ([Pine Analytics, Q1 2026](https://pineanalytics.substack.com/p/meteora-q1-2026-quarterly-report)), so for most coins the fees are the only lasting value they produce. COMETAIL treats those fees as the asset.
+
+## What is live
+
+- **Fee Index** ([`/fees`](https://cometail.fun/fees)). Every DBC pool on mainnet, from every launchpad, read from chain: what each coin's creator has earned, what is claimable right now (exact), and which launchpads pay their creators most. 427,797 pools on 224,900 configs, refreshed every five minutes.
+- **A launchpad whose fees work** ([`/launch`](https://cometail.fun/launch)). Six fixed price curves on DBC for 0.01 SOL. Coins graduate into DAMM v2 pools in compounding fee mode with the liquidity permanently locked. On the launch configs since October 7 the protocol's share of every fee is claimed through the burn program, which sends half of it to a reserve that can only buy $COMETAIL and burn it.
+- **$COMETAIL buyback and burn** (`programs/cometail_burn`, verified build). Claims fees through program-derived claimer configs, splits them 50/50 on chain, buys $COMETAIL in bounded chunks at most every ten minutes and burns all of it in the same instruction.
+- **Tails** ([`/tails`](https://cometail.fun/tails)). Coins we launched from our own wallet whose every creator fee claim is split in one transaction: half kept, a quarter to the burn reserve, a quarter added to $COMETAIL's pool as permanently locked liquidity. The split is done by us, in the open; the indexer lists every claim, split or not.
+- **Fee sales** ([`/sell`](https://cometail.fun/sell), `programs/cometail_vault`, verified build). A creator moves a coin's DBC fee rights, or a locked DAMM v2 position, into a program vault; the vault launches a *fee token* on its own curve and pays the seller 25%, 50% or 75% of the raise when that curve completes. On mainnet today one vault is launched and harvesting (2.00 SOL of fees collected so far); its fee token has not graduated yet. After graduation the vault's fees fund DLMM limit orders below the market and burn what they fill. That DLMM step is tested against Meteora's mainnet binaries (LiteSVM gates) and on devnet, and fires on mainnet when the first fee token graduates. Holding a fee token gives no claim on the fees: the buy orders are finite and there is no price floor (every disclosure is on the vault page).
+- **Proof** ([`/stats`](https://cometail.fun/stats)). Every figure below, live, each with the time it was read and a link to check it; a public read API and a TypeScript SDK.
+
+## The numbers
+
+Read on 2026-10-09 at 14:35 UTC; live and linked at [cometail.fun/stats](https://cometail.fun/stats). SOL figures only; "us" means the team's own wallets.
+
+| Figure | Value | Source |
+|---|---|---|
+| Coins launched on our configs | 12 (4 by us, 8 by others) | [`/api/tokens`](https://api.cometail.fun/api/tokens?sort=newest&limit=100) |
+| Graduated to a Meteora pool | 2 ($COMETAIL and TAIL, both ours) | DBC pool accounts, `/api/stats` |
+| Trading volume | 2,066.08 SOL over 4,038 trades by 869 wallets (201.94 SOL on coins launched by others) | every indexed swap on the curves and graduated pools ([`/api/stats`](https://api.cometail.fun/api/stats)); $COMETAIL's 24 h volume matched DexScreener within 0.5% |
+| Trading fees generated | 20.45 SOL, of which 3.85 SOL paid to Meteora's protocol | the pools' own counters on chain: DBC `totalTradingQuoteFee` / `totalProtocolQuoteFee`, DAMM v2 `totalLpBFee` / `totalProtocolBFee` |
+| $COMETAIL burned | 4,828,868 in 25 buybacks, 0.663 SOL spent | the burn program's state account ([`/api/burn`](https://api.cometail.fun/api/burn)) |
+| Liquidity permanently locked | $COMETAIL pool 99.98%, TAIL pool 99.99% | DAMM v2 `permanentLockLiquidity` / `liquidity` |
+| Tail claims | 2 split (one made up later): 0.2354 SOL claimed, 0.0588 SOL to the burn, 0.0292 SOL + 187,089 $COMETAIL locked | [`/api/tail-claims`](https://api.cometail.fun/api/tail-claims) |
+| Fee-sale vaults | 1 launched, 2.00 SOL harvested, 1.448 SOL waiting for buybacks | vault accounts ([`/api/vaults`](https://api.cometail.fun/api/vaults)) |
+| Fee Index coverage | 427,797 DBC pools, 224,900 configs, 4,025 creator claims confirmed | [`/api/fees/status`](https://api.cometail.fun/api/fees/status) |
+
+## Verified programs
+
+Both programs were rebuilt from this repository by OtterSec's public verifier; the result matches the bytes on mainnet.
+
+| Program | Address | Verified build | Source |
+|---|---|---|---|
+| Vault (fee sales) | [`5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg`](https://solscan.io/account/5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg) | [verify.osec.io](https://verify.osec.io/status/5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg) | [`741e8e7`](https://github.com/thegrootdev/cometail/tree/741e8e751825b005b6cedc359a7e8c6d937997dd) |
+| Burn ($COMETAIL buyback and burn) | [`BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1`](https://solscan.io/account/BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1) | [verify.osec.io](https://verify.osec.io/status/BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1) | [`5895634`](https://github.com/thegrootdev/cometail/tree/58956342a8c9e65892ea4fcad2704b579959854b) |
+
+## How it uses Meteora
+
+| Meteora program | What COMETAIL calls | Where |
+|---|---|---|
+| DBC | `initialize_virtual_pool_with_spl_token`, `transfer_pool_creator`, `claim_creator_trading_fee`, `withdraw_migration_fee`, `creator_withdraw_surplus` (CPI from the vault program); `claim_trading_fee`, `claim_partner_pool_creation_fee`, `partner_withdraw_surplus` (CPI from the burn program); the migration crank and swap quotes (worker, site); thirteen protocol-owned configs | `programs/cometail_vault/src/instructions/{launch,streams,harvest}.rs`, `programs/cometail_burn/src/instructions/claims.rs`, `worker/src/bootstrap.ts`, `web/src/lib/dbc.ts` |
+| DAMM v2 | `claim_position_fee`, `create_position`, `split_position`, `update_delegate_permission` (vault CPI); `swap` (burn buyback CPI); `add_liquidity` and `permanent_lock_position` (tail claims); compounding fee mode on every graduated pool | `programs/cometail_vault/src/instructions/{harvest,streams,deposit}.rs`, `programs/cometail_burn/src/instructions/buyback.rs`, `packages/client/src/tail.ts` |
+| DLMM | `place_limit_order`, `cancel_limit_order`, `close_limit_order_if_empty` (vault CPI), with bin arrays and limit orders decoded on chain; pair and bin-array setup (keeper). Tested against Meteora's mainnet binaries and on devnet; runs on mainnet when a fee token graduates | `programs/cometail_vault/src/instructions/ladder.rs`, `worker/src/bootstrap.ts`, `tests/gates`, `tests/regression/dlmm.test.ts` |
+
+The release gates run the programs against Meteora's own mainnet binaries in LiteSVM (`docs/release-gates.md`).
 
 ## How it works
 
@@ -73,6 +115,7 @@ stateDiagram-v2
     [*] --> Open: create_vault
     Open --> Open: deposit_dbc_rights / deposit_position / withdraw_stream
     Open --> Launched: launch (the fee token starts on a stream config)
+    Launched --> Launched: harvest (fees collect while the fee token's curve fills)
     Launched --> Live: register_own_position (the fee token's curve completed and migrated; cashout paid the seller)
     Launched --> Unwound: unwind (thirty days after launch, curve still below its target)
     Live --> Live: harvest, route, settle (collect fees, place buy orders, burn fills)
@@ -110,33 +153,23 @@ The program custodies fee rights under a program-derived vault, launches the fee
 Half of the protocol's revenue buys $COMETAIL on its pool and burns it, on chain, through a separate program
 (`programs/cometail_burn`). The launch configs created for it name the program as fee claimer: anyone can
 trigger the claim, and the program splits every claim 50/50 between its burn reserve and the protocol treasury.
-For today's configs and the tails' share, the owner sends half to the reserve. A buyback spends a bounded chunk
+For the launch configs created before October 7 and for the tails' share, the owner sends half to the reserve. A buyback spends a bounded chunk
 at most every ten minutes and burns everything it bought in the same instruction. The site shows the total
 burned and every burn with its signature. Design, bounds and limits: `docs/burn.md`.
 
 ### Tails
 
-A tail is a coin, $tX, launched on COMETAIL and pointed at an existing coin $X. The first is $tCOMETAIL, pointed
-at $COMETAIL. $X stays exactly as it is: nobody deposits or sells $X's fees and nothing is taken from it.
-
-The owner launches a tail from the owner's own wallet on the Take 50% fee-sale config: no vault, no deposit, and
-no program of ours involved. When the owner claims the tail's creator fees on `/admin/tails`, the same transaction
-splits them: half stays in the wallet, a quarter goes to the burn reserve (which can only buy $COMETAIL and burn
-it), and a quarter becomes $COMETAIL liquidity in a position the wallet holds, permanently locked by DAMM v2 in
-that transaction. **The split is done by us, by hand, in the open; no code forces it.** The tail's page lists
-every claim of the tail's creator fees with its transaction, found through the creator wallet's own transactions,
-including any claim that was not split: the SOL sent to the burn, the $COMETAIL the buybacks that spent that SOL
-bought and burned (traced first in, first out through the reserve, shown only when the reserve's ledger proves it)
-and the liquidity locked. A curve claim that was not split can be made up once, later, from the wallet's SOL: the same
-two quarters, in one transaction whose memo names the tail and the claim; the page keeps the claim as not split and
-shows the make-up under it with its transaction. At graduation, 50% of the raise goes to the creator wallet
-(DBC's creator migration fee) and the rest is locked in the tail's own pool; after graduation, the creator
-position's fees are claimed through the burn program's owner claim, which sends half to the reserve by itself.
-How it fits together: `docs/architecture.md` (Tails); the numbers: `docs/economics.md`.
+A tail is a coin whose fees feed another coin. Ours are launched from the owner's wallet on the Take 50% config,
+with no vault and no program of ours involved; the first is $tCOMETAIL, pointed at $COMETAIL. Each claim of a
+tail's creator fees, made on `/admin/tails`, is split in the same transaction: half stays in the wallet, a quarter
+goes to the burn reserve and a quarter becomes $COMETAIL liquidity, permanently locked by DAMM v2. **No code forces
+the split; we do it in the open.** The indexer finds every claim through the wallet's own transactions, split or
+not, and the tail's page shows each one with its transaction, what its quarter bought and burned, and the liquidity
+it locked. Details: `docs/architecture.md` (Tails).
 
 ## On mainnet
 
-Program deployed and protocol initialized on October 4, 2026. The upgrade authority is the admin wallet. The deployed bytes are the reviewed release (`docs/deploy.md`). Every address below is from `configs/mainnet.json`.
+Vault program deployed and protocol initialized on October 4, 2026; burn program live on October 7. The upgrade authority of both is the admin wallet, and both builds are verified (above). Every address below is from `configs/mainnet.json`.
 
 | What | Address |
 |---|---|
@@ -213,7 +246,7 @@ The three vault-internal ratios are program constants (`programs/cometail_vault/
 | `tests` | The LiteSVM harness against the real Meteora programs, the regression suite, the release gates, the devnet and mainnet scripts. |
 | `idls` | Pinned Meteora IDLs. |
 | `deploy` | Service units, reverse-proxy config and the worker environment example. |
-| `docs` | Architecture, economics, security, release gates, deploy and hosting, the API, the runbooks. |
+| `docs` | Architecture, economics, security, the burn, release gates, deploy and hosting, the API. |
 
 ### Running it locally
 
@@ -225,7 +258,7 @@ pnpm test:program                                   # one process per test file
 pnpm dev:web                                        # copy web/.env.local.example to web/.env.local first
 ```
 
-Toolchain used: Node 22.12 or newer, pnpm 12.8, Rust 1.99, Solana CLI 3.1.10, Anchor CLI 1.2.0. The program is built in the sBPF v0 format (`--arch v0`): Anchor 1.2 defaults to v3, which the LiteSVM release in the harness cannot load. The release build and its hash are in `docs/deploy.md`.
+Toolchain used: Node 22.12 or newer, pnpm 12.8, Solana CLI 3.1.10 (platform tools v1.52, rustc 1.89 for the SBF build), Anchor CLI 1.2.0. The program is built in the sBPF v0 format (`--arch v0`): Anchor 1.2 defaults to v3, which the LiteSVM release in the harness cannot load. The release build and its hash are in `docs/deploy.md`.
 
 ### Read API and SDK
 
@@ -251,4 +284,6 @@ const api = new CometailClient({ baseUrl: "https://api.cometail.fun" });
 - [`docs/api.md`](docs/api.md): the read API and the feed.
 - [`docs/presets.md`](docs/presets.md): the launch presets, for any launchpad.
 
-Built on Meteora: DBC for the curves, DAMM v2 for the pools after completion, DLMM for the buy orders. All three are load-bearing.
+Built on Meteora: DBC for the curves and fees, DAMM v2 for the locked pools after completion and the burn's buybacks, DLMM for the fee tokens' buy orders once they graduate.
+
+MIT licensed (`LICENSE`).

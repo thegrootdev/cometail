@@ -7,7 +7,10 @@ cut the same money twice.
 
 ## Configs
 
-Four DBC partner configs. Common to all: WSOL quote, fees collected in quote, a flat 1%
+Mainnet carries thirteen protocol-owned DBC configs: six launch presets, three fee-sale
+configs and, since October 7, four launch configs whose fees the burn program claims (the
+README and `docs/presets.md` list them). The four below set the economics of the two
+products; the other presets change the curve or the quote, not the splits. Common to these four: WSOL quote, fees collected in quote, a flat 1%
 curve fee, creator 75% of the fee after Meteora's 20% (so the protocol's partner share is
 25%, which is 20% of the whole fee), migration into a compounding DAMM v2 pool (1% fee,
 half of LP fees reinvested), liquidity 80% creator / 20% protocol, both permanently locked,
@@ -16,19 +19,19 @@ immutable metadata, a fixed supply of 1,000,000,000 with 6 decimals, initial mar
 
 | Config | Migration fee | To the creator | Creation fee | Raise |
 |---|---|---|---|---|
-| stream-25 | 25% | 100% | 0 | 37.5 SOL |
-| stream-50 | 50% | 100% | 0 | 40.7 SOL |
-| stream-75 | 75% | 100% | 0 | 44.5 SOL |
-| plain | 0 | 0 | 0.01 SOL | 34.8 SOL |
+| fee sale, take 25% | 25% | 100% | 0 | 37.5 SOL |
+| fee sale, take 50% | 50% | 100% | 0 | 40.7 SOL |
+| fee sale, take 75% | 75% | 100% | 0 | 44.5 SOL |
+| plain (Standard) | 0 | 0 | 0.01 SOL | 34.8 SOL |
 
 ## Per 1 SOL of each revenue line
 
 | Line | Meteora | Protocol | Depositor / creator | Buybacks | Stays in pool |
 |---|---|---|---|---|---|
-| Stream token, curve fee | 0.20 | 0.20 | 0.32 | 0.28 | |
-| Stream token, graduated pool fee | 0.20 | 0.08 | 0.16 | 0.16 | 0.40 |
+| Fee token, curve fee | 0.20 | 0.20 | 0.32 | 0.28 | |
+| Fee token, graduated pool fee | 0.20 | 0.08 | 0.16 | 0.16 | 0.40 |
 | Income from deposited streams | taken upstream | 0.20 | 0 | 0.80 | |
-| Stream token cash-out | 0.2% of migrated liquidity | 0 | 25 / 50 / 75% of the raise | | the rest, locked |
+| Fee token cash-out | 0.2% of migrated liquidity | 0 | 25 / 50 / 75% of the raise | | the rest, locked |
 | Plain launch, curve fee | 0.20 | 0.20 | 0.60 | | |
 | Plain launch, graduated pool fee | 0.20 | 0.08 | 0.32 | | 0.40 |
 | Plain launch, creation fee (0.01 SOL) | 0.001 | 0.009 | | | |

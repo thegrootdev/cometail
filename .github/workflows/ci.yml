@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck the worker
+        run: pnpm --filter @cometail/worker exec tsc --noEmit -p .
+      - name: Typecheck and lint the site
+        run: |
+          pnpm --filter @cometail/web exec tsc --noEmit -p .
+          pnpm --filter @cometail/web exec eslint src
+      # the program gates and the LiteSVM regressions need the SBF toolchain and the built programs: they run locally (docs/release-gates.md)
+      - name: Indexer and accounting regressions
+        working-directory: tests
+        run: >-
+          ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 300000
+          regression/stats.test.ts regression/tail-math.test.ts regression/tail-index.test.ts
+          regression/makeup-reservation.test.ts regression/burn-index.test.ts

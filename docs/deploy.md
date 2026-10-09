@@ -58,12 +58,13 @@ is returned when the buffer closes, while the existing program-data account keep
 | ELF | `cometail_vault.so`, 710,400 bytes, SHA-256 `562475c161a05d665b35ddc4a55a731ea0797d80cffa3390f5d8f7733766c4d2` |
 | Source | commit 741e8e7 (the review fix to `register_pair`'s activation clock); built from that tree |
 | Toolchain | anchor-cli 1.2.0, solana-cargo-build-sbf 3.1.10, platform-tools v1.52, rustc 1.89.0, `anchor build --arch v0` |
-| Where it runs | devnet program data since the upgrade at slot 507,050,729 (the first 710,400 bytes of the program dump hash to the value above; the rest is zero padding) |
+| Where it runs | mainnet program `5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg` since 2026-10-04, and devnet since the upgrade at slot 507,050,729 (on both, the first 710,400 bytes of the program dump hash to the value above; the rest is zero padding) |
+| Verified | OtterSec's public verifier rebuilt commit 741e8e7 and matched the deployed program (executable hash `69490838a1bda35bec75d1484f26a06b6b49ca104aa9b7f43ad5a5c84ef9b6fa`): https://verify.osec.io/status/5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg |
 | Tests | the whole LiteSVM suite against these bytes: 14 files, 46 tests, 0 failures (2026-10-03) |
-| Program-data rent | 3.60971084 SOL for 710,400 + 45 bytes at the rate quoted 2026-10-03 (`solana rent 710445 -um`); re-quote on the day |
+| Program-data rent | 3.60971084 SOL for 710,400 + 45 bytes (`solana rent 710445 -um`, 2026-10-03) |
 
 The earlier artifact (`bac11c56…`, 710,168 bytes, the unwind build) is retired: it admitted a
-slot-activated DLMM pair before its activation slot (review finding, gate 04 covers it now).
+slot-activated DLMM pair before its activation slot (gate 04 covers it now).
 The mainnet deploy uses the bytes above, not a fresh build: check `sha256sum` before
 `solana program deploy`, and after it compare the first 710,400 bytes of `solana program dump`.
 
@@ -98,7 +99,10 @@ TPUs (the default, without `--use-rpc`) has been more reliable than `--use-rpc`.
 | `opt-level = "z"`, 2026-10-07 (first candidate, retired) | 363,824 | 899ae204591ac30f73a500ab042e03ed1eaf2c6fbf3a9fc95b5c1ecadc3c463d |
 | `opt-level = "z"`, 2026-10-07 (measured claims, owner claims) | 387,864 | e1a73961c7a5d2f6f2351e5120365fd982b4f37b2853dfd475dbeb9297647b46 |
 
-Devnet: deployed 2026-10-07 at slot 508,351,514 with `--max-len 363824` (program-data rent 1.84910476 SOL on devnet;
-re-quote mainnet with `solana rent 363869 -um` on the day), the dump hashing to the build above.
+Mainnet: program `BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1`, live since 2026-10-07, running the 387,864-byte build
+above. OtterSec's public verifier rebuilt commit 5895634 and matched it (executable hash
+`8ead5d24c5f29374a34a50dfd22948013754bd2c7fcf2db56616294e5321f7d1`):
+https://verify.osec.io/status/BuN6MuTRCD7VuzwRpvJKPFwh86bsU81L23tKtRBofhX1. Devnet: deployed 2026-10-07 at slot
+508,351,514 with `--max-len 363824`, the dump hashing to the build above.
 The verifiable rebuild for mainnet uses the vault's arguments with `--library-name cometail_burn`:
 `--base-image solanafoundation/solana-verifiable-build:3.1.10 --cargo-build-sbf-args="--tools-version v1.57"`.

@@ -3,8 +3,10 @@
 ## Who holds what
 
 - Every mainnet authority (program upgrade, protocol admin, treasury, partner configs) is
-  the protocol owner's own wallet. That wallet never touches the build machine. Deploys and
-  upgrades are signed from a verifiable build on the owner's machine.
+  one of the protocol owner's own wallets, and none of them ever touches the server that runs
+  the worker. Both programs were deployed by a one-time deployer key that handed the upgrade
+  authority to the admin wallet and read it back; both deployed builds are verified against
+  this repository by OtterSec's public verifier (the README links the records).
 - Revoking the upgrade authority is not planned. That means the program's asset-handling
   code can be replaced by the owner regardless of the admin restrictions below. Every vault
   page says so.
@@ -35,7 +37,7 @@
   stream with its fees attached.
 - Place anything but buy orders, above the depositor's price cap, past the period budget or
   the resting-order cap.
-- Leave stream tokens in the vault after a settlement: every `settle` burns the whole
+- Leave fee tokens in the vault after a settlement: every `settle` burns the whole
   balance before it returns (tokens sent to the vault between settlements wait for the
   next one).
 

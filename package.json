@@ -2,7 +2,7 @@
   "name": "cometail",
   "private": true,
   "version": "0.1.0",
-  "description": "Launch a comet. Sell the tail. A Meteora DBC launchpad plus cash-flow vaults that turn fee streams into tradable stream tokens.",
+  "description": "A fee layer for Meteora: a DBC launchpad whose fees burn $COMETAIL and lock liquidity, a Fee Index over every DBC pool, and vaults that sell a coin's future fees as a fee token.",
   "packageManager": "pnpm@12.8.1",
   "engines": {
     "node": ">=22.12"

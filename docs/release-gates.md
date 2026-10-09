@@ -1,8 +1,10 @@
 # Release gates
 
 Nothing goes to mainnet until every one of these passes. They run as LiteSVM tests against
-the saved mainnet Meteora binaries with `pnpm --filter @cometail/tests gates`. The
-repository currently has no CI workflow; retain the local per-file results with the release.
+the saved mainnet Meteora binaries with `pnpm --filter @cometail/tests gates`. They need the
+SBF toolchain and the built programs, so they run locally; retain the per-file results with the
+release. CI (`.github/workflows/ci.yml`) typechecks the worker and the site, lints the site and
+runs the indexer and accounting regressions on every push.
 
 1. **Eligibility**: non-WSOL quotes, base-fee modes, transfer-hook pools, freeze
    authorities, disallowed extensions, migration-outcome mismatches, vested liquidity,
@@ -53,3 +55,11 @@ repository currently has no CI workflow; retain the local per-file results with 
     paid (WSOL and lamport gifts reported as carried); owner claims on an older config and on a position split exactly half
     of what they paid (more than an earlier scan) to the reserve and the rest only to the signer's own WSOL account,
     leave carried funds alone, and refuse a stranger's destination or signature.
+21. **Tail from a wallet** (`tests/gates/21-tail-wallet-creator.test.ts`): a coin created by a plain wallet on a
+    fee-sale config gets exactly what a vault gets: the same creator curve fees, the same graduation payout (DBC's
+    creator migration fee and creator surplus) and the same permanently locked creator position, under identical trades.
+22. **Tail claims** (`tests/gates/22-tail-claim.test.ts`): a wallet claims a tail's curve fees and splits them in the
+    same transaction, half kept, a quarter to the burn reserve, a quarter into $COMETAIL's pool as permanently locked
+    liquidity in the wallet's own position (including a position shared with a migration); the exact split, the
+    transaction size, the lock, the pool math the builder predicts, the one-time make-up of an unsplit claim, the
+    graduation payout, and the tail's graduated position through the burn program's owner claim.
