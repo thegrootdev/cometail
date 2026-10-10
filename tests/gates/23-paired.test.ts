@@ -10,8 +10,8 @@
 //     $COMETAIL account in the same transaction (curve fees exactly; a graduated position's fees as measured), and
 //     the other half stays there.
 import { BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey } from "@solana/web3.js";
-import { NATIVE_MINT, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { DEAD_LIQUIDITY } from "@meteora-ag/cp-amm-sdk";
 import { expect } from "chai";
 import { startSvm, fund, DAMM_V2_MIGRATION_CONFIG } from "../harness/svm";
@@ -162,19 +162,86 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     const claim: any = { id: "fee", kind: "dbc-partner-fee", configLabel: "paired", config: w.paired, pool: w.coin.pool, baseMint: w.coin.mint, claimer: w.treasury.publicKey, quoteMint: w.cometail.mint, quoteDecimals: 6, amountQuote: partner, amountBase: 0n, destination: getAssociatedTokenAddressSync(w.cometail.mint, w.treasury.publicKey), destinationExists: false };
     const supplyBefore = supply(w.svm, w.cometail.mint);
     const built = await fees.buildPairedClaim(w.conn, claim, { status: "absent" });
-    send(w.svm, built.instructions, [w.treasury], { label: "paired: protocol claim + burn half" });
+    send(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: protocol claim + burn half" });
     expect(built.pairedBurn).to.deep.include({ claimed: partner, burned: partner / 2n, kept: partner - partner / 2n, exact: true });
     expect(supplyBefore - supply(w.svm, w.cometail.mint)).eq(partner / 2n);
     expect(tokens(w.svm, w.cometail.mint, w.treasury.publicKey)).eq(partner - partner / 2n);
+    expect(w.svm.getAccount(built.signers[0].publicKey)?.lamports ?? 0, "the fresh account is closed").eq(0);
+    w.staleCurveClaim = { claim, built };
+  });
+
+  it("a stale paired claim (replayed, or built from an old scan) fails whole: it never burns the treasury's own $COMETAIL", async () => {
+    const { claim, built } = w.staleCurveClaim;
+    // a little new fee so the pool still has something to pay, but less than the stale amount
+    const small = await paired.pairedBuy(w.conn, w.buyer.publicKey, await curve(), new BN(10_000_000));
+    send(w.svm, small.instructions, [w.buyer], { cu: 400_000 });
+    const snap = () => ({ supply: supply(w.svm, w.cometail.mint), treasury: tokens(w.svm, w.cometail.mint, w.treasury.publicKey) });
+    const before = snap();
+    // the very transaction again with a fresh blockhash (its fresh account was closed, so it can be created again)
+    expectFail(w.svm, built.instructions, [w.treasury, ...built.signers], "", { cu: 400_000 });
+    // a new build from the old scan (the claim object still carries the old amount)
+    const again = await fees.buildPairedClaim(w.conn, claim, { status: "absent" });
+    expectFail(w.svm, again.instructions, [w.treasury, ...again.signers], "", { cu: 400_000 });
+    expect(snap()).to.deep.eq(before);
+    // a fresh scan claims what is there now, and burns exactly half of that
+    const owed = BigInt(dbc.getPool(w.svm, w.coin.pool).partnerQuoteFee.toString());
+    const fresh = await fees.buildPairedClaim(w.conn, { ...claim, amountQuote: owed }, { status: "absent" });
+    send(w.svm, fresh.instructions, [w.treasury, ...fresh.signers], { cu: 400_000 });
+    expect(before.supply - supply(w.svm, w.cometail.mint)).eq(owed / 2n);
+    expect(tokens(w.svm, w.cometail.mint, w.treasury.publicKey) - before.treasury).eq(owed - owed / 2n);
   });
 
   it("the curve fills from SOL buys and migrates into a coin/$COMETAIL DAMM v2 pool with all liquidity locked; the builders trade there", async () => {
     // big SOL buys until the curve completes (each a single paired transaction)
+    const remaining = () => BigInt(dbc.getConfig(w.svm, w.paired).migrationQuoteThreshold.toString()) - BigInt(dbc.getPool(w.svm, w.coin.pool).quoteReserve.toString());
+    let completing: any = null;
     for (let i = 0; i < 40 && Number(dbc.getPool(w.svm, w.coin.pool).migrationProgress) === 0; i++) {
       const plan = await paired.pairedBuy(w.conn, w.other.publicKey, await curve(), new BN(5_000_000_000));
+      if (plan.nearCompletion && !completing) {
+        // a buy close to completion is flagged; and when another buy lands first, the curve takes less of it and the
+        // rest stays in the buyer's wallet as $COMETAIL, as the site says
+        // the competitor already holds $COMETAIL (bought before this plan was built) and buys half of what the curve
+        // still takes straight from the curve, so $COMETAIL's own price is unchanged when the flagged buy lands
+        const half = new BN((remaining() / 2n).toString());
+        // (the paired buys closed the buyer's WSOL account; LiteSVM keeps an empty system account there, so it is made here)
+        const sol = getAssociatedTokenAddressSync(NATIVE_MINT, w.buyer.publicKey);
+        send(w.svm, [createAssociatedTokenAccountIdempotentInstruction(w.buyer.publicKey, sol, w.buyer.publicKey, NATIVE_MINT), SystemProgram.transfer({ fromPubkey: w.buyer.publicKey, toPubkey: sol, lamports: 20_000_000_000 }), createSyncNativeInstruction(sol)], [w.buyer]);
+        const cAcc = ensureAta(w.svm, w.buyer, w.cometail.mint, w.buyer.publicKey);
+        send(w.svm, [await damm.swapIx(w.svm, { pool: w.cometail.dammPool, payer: w.buyer.publicKey, inputAccount: sol, outputAccount: cAcc, amountIn: new BN(20_000_000_000) })], [w.buyer]);
+        const fresh = await paired.pairedBuy(w.conn, w.other.publicKey, await curve(), new BN(50_000_000_000));
+        expect(fresh.nearCompletion).eq(true);
+        completing = fresh;
+        // another buy takes half of what the curve still needs first: the flagged buy would get far fewer coins than its
+        // 1% minimum, so it fails whole (nothing spent, no $COMETAIL left behind)
+        const c0 = tokens(w.svm, w.cometail.mint, w.other.publicKey), s0 = lamports(w.svm, w.other.publicKey);
+        await dbc.buy(w.svm, w.buyer, w.coin.pool, cAcc, ensureAta(w.svm, w.buyer, w.coin.mint, w.buyer.publicKey), half);
+        expectFail(w.svm, fresh.instructions, [w.other], "ExceededSlippage", { cu: 400_000 });
+        expect(tokens(w.svm, w.cometail.mint, w.other.publicKey)).eq(c0);
+        expect(s0 - lamports(w.svm, w.other.publicKey) <= 10_000n, "only the fee").eq(true);
+        // a competing buy small enough to stay inside the 1% bound: the flagged buy lands, the curve takes a little less,
+        // and what it did not take stays in the wallet as $COMETAIL: under 1% of what was bought
+        const again = await paired.pairedBuy(w.conn, w.other.publicKey, await curve(), new BN(50_000_000_000));
+        expect(again.nearCompletion).eq(true);
+        const tiny = new BN((remaining() / 400n).toString());
+        await dbc.buy(w.svm, w.buyer, w.coin.pool, cAcc, ensureAta(w.svm, w.buyer, w.coin.mint, w.buyer.publicKey), tiny);
+        const c1 = tokens(w.svm, w.cometail.mint, w.other.publicKey);
+        send(w.svm, again.instructions, [w.other], { cu: 400_000 });
+        const left = tokens(w.svm, w.cometail.mint, w.other.publicKey) - c1;
+        expect(Number(dbc.getPool(w.svm, w.coin.pool).migrationProgress)).gt(0);
+        expect(left > 0n && left * 100n < BigInt(again.cometail.toString()), `left ${left} of ${again.cometail}`).eq(true);
+        // and it is only what the competitor took (with the fee on it): uncontested, the completing buy leaves nothing
+        const t = BigInt(tiny.toString());
+        expect(left <= (t * 100n) / 99n + 2n && left >= (t * 98n) / 100n, `left ${left} vs competitor ${t}`).eq(true);
+        continue;
+      }
+      const c0 = tokens(w.svm, w.cometail.mint, w.other.publicKey);
       send(w.svm, plan.instructions, [w.other], { cu: 400_000 });
+      // the buy that completes the curve on its own buys only what the curve takes: nothing is left in $COMETAIL
+      expect(tokens(w.svm, w.cometail.mint, w.other.publicKey) - c0, `fill ${i}: $COMETAIL left`).eq(0n);
     }
+    expect(completing, "a buy near completion was flagged").not.eq(null);
     expect(Number(dbc.getPool(w.svm, w.coin.pool).migrationProgress)).gt(0);
+    void remaining;
     const mig = await dbc.migrateToDammV2(w.svm, w.keeper, w.coin.pool, DAMM_V2_MIGRATION_CONFIG.customizable);
     const pool = damm.getPool(w.svm, mig.dammPool);
     expect(pool.tokenAMint.toBase58()).eq(w.coin.mint.toBase58());
@@ -203,7 +270,11 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     const built = await fees.buildPairedClaim(w.conn, claim, { status: "absent" });
     expect(built.pairedBurn.exact).eq(false);
     expect(built.pairedBurn.claimed > 0n).eq(true);
-    send(w.svm, built.instructions, [w.treasury], { label: "paired: position claim + burn half" });
+    send(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: position claim + burn half" });
+    // the same claim again: no new fees, so it pays nothing and fails whole (no burn of what the treasury holds)
+    const snap = [supply(w.svm, w.cometail.mint), tokens(w.svm, w.cometail.mint, w.treasury.publicKey)];
+    expectFail(w.svm, built.instructions, [w.treasury, ...built.signers], "", { cu: 400_000 });
+    expect([supply(w.svm, w.cometail.mint), tokens(w.svm, w.cometail.mint, w.treasury.publicKey)]).to.deep.eq(snap);
     const paid = tokens(w.svm, w.cometail.mint, w.treasury.publicKey) - heldBefore + built.pairedBurn.burned;
     expect(paid).eq(built.pairedBurn.claimed);
     expect(supplyBefore - supply(w.svm, w.cometail.mint)).eq(built.pairedBurn.claimed / 2n);

@@ -143,12 +143,22 @@ describe("devnet: coins paired with $COMETAIL", () => {
     let burned = 0n;
     for (const claim of ours) {
       const supplyBefore = await supplyOf(connection, mint);
-      const built = await fees.buildPairedClaim(connection, claim, scan.burn);
-      const sig = await sendIxs(built.instructions, [authority], `protocol claim + burn (${claim.kind})`, 300_000);
+      let built: Awaited<ReturnType<typeof fees.buildPairedClaim>>;
+      try { built = await fees.buildPairedClaim(connection, claim, scan.burn); }
+      catch (e) { step("protocol claim skipped", { kind: claim.kind, reason: String((e as Error).message) }); continue; }
+      const treasuryBefore = await bal(connection, ata(mint, authority.publicKey));
+      const sig = await sendIxs(built.instructions, [authority, ...built.signers], `protocol claim + burn (${claim.kind})`, 300_000);
       const drop = supplyBefore - (await supplyOf(connection, mint));
       expect(drop).eq(built.pairedBurn.burned);
+      expect((await bal(connection, ata(mint, authority.publicKey))) - treasuryBefore).eq(built.pairedBurn.kept);
       burned += drop;
-      step("protocol claim", { kind: claim.kind, signature: sig, claimed: built.pairedBurn.claimed.toString(), burned: built.pairedBurn.burned.toString(), exact: built.pairedBurn.exact });
+      // the same transaction again (fresh blockhash): the claim pays nothing now, so it fails whole and burns nothing
+      const s2 = await supplyOf(connection, mint), t2 = await bal(connection, ata(mint, authority.publicKey));
+      let replay = "landed";
+      try { await sendIxs(built.instructions, [authority, ...built.signers], `replay of the ${claim.kind} claim (must fail)`, 300_000); } catch (e) { replay = `failed: ${String((e as Error).message).slice(0, 120)}`; }
+      expect(replay.startsWith("failed"), "a replayed claim fails").eq(true);
+      expect([await supplyOf(connection, mint), await bal(connection, ata(mint, authority.publicKey))]).to.deep.eq([s2, t2]);
+      step("protocol claim", { kind: claim.kind, signature: sig, claimed: built.pairedBurn.claimed.toString(), burned: built.pairedBurn.burned.toString(), kept: built.pairedBurn.kept.toString(), exact: built.pairedBurn.exact, replay });
     }
 
     // 6. the worker reads it back

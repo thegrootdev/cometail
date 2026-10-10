@@ -364,6 +364,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
                     <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.receive === "sol" ? solWithUsd(quote.out) : cometailText(quote.out)}</strong></div>
                     <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{quote.receive === "sol" ? solWithUsd(quote.minOut) : cometailText(quote.minOut)}</strong></div>
                   </>}
+                  {quote.side === "buy" && quote.plan.nearCompletion && <p className="quote-note">{pairedCopy.nearCompletion}</p>}
                   <p className="quote-note">{quote.side === "sell" && quote.receive === "sol" && quote.plan.cometailKept.gtn(0) ? pairedCopy.kept(formatAmount(BigInt(quote.plan.cometailKept.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 })) : quote.side === "sell" ? pairedCopy.keepNote : pairedCopy.route}</p>
                 </>
               ) : quote ? (

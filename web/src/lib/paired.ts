@@ -66,6 +66,9 @@ export interface PairedPlan {
   cometailOut: BN | null; cometailMinOut: BN | null; solOut: BN | null; solMinOut: BN | null;
   /** $COMETAIL that stays in the wallet at worst (a sell to SOL keeps the slippage margin). */
   cometailKept: BN;
+  /** A buy that completes the curve (it buys only what the curve still takes), or comes close enough that another buy
+   *  landing first could complete it: then the curve takes less and the rest stays in the wallet as $COMETAIL. */
+  nearCompletion: boolean;
 }
 
 /** Drop a repeated associated-token-account create (both SDKs add one for the shared $COMETAIL account). */
@@ -87,14 +90,24 @@ export async function pairedBuy(connection: Connection, owner: PublicKey, market
   const leg1 = await dammLeg(connection, c.amm, c.pool, c.state, { a: PAIRED_DECIMALS, b: 9 });
   // what solIn buys now, less the margin: that is the $COMETAIL bought exactly, paid with at most solIn
   const ahead = leg1.quote({ swapMode: DammSwapMode.ExactIn, amountIn: solIn }, NATIVE_MINT, slippageBps);
-  const cometail = bps(new BN(ahead.outputAmount.toString()), slippageBps);
+  let cometail = bps(new BN(ahead.outputAmount.toString()), slippageBps);
   if (cometail.lten(0)) throw new Error("amount too small to buy any $COMETAIL");
-  const first = await c.amm.swap2({ payer: owner, ...leg1.accounts(NATIVE_MINT), swapMode: DammSwapMode.ExactOut, amountOut: cometail, maximumAmountIn: solIn } as any);
-  let second: TransactionInstruction[], coinOut: BN, coinMinOut: BN;
+  let second: TransactionInstruction[], coinOut: BN, coinMinOut: BN, nearCompletion = false;
   if (market.kind === "curve") {
     const v = market.view;
     const point = await getCurrentPoint(connection, Number(v.config.activationType));
-    const q: any = dbcClient(connection).pool.swapQuote2({ virtualPool: v.raw, config: v.config, swapBaseForQuote: false, slippageBps, hasReferral: false, eligibleForFirstSwapWithMinFee: false, currentPoint: point, swapMode: SwapMode.PartialFill, amountIn: cometail });
+    const quote = (amountIn: BN): any => dbcClient(connection).pool.swapQuote2({ virtualPool: v.raw, config: v.config, swapBaseForQuote: false, slippageBps, hasReferral: false, eligibleForFirstSwapWithMinFee: false, currentPoint: point, swapMode: SwapMode.PartialFill, amountIn });
+    let q = quote(cometail);
+    // a buy that completes the curve: the curve takes only what it still needs, fee included (amountLeft is counted
+    // after the fee, includedFeeInputAmount is what the swap takes), so buy exactly that much $COMETAIL
+    if (new BN(q.amountLeft?.toString() ?? "0").gtn(0)) {
+      cometail = new BN(q.includedFeeInputAmount.toString());
+      q = quote(cometail);
+      nearCompletion = true;
+    }
+    // within twice this buy of completing: another buy landing first could complete it and leave $COMETAIL unspent
+    const remaining = new BN(v.threshold.toString()).sub(new BN(v.quoteReserve.toString()));
+    if (remaining.lte(cometail.muln(2))) nearCompletion = true;
     coinOut = new BN(q.outputAmount.toString()); coinMinOut = new BN(q.minimumAmountOut.toString());
     second = (await dbcClient(connection).pool.swap2({ owner, pool: v.pool, swapBaseForQuote: false, referralTokenAccount: null, swapMode: SwapMode.PartialFill, amountIn: cometail, minimumAmountOut: coinMinOut })).instructions;
   } else {
@@ -105,7 +118,9 @@ export async function pairedBuy(connection: Connection, owner: PublicKey, market
     coinOut = new BN(q.outputAmount.toString()); coinMinOut = new BN(q.minimumAmountOut.toString());
     second = (await c.amm.swap2({ payer: owner, ...leg2.accounts(c.mint), swapMode: DammSwapMode.ExactIn, amountIn: cometail, minimumAmountOut: coinMinOut } as any)).instructions;
   }
-  return { instructions: dedupe([...first.instructions, ...second]), solMaxIn: solIn, cometail, coinOut, coinMinOut, coinIn: null, cometailOut: null, cometailMinOut: null, solOut: null, solMinOut: null, cometailKept: new BN(0) };
+  // the SOL leg buys exactly the $COMETAIL the coin leg spends (after any cap above)
+  const first = await c.amm.swap2({ payer: owner, ...leg1.accounts(NATIVE_MINT), swapMode: DammSwapMode.ExactOut, amountOut: cometail, maximumAmountIn: solIn } as any);
+  return { instructions: dedupe([...first.instructions, ...second]), solMaxIn: solIn, cometail, coinOut, coinMinOut, coinIn: null, cometailOut: null, cometailMinOut: null, solOut: null, solMinOut: null, cometailKept: new BN(0), nearCompletion };
 }
 
 /** Sell the coin for $COMETAIL, then, when `toSol`, the guaranteed $COMETAIL for SOL in the same transaction. */
@@ -126,7 +141,7 @@ export async function pairedSell(connection: Connection, owner: PublicKey, marke
     cometailOut = new BN(q.outputAmount.toString()); cometailMinOut = new BN(q.minimumAmountOut.toString());
     first = (await c.amm.swap2({ payer: owner, ...leg.accounts(state.tokenAMint), swapMode: DammSwapMode.ExactIn, amountIn: coinIn, minimumAmountOut: cometailMinOut } as any)).instructions;
   }
-  const plan: PairedPlan = { instructions: first, solMaxIn: null, cometail: cometailMinOut, coinOut: null, coinMinOut: null, coinIn, cometailOut, cometailMinOut, solOut: null, solMinOut: null, cometailKept: new BN(0) };
+  const plan: PairedPlan = { instructions: first, solMaxIn: null, cometail: cometailMinOut, coinOut: null, coinMinOut: null, coinIn, cometailOut, cometailMinOut, solOut: null, solMinOut: null, cometailKept: new BN(0), nearCompletion: false };
   if (cometailMinOut.lten(0)) throw new Error("amount too small to sell");
   if (!toSol) return { ...plan, instructions: dedupe(first) };
   const leg1 = await dammLeg(connection, c.amm, c.pool, c.state, { a: PAIRED_DECIMALS, b: 9 });

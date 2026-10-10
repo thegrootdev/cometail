@@ -6,7 +6,7 @@
 // owner. Nothing here closes a token account: the admin's wrapped-SOL account is the protocol treasury
 // the vault program pays into, and closing it would break every harvest.
 import { useCallback, useEffect, useState } from "react";
-import { PublicKey, Transaction } from "@solana/web3.js";
+import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Shell, Card, ConnectWallet } from "@/components/Shell";
 import { PageHeader } from "@/components/Experience";
@@ -52,13 +52,14 @@ export default function AdminFeesPage() {
     if (!publicKey.equals(claim.claimer)) throw new Error(`this claim is signed by ${claim.claimer.toBase58()}, not the connected wallet`);
     if (!scan) throw new Error("the chain has not been read yet");
     // a $COMETAIL claim (coins paired with $COMETAIL): the claim, then half of what it pays burned in the same transaction
-    const { instructions, removedCloses, pairedBurn } = isPairedMint(claim.quoteMint.toBase58())
+    // (paid into a fresh account that also signs, so the chain enforces the split)
+    const { instructions, removedCloses, pairedBurn, signers } = isPairedMint(claim.quoteMint.toBase58())
       ? await buildPairedClaim(connection, claim, scan.burn)
-      : { ...(await buildProtocolClaim(connection, claim, scan.burn)), pairedBurn: null as PairedBurn | null };
+      : { ...(await buildProtocolClaim(connection, claim, scan.burn)), pairedBurn: null as PairedBurn | null, signers: [] as Keypair[] };
     if (instructions.some((ix) => ix.data.length >= 1 && ix.data[0] === 9 && /Token/.test(ix.programId.toBase58()))) throw new Error("a close instruction survived; refusing");
     const tx = new Transaction().add(...instructions);
     tx.feePayer = publicKey;
-    return { tx, removedCloses, pairedBurn };
+    return { tx, removedCloses, pairedBurn, signers };
   }, [connection, publicKey?.toBase58(), scan]);
 
   const simulate = async (claim: ProtocolClaim) => {
@@ -78,7 +79,9 @@ export default function AdminFeesPage() {
     setActive(claim.id); setLastSent(claim.id);
     setSent((s) => { const { [claim.id]: _old, ...rest } = s; return rest; }); // a new attempt replaces the row's earlier receipt
     try {
-      const sig = await run(async () => (await build(claim)).tx, [], 300_000);
+      // built before the wallet opens: a paired claim's fresh account signs after the wallet
+      const b = await build(claim);
+      const sig = await run(async () => b.tx, b.signers, 300_000);
       if (sig) { setSent((s) => ({ ...s, [claim.id]: sig })); await refresh(); }
       else setSimulations((s) => ({ ...s, [claim.id]: "" })); // a failed send needs a fresh simulation before the next try
     } finally { setActive(null); }
@@ -169,7 +172,7 @@ export default function AdminFeesPage() {
                 <li>amount: {formatQuote(claim.amountQuote, claim.quoteDecimals, symbolOf(claim.quoteMint))}{claim.amountBase > 0n ? ` plus ${claim.amountBase.toString()} raw base tokens` : ""}{claim.note ? ` (${claim.note})` : ""}</li>
                 <li>pool: <CopyAddress address={claim.pool.toBase58()} />{claim.position ? <> · position <CopyAddress address={claim.position.toBase58()} /></> : null}</li>
                 <li>signed by: {claim.claimer.toBase58()}{mine(claim) ? " (connected)" : ""}</li>
-                <li>{isPairedMint(claim.quoteMint.toBase58()) ? `paid in $COMETAIL: the same transaction burns half of what the claim pays from ${claim.claimer.toBase58().slice(0, 4)}…'s $COMETAIL account (${claim.kind === "dbc-partner-fee" ? "exactly half: the claim is capped at the amount shown" : "half of what it pays when simulated; fees arriving in between stay"}); the other half stays there as the treasury's $COMETAIL` : !claim.quoteMint.equals(new PublicKey("So11111111111111111111111111111111111111112")) ? "not paid in SOL: outside the 50% scope, claimed as before" : scan?.burn.status === "live" ? "through the burn program: it measures what this claim pays and sends exactly half to the burn reserve and half to your own wrapped-SOL account, in the same transaction" : scan?.burn.status === "unavailable" ? "BLOCKED: the burn program's state could not be read, so the 50% cannot be guaranteed; rescan" : "burn program not set up yet: claimed as before, nothing goes to a burn reserve"}</li>
+                <li>{isPairedMint(claim.quoteMint.toBase58()) ? `paid in $COMETAIL into a fresh account created in the same transaction: exactly half of it is burned and the other half goes to ${claim.claimer.toBase58().slice(0, 4)}…'s $COMETAIL account (the treasury's $COMETAIL), then that account is closed. ${claim.kind === "dbc-partner-fee" ? "The claim is for the amount shown." : "The claim is for what a simulation pays now."} If it would pay any other amount, the whole transaction fails and nothing is burned: rescan and claim again` : !claim.quoteMint.equals(new PublicKey("So11111111111111111111111111111111111111112")) ? "not paid in SOL: outside the 50% scope, claimed as before" : scan?.burn.status === "live" ? "through the burn program: it measures what this claim pays and sends exactly half to the burn reserve and half to your own wrapped-SOL account, in the same transaction" : scan?.burn.status === "unavailable" ? "BLOCKED: the burn program's state could not be read, so the 50% cannot be guaranteed; rescan" : "burn program not set up yet: claimed as before, nothing goes to a burn reserve"}</li>
                 <li>lands in: <CopyAddress address={claim.destination.toBase58()} /> ({claim.claimer.toBase58().slice(0, 4)}…&apos;s {symbolOf(claim.quoteMint) === "SOL" ? "wrapped-SOL" : "quote token"} account{claim.destinationExists ? "" : ", created by this claim"}){claim.amountBase > 0n ? "; base tokens in the claimer's token account for the base mint" : ""}</li>
               </ul>
               <div className="mt-2 flex flex-wrap gap-2">
