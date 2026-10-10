@@ -3,8 +3,9 @@
 // configs' DBC pools, the partner's share of a finished curve's surplus, and the fees on the fee
 // claimers' locked DAMM v2 positions. Each row names the wallet that must sign and the token account
 // the claim lands in; a claim is simulated first and sent only by the connected wallet when it is that
-// owner. Nothing here closes a token account: the admin's wrapped-SOL account is the protocol treasury
-// the vault program pays into, and closing it would break every harvest.
+// owner. Nothing here closes a token account (the admin's wrapped-SOL account is the protocol treasury
+// the vault program pays into, and closing it would break every harvest), except the fresh account a
+// $COMETAIL claim creates, pays into and closes in the same transaction (assertOnlyFreshClose).
 import { useCallback, useEffect, useState } from "react";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -14,7 +15,7 @@ import { CopyAddress } from "@/components/CopyAddress";
 import { useTx } from "@/lib/hooks";
 import { ADMIN, CLUSTER, EXPLORER } from "@/lib/addresses";
 import { isPairedMint } from "@/lib/quotes";
-import { buildPairedClaim, buildProtocolClaim, formatQuote, type PairedBurn, scanProtocolClaims, treasuryToBurnIx, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
+import { assertOnlyFreshClose, buildPairedClaim, buildProtocolClaim, formatQuote, type PairedBurn, scanProtocolClaims, treasuryToBurnIx, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
 import { api, type BurnView } from "@/lib/api";
 import { parseAmount } from "@/lib/amounts";
 
@@ -56,7 +57,8 @@ export default function AdminFeesPage() {
     const { instructions, removedCloses, pairedBurn, signers } = isPairedMint(claim.quoteMint.toBase58())
       ? await buildPairedClaim(connection, claim, scan.burn)
       : { ...(await buildProtocolClaim(connection, claim, scan.burn)), pairedBurn: null as PairedBurn | null, signers: [] as Keypair[] };
-    if (instructions.some((ix) => ix.data.length >= 1 && ix.data[0] === 9 && /Token/.test(ix.programId.toBase58()))) throw new Error("a close instruction survived; refusing");
+    // no close survives, except a $COMETAIL claim's own fresh account, closed to the claimer as its last instruction
+    assertOnlyFreshClose(instructions, publicKey, signers[0]?.publicKey ?? null);
     const tx = new Transaction().add(...instructions);
     tx.feePayer = publicKey;
     return { tx, removedCloses, pairedBurn, signers };

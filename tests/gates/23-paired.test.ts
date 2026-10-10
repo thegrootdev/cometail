@@ -2,17 +2,18 @@
 // stock-usdc economics with the market caps in $COMETAIL); the site's own builders (web/src/lib/paired.ts,
 // protocol-fees.ts) run here against the live Meteora binaries through a LiteSVM-backed connection:
 //   - a buy pays SOL: one transaction buys exactly the $COMETAIL the curve takes on $COMETAIL's pool, for at most
-//     the SOL typed, then buys the coin; nothing is left in $COMETAIL; a moved $COMETAIL price fails both legs;
+//     its quoted SOL plus 1% (never more than the SOL typed, including a buy capped at completion), then buys the
+//     coin; nothing is left in $COMETAIL; a moved $COMETAIL price fails both legs;
 //   - a sell returns SOL (the slippage margin stays as $COMETAIL) or keeps $COMETAIL;
 //   - the curve fills and migrates into a coin/$COMETAIL DAMM v2 pool (token B $COMETAIL, all LP locked), where the
 //     same builders trade;
-//   - creator fees are paid in $COMETAIL; a protocol claim burns exactly half of what it pays from the claimer's
-//     $COMETAIL account in the same transaction (curve fees exactly; a graduated position's fees as measured), and
-//     the other half stays there.
+//   - creator fees are paid in $COMETAIL; a protocol claim pays into a fresh account, burns exactly half of it in the
+//     same transaction (curve fees exactly; a graduated position's fees as measured), sends the other half to the
+//     claimer's $COMETAIL account and closes the fresh account: the one close /admin/fees lets through.
 import { BN } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
-import { NATIVE_MINT, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { DEAD_LIQUIDITY } from "@meteora-ag/cp-amm-sdk";
+import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, createCloseAccountInstruction, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { CP_AMM_PROGRAM_ID, DEAD_LIQUIDITY } from "@meteora-ag/cp-amm-sdk";
 import { expect } from "chai";
 import { startSvm, fund, DAMM_V2_MIGRATION_CONFIG } from "../harness/svm";
 import { send, expectFail, measurements } from "../harness/tx";
@@ -102,10 +103,16 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     console.log(`      launch with a SOL first buy: ${bytes} bytes in one transaction${bytes > 1232 ? " (over 1232: two transactions)" : ""}`);
   });
 
-  it("a buy pays SOL: one transaction, exactly the $COMETAIL the curve takes, at most the SOL typed, nothing left in $COMETAIL", async () => {
+  it("a buy pays SOL: one transaction, exactly the $COMETAIL the curve takes, at most its quote plus 1%, nothing left in $COMETAIL", async () => {
+    // the SOL leg's bound: the quote plus 1%, never above the SOL typed, and a quote above it is refused
+    expect(paired.solBound(new BN(1_000_000), new BN(5_000_000), 100).toString()).eq("1010000");
+    expect(paired.solBound(new BN(1_000_000), new BN(1_005_000), 100).toString()).eq("1005000");
+    expect(() => paired.solBound(new BN(1_000_001), new BN(1_000_000), 100)).to.throw(/price moved/);
     const before = lamports(w.svm, w.buyer.publicKey);
     const solIn = new BN(2_000_000_000);
     const plan = await paired.pairedBuy(w.conn, w.buyer.publicKey, await curve(), solIn);
+    expect(plan.solMaxIn!.lte(solIn) && plan.solMaxIn!.gte(plan.solIn!)).eq(true);
+    expect(plan.solMaxIn!.muln(10_000).lte(plan.solIn!.muln(10_100)), "the SOL leg's bound is 1% over its quote").eq(true);
     const r = send(w.svm, plan.instructions, [w.buyer], { cu: 400_000, label: "paired: buy (SOL -> $COMETAIL -> coin)" });
     expect(r.bytes).lte(1232);
     expect(tokens(w.svm, w.cometail.mint, w.buyer.publicKey)).eq(0n);
@@ -162,6 +169,21 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     const claim: any = { id: "fee", kind: "dbc-partner-fee", configLabel: "paired", config: w.paired, pool: w.coin.pool, baseMint: w.coin.mint, claimer: w.treasury.publicKey, quoteMint: w.cometail.mint, quoteDecimals: 6, amountQuote: partner, amountBase: 0n, destination: getAssociatedTokenAddressSync(w.cometail.mint, w.treasury.publicKey), destinationExists: false };
     const supplyBefore = supply(w.svm, w.cometail.mint);
     const built = await fees.buildPairedClaim(w.conn, claim, { status: "absent" });
+    // /admin/fees checks every claim before the wallet sees it: the fresh account's own close passes, no other close does
+    {
+      const fresh = built.signers[0].publicKey, me = w.treasury.publicKey, ixs = built.instructions, body = ixs.slice(0, -1);
+      const refuse = (list: any[], f: PublicKey | null = fresh) => expect(() => fees.assertOnlyFreshClose(list, me, f), String(list.length)).to.throw(/refusing/);
+      fees.assertOnlyFreshClose(ixs, me, fresh);
+      refuse(ixs, null); // a claim without a fresh account closes nothing
+      refuse([...body, createCloseAccountInstruction(claim.destination, me, me)]); // the treasury's $COMETAIL account
+      refuse([...body, createCloseAccountInstruction(getAssociatedTokenAddressSync(NATIVE_MINT, me), me, me)]); // the payout WSOL account
+      refuse([...ixs, createCloseAccountInstruction(claim.destination, me, me)]); // a second close
+      refuse([...body, createCloseAccountInstruction(fresh, w.other.publicKey, me)]); // its rent to anyone else
+      refuse([...body, createCloseAccountInstruction(fresh, me, w.other.publicKey)]); // closed by another authority
+      refuse([...body, createCloseAccountInstruction(fresh, me, me, [], TOKEN_2022_PROGRAM_ID)]); // another token program
+      refuse([ixs[ixs.length - 1], ...body]); // not the last instruction
+      refuse(ixs.filter((ix: any) => !ix.programId.equals(SystemProgram.programId))); // an account this transaction did not create
+    }
     send(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: protocol claim + burn half" });
     expect(built.pairedBurn).to.deep.include({ claimed: partner, burned: partner / 2n, kept: partner - partner / 2n, exact: true });
     expect(supplyBefore - supply(w.svm, w.cometail.mint)).eq(partner / 2n);
@@ -200,6 +222,11 @@ describe("gate 23: coins paired with $COMETAIL", () => {
       if (plan.nearCompletion && !completing) {
         // a buy close to completion is flagged; and when another buy lands first, the curve takes less of it and the
         // rest stays in the buyer's wallet as $COMETAIL, as the site says
+        // a buy capped at completion (50 SOL typed, far more than the curve takes) is still bounded by its own quote:
+        // at most the capped $COMETAIL's SOL plus 1%, so when only $COMETAIL's pool moves, it fails whole
+        const capped = await paired.pairedBuy(w.conn, w.other.publicKey, await curve(), new BN(50_000_000_000));
+        expect(capped.nearCompletion).eq(true);
+        expect(capped.solMaxIn!.muln(10_000).lte(capped.solIn!.muln(10_100)) && capped.solMaxIn!.lt(new BN(50_000_000_000))).eq(true);
         // the competitor already holds $COMETAIL (bought before this plan was built) and buys half of what the curve
         // still takes straight from the curve, so $COMETAIL's own price is unchanged when the flagged buy lands
         const half = new BN((remaining() / 2n).toString());
@@ -208,6 +235,16 @@ describe("gate 23: coins paired with $COMETAIL", () => {
         send(w.svm, [createAssociatedTokenAccountIdempotentInstruction(w.buyer.publicKey, sol, w.buyer.publicKey, NATIVE_MINT), SystemProgram.transfer({ fromPubkey: w.buyer.publicKey, toPubkey: sol, lamports: 20_000_000_000 }), createSyncNativeInstruction(sol)], [w.buyer]);
         const cAcc = ensureAta(w.svm, w.buyer, w.cometail.mint, w.buyer.publicKey);
         send(w.svm, [await damm.swapIx(w.svm, { pool: w.cometail.dammPool, payer: w.buyer.publicKey, inputAccount: sol, outputAccount: cAcc, amountIn: new BN(20_000_000_000) })], [w.buyer]);
+        // that purchase moved only $COMETAIL's pool (the curve is unchanged): the capped buy fails whole on its SOL bound
+        {
+          const c0 = tokens(w.svm, w.cometail.mint, w.other.publicKey), s0 = lamports(w.svm, w.other.publicKey), r0 = dbc.getPool(w.svm, w.coin.pool).quoteReserve.toString();
+          // cp-amm's ExceededSlippage (6002) on the SOL leg (send puts the compute budget instruction first)
+          const leg = 1 + capped.instructions.findIndex((ix: any) => ix.programId.equals(CP_AMM_PROGRAM_ID));
+          expectFail(w.svm, capped.instructions, [w.other], `index: ${leg}, error: InstructionErrorCustom { code: 6002 }`, { cu: 400_000 });
+          expect(tokens(w.svm, w.cometail.mint, w.other.publicKey)).eq(c0);
+          expect(dbc.getPool(w.svm, w.coin.pool).quoteReserve.toString()).eq(r0);
+          expect(s0 - lamports(w.svm, w.other.publicKey) <= 10_000n, "only the fee").eq(true);
+        }
         const fresh = await paired.pairedBuy(w.conn, w.other.publicKey, await curve(), new BN(50_000_000_000));
         expect(fresh.nearCompletion).eq(true);
         completing = fresh;
@@ -270,6 +307,7 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     const built = await fees.buildPairedClaim(w.conn, claim, { status: "absent" });
     expect(built.pairedBurn.exact).eq(false);
     expect(built.pairedBurn.claimed > 0n).eq(true);
+    fees.assertOnlyFreshClose(built.instructions, w.treasury.publicKey, built.signers[0].publicKey);
     send(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: position claim + burn half" });
     // the same claim again: no new fees, so it pays nothing and fails whole (no burn of what the treasury holds)
     const snap = [supply(w.svm, w.cometail.mint), tokens(w.svm, w.cometail.mint, w.treasury.publicKey)];

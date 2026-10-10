@@ -79,8 +79,8 @@ economics, with the market caps in $COMETAIL). Buyers still pay with SOL. The si
 with two swaps (`web/src/lib/paired.ts`):
 
 - **Buy:** an exact-out swap on $COMETAIL's own DAMM v2 pool (the pool the burn program pinned, `GjpM…qG7T`)
-  buys exactly the $COMETAIL the coin leg spends, for at most the SOL typed, then that $COMETAIL buys the
-  coin on its curve or, after graduation, on its coin/$COMETAIL pool. A buy that completes the curve buys only
+  buys exactly the $COMETAIL the coin leg spends, for at most its quoted SOL cost plus 1% (and never more than
+  the SOL typed), then that $COMETAIL buys the coin on its curve or, after graduation, on its coin/$COMETAIL pool. A buy that completes the curve buys only
   what the curve still takes (fee included). Nothing is left in $COMETAIL, unless another buy lands first: one that
   costs this buy more than 1% of its coins makes it fail whole; a smaller one lets it land with the curve taking a
   little less, and that part stays in the wallet as $COMETAIL (the site says so on buys close to completion).
@@ -95,7 +95,9 @@ At graduation the raise goes into a coin/$COMETAIL DAMM v2 pool (compounding, 1%
 locked, fees in $COMETAIL). Creators earn their 75% of the curve fee in $COMETAIL. The protocol's share also
 arrives in $COMETAIL; its fee claimer is the launch treasury, which claims on `/admin/fees`. Each claim pays into a
 fresh token account created in the same transaction; exactly half of the amount the claim was built for is burned
-from it, the other half goes to the treasury's $COMETAIL account, and the fresh account is closed. The chain enforces
+from it, the other half goes to the treasury's $COMETAIL account, and the fresh account is closed (the only token
+account `/admin/fees` lets a transaction close: created by that transaction, closed to the claimer as its last
+instruction; any other close is refused before the wallet opens). The chain enforces
 the split: a claim that pays any other amount (a stale scan, a claim already made, fees that arrived since) fails as a
 whole, so nothing already in the treasury can be burned. A curve fee claim is built for the scanned amount; a
 graduated position's fees and a curve's surplus for what a simulation of the claim pays at that moment.

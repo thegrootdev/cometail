@@ -1,8 +1,9 @@
 // Coins paired with $COMETAIL: launched on a DBC config whose quote is $COMETAIL, graduating into a coin/$COMETAIL
 // DAMM v2 pool. Buyers pay SOL: one transaction swaps SOL to $COMETAIL on $COMETAIL's own pinned pool, then trades
-// the coin. A buy takes exactly the $COMETAIL the second leg spends (exact out on the $COMETAIL pool, capped at the
-// SOL typed), so nothing is left over; a sell to SOL swaps the second leg's guaranteed minimum, so the slippage
-// margin, if any, stays in the wallet as $COMETAIL. Both legs carry their own bound; either failing fails both.
+// the coin. A buy takes exactly the $COMETAIL the second leg spends (exact out on the $COMETAIL pool, for at most the
+// quoted SOL plus the slippage margin, and never more than the SOL typed), so nothing is left over; a sell to SOL
+// swaps the second leg's guaranteed minimum, so the slippage margin, if any, stays in the wallet as $COMETAIL. Both
+// legs carry their own bound; either failing fails both.
 import { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import BN from "bn.js";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, NATIVE_MINT } from "@solana/spl-token";
@@ -61,8 +62,9 @@ export type PairedMarket = { kind: "curve"; view: PoolView } | { kind: "damm"; p
 
 export interface PairedPlan {
   instructions: TransactionInstruction[];
-  /** SOL in (buy: at most; sell: none), $COMETAIL through the middle, coin out or in, SOL out (sell to SOL: at least). */
-  solMaxIn: BN | null; cometail: BN; coinOut: BN | null; coinMinOut: BN | null; coinIn: BN | null;
+  /** SOL in (buy: quoted, and at most: the quote plus the margin, never above the SOL typed; sell: none), $COMETAIL
+   *  through the middle, coin out or in, SOL out (sell to SOL: at least). */
+  solIn: BN | null; solMaxIn: BN | null; cometail: BN; coinOut: BN | null; coinMinOut: BN | null; coinIn: BN | null;
   cometailOut: BN | null; cometailMinOut: BN | null; solOut: BN | null; solMinOut: BN | null;
   /** $COMETAIL that stays in the wallet at worst (a sell to SOL keeps the slippage margin). */
   cometailKept: BN;
@@ -84,7 +86,23 @@ function dedupe(ixs: TransactionInstruction[]): TransactionInstruction[] {
 
 const bps = (x: BN, b: number) => x.muln(10_000 - b).divn(10_000);
 
-/** Buy with SOL: exactly the $COMETAIL the coin leg spends, for at most `solIn`; the coin leg's own bound. */
+/** The SOL leg's bound for exactly `cometail`: the exact-out quote now plus the slippage margin, and never more than
+ *  `solCap` (the SOL typed). Every SOL -> $COMETAIL leg carries this bound, whatever amount it was sized to. */
+export function solBound(quotedIn: BN, solCap: BN, slippageBps: number): BN {
+  if (quotedIn.gt(solCap)) throw new Error("the $COMETAIL price moved: quote again");
+  const max = quotedIn.muln(10_000 + slippageBps).divn(10_000);
+  return BN.min(max, solCap);
+}
+async function solLeg(c: Awaited<ReturnType<typeof cometailPool>>, leg: Awaited<ReturnType<typeof dammLeg>>, owner: PublicKey, cometail: BN, solCap: BN, slippageBps: number) {
+  const q = leg.quote({ swapMode: DammSwapMode.ExactOut, amountOut: cometail }, NATIVE_MINT, slippageBps);
+  const solIn = new BN(q.includedFeeInputAmount.toString());
+  const solMaxIn = solBound(solIn, solCap, slippageBps);
+  const tx = await c.amm.swap2({ payer: owner, ...leg.accounts(NATIVE_MINT), swapMode: DammSwapMode.ExactOut, amountOut: cometail, maximumAmountIn: solMaxIn } as any);
+  return { instructions: tx.instructions as TransactionInstruction[], solIn, solMaxIn };
+}
+
+/** Buy with SOL: exactly the $COMETAIL the coin leg spends, for at most its quoted SOL plus the margin (never above
+ *  `solIn`); the coin leg's own bound. */
 export async function pairedBuy(connection: Connection, owner: PublicKey, market: PairedMarket, solIn: BN, slippageBps = 100): Promise<PairedPlan> {
   const c = await cometailPool(connection);
   const leg1 = await dammLeg(connection, c.amm, c.pool, c.state, { a: PAIRED_DECIMALS, b: 9 });
@@ -118,9 +136,10 @@ export async function pairedBuy(connection: Connection, owner: PublicKey, market
     coinOut = new BN(q.outputAmount.toString()); coinMinOut = new BN(q.minimumAmountOut.toString());
     second = (await c.amm.swap2({ payer: owner, ...leg2.accounts(c.mint), swapMode: DammSwapMode.ExactIn, amountIn: cometail, minimumAmountOut: coinMinOut } as any)).instructions;
   }
-  // the SOL leg buys exactly the $COMETAIL the coin leg spends (after any cap above)
-  const first = await c.amm.swap2({ payer: owner, ...leg1.accounts(NATIVE_MINT), swapMode: DammSwapMode.ExactOut, amountOut: cometail, maximumAmountIn: solIn } as any);
-  return { instructions: dedupe([...first.instructions, ...second]), solMaxIn: solIn, cometail, coinOut, coinMinOut, coinIn: null, cometailOut: null, cometailMinOut: null, solOut: null, solMinOut: null, cometailKept: new BN(0), nearCompletion };
+  // the SOL leg buys exactly the $COMETAIL the coin leg spends (after any cap above), bounded by its own quote: a buy
+  // capped at completion pays at most the capped amount's SOL plus the margin, not the SOL typed
+  const first = await solLeg(c, leg1, owner, cometail, solIn, slippageBps);
+  return { instructions: dedupe([...first.instructions, ...second]), solIn: first.solIn, solMaxIn: first.solMaxIn, cometail, coinOut, coinMinOut, coinIn: null, cometailOut: null, cometailMinOut: null, solOut: null, solMinOut: null, cometailKept: new BN(0), nearCompletion };
 }
 
 /** Sell the coin for $COMETAIL, then, when `toSol`, the guaranteed $COMETAIL for SOL in the same transaction. */
@@ -141,7 +160,7 @@ export async function pairedSell(connection: Connection, owner: PublicKey, marke
     cometailOut = new BN(q.outputAmount.toString()); cometailMinOut = new BN(q.minimumAmountOut.toString());
     first = (await c.amm.swap2({ payer: owner, ...leg.accounts(state.tokenAMint), swapMode: DammSwapMode.ExactIn, amountIn: coinIn, minimumAmountOut: cometailMinOut } as any)).instructions;
   }
-  const plan: PairedPlan = { instructions: first, solMaxIn: null, cometail: cometailMinOut, coinOut: null, coinMinOut: null, coinIn, cometailOut, cometailMinOut, solOut: null, solMinOut: null, cometailKept: new BN(0), nearCompletion: false };
+  const plan: PairedPlan = { instructions: first, solMaxIn: null, cometail: cometailMinOut, solIn: null, coinOut: null, coinMinOut: null, coinIn, cometailOut, cometailMinOut, solOut: null, solMinOut: null, cometailKept: new BN(0), nearCompletion: false };
   if (cometailMinOut.lten(0)) throw new Error("amount too small to sell");
   if (!toSol) return { ...plan, instructions: dedupe(first) };
   const leg1 = await dammLeg(connection, c.amm, c.pool, c.state, { a: PAIRED_DECIMALS, b: 9 });
@@ -152,13 +171,14 @@ export async function pairedSell(connection: Connection, owner: PublicKey, marke
   return { ...plan, instructions: dedupe([...first, ...second.instructions]), solOut: new BN(q.outputAmount.toString()), solMinOut, cometailKept: cometailOut.sub(cometailMinOut) };
 }
 
-/** For a launch with a first buy: exactly `cometail` bought with at most `solIn`, before the pool is created. */
-export async function cometailForSol(connection: Connection, owner: PublicKey, solIn: BN, slippageBps = 100): Promise<{ instructions: TransactionInstruction[]; cometail: BN }> {
+/** For a launch with a first buy: exactly `cometail` bought with at most its quoted SOL plus the margin (never above
+ *  `solIn`), before the pool is created. */
+export async function cometailForSol(connection: Connection, owner: PublicKey, solIn: BN, slippageBps = 100): Promise<{ instructions: TransactionInstruction[]; cometail: BN; solMaxIn: BN }> {
   const c = await cometailPool(connection);
   const leg = await dammLeg(connection, c.amm, c.pool, c.state, { a: PAIRED_DECIMALS, b: 9 });
   const ahead = leg.quote({ swapMode: DammSwapMode.ExactIn, amountIn: solIn }, NATIVE_MINT, slippageBps);
   const cometail = bps(new BN(ahead.outputAmount.toString()), slippageBps);
   if (cometail.lten(0)) throw new Error("amount too small to buy any $COMETAIL");
-  const tx = await c.amm.swap2({ payer: owner, ...leg.accounts(NATIVE_MINT), swapMode: DammSwapMode.ExactOut, amountOut: cometail, maximumAmountIn: solIn } as any);
-  return { instructions: tx.instructions, cometail };
+  const first = await solLeg(c, leg, owner, cometail, solIn, slippageBps);
+  return { instructions: first.instructions, cometail, solMaxIn: first.solMaxIn };
 }

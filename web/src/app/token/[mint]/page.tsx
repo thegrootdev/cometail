@@ -355,7 +355,8 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
               {quote && quote.plan ? (
                 <>
                   {quote.side === "buy" ? <>
-                    <div className="quote-row"><span>{pairedCopy.payAtMost}</span><strong>{solWithUsd(quote.inRaw)}</strong></div>
+                    <div className="quote-row"><span>{tokenPage.youPay}</span><strong>{solWithUsd(BigInt((quote.plan.solIn ?? quote.plan.solMaxIn ?? 0).toString()))}</strong></div>
+                    <div className="quote-row"><span>{pairedCopy.payAtMost}</span><strong>{solWithUsd(BigInt((quote.plan.solMaxIn ?? 0).toString()))}</strong></div>
                     <div className="quote-row"><span>{pairedCopy.through}</span><strong>{cometailText(BigInt(quote.plan.cometail.toString()))}</strong></div>
                     <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{formatAmount(quote.out, dec, { ticker })}</strong></div>
                     <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{formatAmount(quote.minOut, dec, { ticker })}</strong></div>

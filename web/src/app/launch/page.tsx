@@ -7,7 +7,7 @@ import { CopyAddress } from "@/components/CopyAddress";
 import Link from "next/link";
 import { Keypair, Transaction } from "@solana/web3.js";
 import { cometailForSol } from "@/lib/paired";
-import { launchSolNeed, pendingFirstBuy } from "@/lib/launch-pending";
+import { launchSolNeed, loadFirstBuy, pendingFirstBuy, saveFirstBuy, settleFirstBuy, type FirstBuyPurchase } from "@/lib/launch-pending";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
 import { Shell, ConnectWallet } from "@/components/Shell";
@@ -51,8 +51,18 @@ export default function LaunchPage() {
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // a paired launch with a first buy: the $COMETAIL bought in step 1, bound to the wallet, the config and the SOL amount
-  // it was bought for; a retry of step 2 with the same three spends it without buying again
-  const [bought, setBought] = useState<{ owner: string; config: string; solRaw: string; cometail: BN } | null>(null);
+  // it was bought for, with that transaction's identity; a retry of step 2 with the same three spends it without
+  // buying again, and an unconfirmed step 1 is settled from the chain before anything is bought again
+  const [bought, setBought] = useState<FirstBuyPurchase<BN> | null>(null);
+  const keep = (owner: string, r: FirstBuyPurchase<BN> | null) => {
+    setBought(r);
+    saveFirstBuy(owner, r && { ...r, cometail: r.cometail.toString() });
+  };
+  // kept across a reload, per wallet
+  useEffect(() => {
+    const r = publicKey ? loadFirstBuy(publicKey.toBase58()) : null;
+    setBought(r && { ...r, cometail: new BN(r.cometail) });
+  }, [publicKey]);
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const storage = useStorageReady();
   const blocked = storage.checked && !storage.ready;
@@ -87,10 +97,21 @@ export default function LaunchPage() {
     setError(null);
     try {
       const lamports = firstBuyRaw && firstBuyRaw > 0n ? new BN(firstBuyRaw.toString()) : undefined;
+      const me = publicKey.toBase58();
+      // an earlier step 1 of this wallet that was sent but never confirmed: only the chain settles it, and nothing buys
+      // $COMETAIL again while it may still land
+      let record = preset.id === "paired" && bought && bought.owner === me ? bought : null;
+      if (record && !record.settled) {
+        const outcome = await settleFirstBuy(connection, record);
+        if (outcome === "pending" || outcome === "unknown") { setError(pairedCopy.launchStep1Unsettled); return; }
+        record = outcome === "landed" ? { ...record, settled: true } : null;
+        keep(me, record);
+      }
+      const settled = preset.id === "paired" ? pendingFirstBuy(record, me, preset.config.toBase58(), firstBuyRaw) : null;
       // the launch pays the first buy, the 0.01 SOL creation fee, the mint and metadata rent and the
       // network fees (about 0.035 SOL): the wallet must hold that before anything is signed
       {
-        const need = launchSolNeed(preset.paidInSol, lamports ? BigInt(lamports.toString()) : null, !!pending, LAUNCH_OVERHEAD_LAMPORTS);
+        const need = launchSolNeed(preset.paidInSol, lamports ? BigInt(lamports.toString()) : null, !!settled, LAUNCH_OVERHEAD_LAMPORTS);
         const have = BigInt(await connection.getBalance(publicKey));
         if (have < need) { setError(insufficientSol(need, have)); return; }
       }
@@ -110,20 +131,31 @@ export default function LaunchPage() {
       // paired: the first buy's $COMETAIL is bought first (one transaction), then the coin is created with exactly that buy
       let firstBuyQuote = lamports, holdsCometail = false;
       if (preset.id === "paired" && lamports) {
-        let amount = pending?.cometail ?? null;
+        let amount = settled?.cometail ?? null;
         if (!amount) {
           setStep(1);
-          let out: BN | null = null;
-          const before = await readTokenBalance(connection, preset.quoteMint!, publicKey);
-          const sig1 = await run(async () => { const r = await cometailForSol(connection, publicKey, lamports); out = r.cometail; return new Transaction().add(...r.instructions); }, [], 300_000);
-          if (!out) return;
-          // a confirmation that did not come back: the wallet's balance says whether the purchase landed
-          if (!sig1 && (await readTokenBalance(connection, preset.quoteMint!, publicKey)) - before < BigInt((out as BN).toString())) return;
+          let out: BN | null = null, sent: FirstBuyPurchase<BN> | null = null;
+          // the signed transaction's identity is kept before it is sent, so a lost confirmation can be settled later
+          const sig1 = await run(async () => { const r = await cometailForSol(connection, publicKey, lamports); out = r.cometail; return new Transaction().add(...r.instructions); }, [], 300_000, {
+            beforeSign: async () => {},
+            afterSign: async (signed) => {
+              sent = { owner: me, config: preset.config!.toBase58(), solRaw: lamports.toString(), cometail: out!, ...signed, settled: false };
+              keep(me, sent);
+            },
+          });
+          const signed = sent as FirstBuyPurchase<BN> | null;
+          if (!out || !signed) return;
+          if (!sig1) {
+            // the confirmation did not come back: the transaction's status on chain decides, never a balance read
+            const outcome = await settleFirstBuy(connection, signed);
+            if (outcome === "none") { keep(me, null); return; }
+            if (outcome !== "landed") { setError(pairedCopy.launchStep1Unsettled); return; }
+          }
+          keep(me, { ...signed, settled: true });
           amount = out;
-          setBought({ owner: publicKey.toBase58(), config: preset.config!.toBase58(), solRaw: lamports.toString(), cometail: out });
         }
         const have = await readTokenBalance(connection, preset.quoteMint!, publicKey);
-        if (have < BigInt(amount.toString())) { setBought(null); setError(insufficientTokens(formatAmount(BigInt(amount.toString()), 6, { ticker: "$COMETAIL" }), formatAmount(have, 6, { ticker: "$COMETAIL" }))); return; }
+        if (have < BigInt(amount.toString())) { keep(me, null); setError(insufficientTokens(formatAmount(BigInt(amount.toString()), 6, { ticker: "$COMETAIL" }), formatAmount(have, 6, { ticker: "$COMETAIL" }))); return; }
         firstBuyQuote = amount; holdsCometail = true;
         setStep(2);
       }
@@ -143,7 +175,7 @@ export default function LaunchPage() {
           }),
         [kp],
       );
-      if (sig) { setMint(kp.publicKey.toBase58()); setBought(null); }
+      if (sig) { setMint(kp.publicKey.toBase58()); keep(me, null); }
       else if (holdsCometail) setError(pairedCopy.launchStep1Done);
       solBalance.reload();
       quoteBalance.reload();
@@ -209,8 +241,9 @@ export default function LaunchPage() {
         {!preset.paidInSol && CLUSTER === "devnet" && <p className="form-notice">{c.testQuote}</p>}
         {preset.id === "paired" && <p className="form-notice">{pairedCopy.preset.description} {pairedCopy.preset.firstBuySteps}</p>}
         {preset.id === "paired" && step > 0 && <p className="form-notice" role="status">{step === 1 ? pairedCopy.launchStep1 : pairedCopy.launchStep2}</p>}
-        {preset.id === "paired" && pending && step === 0 && !mint && <p className="form-notice">{pairedCopy.launchStep2Pending(formatAmount(BigInt(pending.cometail.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }))}</p>}
-        {preset.id === "paired" && bought && !pending && !mint && <p className="form-notice">{pairedCopy.launchBoughtElsewhere(formatAmount(BigInt(bought.cometail.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }))}</p>}
+        {preset.id === "paired" && bought && !bought.settled && step === 0 && !mint && <p className="form-notice">{pairedCopy.launchStep1Sent}</p>}
+        {preset.id === "paired" && pending && pending.settled && step === 0 && !mint && <p className="form-notice">{pairedCopy.launchStep2Pending(formatAmount(BigInt(pending.cometail.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }))}</p>}
+        {preset.id === "paired" && bought && bought.settled && !pending && !mint && <p className="form-notice">{pairedCopy.launchBoughtElsewhere(formatAmount(BigInt(bought.cometail.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }))}</p>}
         <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
           <AmountInput
             label={`${c.firstBuy} · ${c.optional}`}

@@ -182,6 +182,21 @@ function isCloseAccount(ix: TransactionInstruction): boolean {
   return (ix.programId.equals(TOKEN_PROGRAM_ID) || ix.programId.equals(TOKEN_2022_PROGRAM_ID)) && ix.data.length >= 1 && ix.data[0] === 9;
 }
 
+/** The last check before a claim reaches the wallet: no token account is closed, with one exception. A $COMETAIL
+ *  claim (`fresh` is its fresh account) ends by closing that account: exactly one close, the last instruction, under
+ *  the classic token program, closing `fresh` (created by this same transaction) to the claimer, signed by the
+ *  claimer. Any other close (the treasury, the payout WSOL account, anything else) is refused. */
+export function assertOnlyFreshClose(instructions: TransactionInstruction[], claimer: PublicKey, fresh: PublicKey | null): void {
+  const closes = instructions.filter((ix) => isCloseAccount(ix) || (/Token/.test(ix.programId.toBase58()) && ix.data.length >= 1 && ix.data[0] === 9));
+  if (closes.length === 0) return;
+  const last = instructions[instructions.length - 1];
+  const created = !!fresh && instructions.some((ix) => ix.programId.equals(SystemProgram.programId) && ix.data.length >= 4 && ix.data.readUInt32LE(0) === 0 && ix.keys[1]?.pubkey.equals(fresh));
+  const ok = !!fresh && created && closes.length === 1 && closes[0] === last
+    && last.programId.equals(TOKEN_PROGRAM_ID) && last.data.length === 1 && last.keys.length === 3
+    && last.keys[0].pubkey.equals(fresh) && last.keys[1].pubkey.equals(claimer) && last.keys[2].pubkey.equals(claimer);
+  if (!ok) throw new Error("a close instruction other than the claim's own fresh account; refusing");
+}
+
 /** The claim's instructions for the claimer to sign.
  *  - A SOL claim while the burn program is live goes through the program's owner claim: the program measures what
  *    the claim pays and sends exactly half to the burn reserve and half to the signer's own WSOL account, in the
