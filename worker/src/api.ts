@@ -23,7 +23,9 @@ import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed"
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
 
-export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null; tailView?: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null; stats?: (() => Promise<unknown>) | null }
+export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null; tailView?: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null; stats?: (() => Promise<unknown>) | null;
+  /** The $COMETAIL mint when a config paired with it is among ours (the paired coins' quote), else null. */
+  pairedMint?: (() => Promise<string | null>) | null }
 
 class Buckets {
   private buckets = new Map<string, { tokens: number; at: number }>();
@@ -206,15 +208,30 @@ async function envelope(store: Store, opts: ApiOptions, data: unknown) {
 }
 const WSOL = "So11111111111111111111111111111111111111112";
 const USDC_MINTS = new Set((process.env.COMETAIL_USDC_MINTS ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v").split(",").map((x) => x.trim()).filter(Boolean));
-/** USD per one quote unit: the SOL reference for WSOL, 1 for a configured dollar stablecoin, unknown otherwise. */
-function quoteUsdRate(quoteMint: string, solUsd: number | null): { value: number | null; source: string | null; status: "fresh" | "missing" } {
-  if (quoteMint === WSOL) return { value: solUsd, source: solUsd === null ? null : "sol-reference", status: solUsd === null ? "missing" : "fresh" };
-  if (USDC_MINTS.has(quoteMint)) return { value: 1, source: "stablecoin", status: "fresh" };
-  return { value: null, source: null, status: "missing" };
+/** $COMETAIL's price in SOL per whole token, from its own indexed pool, when a paired config exists and the price is fresh. */
+type PairedRate = { mint: string; sol: number; atMs: number } | null;
+async function pairedRate(store: Store, opts: ApiOptions): Promise<PairedRate> {
+  const mint = opts.pairedMint ? await opts.pairedMint().catch(() => null) : null;
+  if (!mint) return null;
+  const t = await store.getToken(mint);
+  const sol = t?.priceSol ? Number(t.priceSol) : NaN;
+  if (!t || !(sol > 0) || Date.now() - t.priceAtMs > 10 * 60_000) return null;
+  return { mint, sol, atMs: t.priceAtMs };
 }
-function tokenView(t: TokenRow, solUsd: number | null) {
+/** USD per one quote unit: the SOL reference for WSOL, 1 for a configured dollar stablecoin, $COMETAIL's pool price times
+ *  the SOL reference for $COMETAIL, unknown otherwise; `sol` is SOL per one quote unit where it is known (WSOL, $COMETAIL). */
+function quoteUsdRate(quoteMint: string, solUsd: number | null, paired: PairedRate = null): { value: number | null; source: string | null; status: "fresh" | "missing"; sol: number | null; solSource: string | null } {
+  if (quoteMint === WSOL) return { value: solUsd, source: solUsd === null ? null : "sol-reference", status: solUsd === null ? "missing" : "fresh", sol: 1, solSource: "native" };
+  if (USDC_MINTS.has(quoteMint)) return { value: 1, source: "stablecoin", status: "fresh", sol: null, solSource: null };
+  if (paired && quoteMint === paired.mint) {
+    const usd = solUsd === null ? null : paired.sol * solUsd;
+    return { value: usd, source: usd === null ? null : "cometail-pool x sol-reference", status: usd === null ? "missing" : "fresh", sol: paired.sol, solSource: "cometail-pool" };
+  }
+  return { value: null, source: null, status: "missing", sol: null, solSource: null };
+}
+function tokenView(t: TokenRow, solUsd: number | null, paired: PairedRate = null) {
   const supply = BigInt(t.totalSupplyRaw);
-  const quoteUsd = quoteUsdRate(t.quoteMint, solUsd);
+  const quoteUsd = quoteUsdRate(t.quoteMint, solUsd, paired);
   const priceQuote = t.priceQuote ?? t.priceSol;
   let fdvUsd: string | null = null;
   if (priceQuote && quoteUsd.value) {
@@ -250,6 +267,7 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? 50)));
   const reference = await solUsd();
   const price = reference && Date.now() - reference.at < 10 * 60_000 ? reference : null;
+  const paired = await pairedRate(store, opts);
   const parts = url.pathname.split("/").filter(Boolean); // api, tokens, [mint], [trades]
   if (parts.length === 2) {
     const sort = url.searchParams.get("sort") === "newest" ? "newest" : "volume24h";
@@ -263,7 +281,7 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
     // use chronology, since their raw volumes cannot be compared across quote mints.
     const newest = (a: TokenRow, b: TokenRow) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0) || b.updatedAt - a.updatedAt || a.mint.localeCompare(b.mint);
     const usdVolume = (t: TokenRow): { numerator: bigint; denominator: bigint } | null => {
-      const rate = quoteUsdRate(t.quoteMint, price?.solUsd ?? null).value;
+      const rate = quoteUsdRate(t.quoteMint, price?.solUsd ?? null, paired).value;
       if (rate === null) return null;
       // Preserve the reference number's decimal representation, including exponent notation;
       // only the external rate is a number, never the indexed integer volume.
@@ -288,13 +306,13 @@ async function tokenRoutes(store: Store, opts: ApiOptions, url: URL, send: (code
     if (cursor) { const i = rows.findIndex((t) => t.mint === cursor); start = i >= 0 ? i + 1 : 0; }
     const page = rows.slice(start, start + limit);
     const next = start + limit < rows.length ? page[page.length - 1]?.mint ?? null : null;
-    return send(200, await envelope(store, opts, { tokens: page.map((t) => tokenView(t, price?.solUsd ?? null)), total: rows.length, nextCursor: next, sort, stage, volumeRanking: { basis: "quote-usd-v1", unrated: "newest" } }), { "cache-control": "public, max-age=5" });
+    return send(200, await envelope(store, opts, { tokens: page.map((t) => tokenView(t, price?.solUsd ?? null, paired)), total: rows.length, nextCursor: next, sort, stage, volumeRanking: { basis: "quote-usd-v1", unrated: "newest" } }), { "cache-control": "public, max-age=5" });
   }
   const mint = parts[2];
   if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) return send(404, { error: "no such token" });
   const t = await store.getToken(mint);
   if (!t) return send(404, { error: "no such token" });
-  if (parts.length === 3) return send(200, await envelope(store, opts, tokenView(t, price?.solUsd ?? null)), { "cache-control": "public, max-age=5" });
+  if (parts.length === 3) return send(200, await envelope(store, opts, tokenView(t, price?.solUsd ?? null, paired)), { "cache-control": "public, max-age=5" });
   if (parts.length === 4 && parts[3] === "trades") {
     const cursor = url.searchParams.get("cursor");
     // the cursor is the full trade key, so two transactions in one slot with the same ordinal page apart

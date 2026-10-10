@@ -9,6 +9,9 @@ import os from "os";
 import path from "path";
 import { openStore, type TokenRow, type TradeRow } from "../../worker/src/store";
 import { statsViewer } from "../../worker/src/stats";
+import { burnsIn, pairedBurnPass, readPairedBurns } from "../../worker/src/pairedburns";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { PublicKey } from "@solana/web3.js";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 const key = () => Keypair.generate().publicKey.toBase58();
@@ -24,9 +27,9 @@ function token(o: Partial<TokenRow>): TokenRow {
     liquidityBasis: null, links: null, volume24hLamports: "0", buys24h: 0, sells24h: 0, volumeComplete: true, createdAtMs: 0, updatedAt: 0, ...o };
 }
 let sig = 0;
-function trade(pool: string, trader: string, quote: string | undefined, venue: "curve" | "damm" = "curve"): TradeRow {
+function trade(pool: string, trader: string, quote: string | undefined, venue: "curve" | "damm" = "curve", o: Partial<TradeRow> = {}): TradeRow {
   sig++;
-  return { signature: `sig${sig}`, idx: 0, slot: sig, blockTime: sig, pool, vault: "", trader, traderKind: "authority", buy: sig % 2 === 0, amountIn: "1", amountOut: "1", venue, baseAmountRaw: "1", quoteAmountLamports: quote };
+  return { signature: `sig${sig}`, idx: 0, slot: sig, blockTime: sig, pool, vault: "", trader, traderKind: "authority", buy: sig % 2 === 0, amountIn: "1", amountOut: "1", venue, baseAmountRaw: "1", quoteAmountLamports: quote, ...o };
 }
 // a chain whose pool accounts are all missing: the fee counters cannot be read
 const blindChain = { connection: { getMultipleAccountsInfoAndContext: async (keys: unknown[]) => ({ context: { slot: 7 }, value: keys.map(() => null) }) }, damm: { programId: Keypair.generate().publicKey }, dbc: {} } as any;
@@ -91,5 +94,76 @@ describe("public proof figures", () => {
     await store.setPoolCursor(a.dbcPool, { ...ok, status: "pending" });
     v = await statsViewer(blindChain, store, opts)();
     expect(v.trading).to.include({ complete: false, pendingPools: 1, volumeLamports: null, traders: null });
+  });
+
+  it("values a paired launch's trades in SOL at their own $COMETAIL price and counts the routed legs", async () => {
+    const store = await freshStore();
+    const cometailMint = key(), cometailPool = key(), w1 = key();
+    const cometail = token({ mint: cometailMint, stage: "graduated", dammPool: cometailPool });
+    const coin = token({ quoteMint: cometailMint, quoteDecimals: 6 });
+    const other = token({ quoteMint: key(), quoteDecimals: 6 }); // an unknown quote: never in SOL
+    await store.upsertTokens([cometail, coin, other]);
+    // $COMETAIL's pool: 1 SOL for 10,000,000 $COMETAIL (raw 10^13), at slot 100
+    const p1 = trade(cometailPool, w1, "1000000000", "damm", { slot: 100, baseAmountRaw: "10000000000000" });
+    // a site buy at slot 200: SOL -> $COMETAIL at 2 SOL for 10M, then that $COMETAIL into the coin, same signature
+    const legA = trade(cometailPool, w1, "2000000000", "damm", { slot: 200, idx: 0, baseAmountRaw: "10000000000000", signature: "route1" });
+    const legB = trade(coin.dbcPool, w1, "10000000000000", "curve", { slot: 200, idx: 1, signature: "route1" });
+    // a direct $COMETAIL trade at slot 300: valued at the pool's last trade at or before it (slot 200: 2 SOL per 10M)
+    const direct = trade(coin.dbcPool, w1, "5000000000000", "curve", { slot: 300 });
+    await store.insertTrades([p1, legA, legB, direct, trade(other.dbcPool, w1, "777")]);
+    for (const p of [cometail.dbcPool, cometailPool, coin.dbcPool, other.dbcPool]) await store.setPoolCursor(p, { head: "h", tail: null, target: null, newHead: null, status: "ok" });
+    await store.setMeta("tokens_scanned_at", "1000");
+    const burnView = async () => ({ status: "live", setup: { cometailMint, pool: cometailPool }, totals: {}, cometail: null, history: null });
+    const v: any = await statsViewer(blindChain, store, { cluster: "test", team: [], feeIndex: null, burnView, tailView: null })();
+    const l = v.launches.list.find((x: any) => x.mint === coin.mint);
+    expect(l).to.include({ paired: true, volumeLamports: "15000000000000", volumeSolLamports: "3000000000" });
+    expect(v.launches.list.find((x: any) => x.mint === other.mint).volumeSolLamports).eq(null);
+    // SOL total: $COMETAIL's own pool (1 + 2 SOL) plus the paired coin (3 SOL); the unknown quote is left out
+    expect(v.trading).to.include({ volumeLamports: "6000000000", pairedVolumeLamports: "3000000000", pairedRoutedLamports: "2000000000" });
+    expect(v.pairedQuote).to.include({ mint: cometailMint, pool: cometailPool, launches: 1 });
+
+    // a paired trade before $COMETAIL's pool has any trade cannot be priced: unknown, not zero
+    await store.insertTrades([trade(coin.dbcPool, w1, "1", "curve", { slot: 50 })]);
+    const v2: any = await statsViewer(blindChain, store, { cluster: "test", team: [], feeIndex: null, burnView, tailView: null })();
+    expect(v2.launches.list.find((x: any) => x.mint === coin.mint).volumeSolLamports).eq(null);
+    expect(v2.trading.volumeLamports).eq(null);
+    // $COMETAIL's pool still catching up: the paired launch is unproven in SOL
+    await store.setPoolCursor(cometailPool, { head: "h", tail: null, target: null, newHead: null, status: "pending" });
+    const v3: any = await statsViewer(blindChain, store, { cluster: "test", team: [], feeIndex: null, burnView, tailView: null })();
+    expect(v3.trading.pairedVolumeLamports).eq(null);
+  });
+
+  it("counts $COMETAIL burned from the fee claimer's account with a claim in the same transaction, read oldest first", async () => {
+    const store = await freshStore();
+    const mint = Keypair.generate().publicKey, claimer = Keypair.generate().publicKey;
+    const account = getAssociatedTokenAddressSync(mint, claimer);
+    const DBC = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN");
+    const burnData = (n: bigint, checked: boolean) => { const b = Buffer.alloc(checked ? 10 : 9); b[0] = checked ? 15 : 8; b.writeBigUInt64LE(n, 1); if (checked) b[9] = 6; return b; };
+    const tx = (ixs: { program: PublicKey; accounts: PublicKey[]; data: Buffer }[]) => {
+      const keys: PublicKey[] = [];
+      const at = (k: PublicKey) => { let i = keys.findIndex((x) => x.equals(k)); if (i < 0) { keys.push(k); i = keys.length - 1; } return i; };
+      const compiled = ixs.map((ix) => ({ programIdIndex: at(ix.program), accountKeyIndexes: ix.accounts.map(at), data: Uint8Array.from(ix.data) }));
+      return { slot: 1, blockTime: 10, meta: { err: null, innerInstructions: [] }, transaction: { message: { getAccountKeys: () => ({ get: (i: number) => keys[i], length: keys.length }), compiledInstructions: compiled } } } as any;
+    };
+    const claimAndBurn = tx([{ program: DBC, accounts: [claimer], data: Buffer.from([1]) }, { program: TOKEN_PROGRAM_ID, accounts: [account, mint, claimer], data: burnData(500n, true) }]);
+    const plainBurn = tx([{ program: TOKEN_PROGRAM_ID, accounts: [account, mint, claimer], data: burnData(7n, false) }]);
+    const elsewhere = tx([{ program: TOKEN_PROGRAM_ID, accounts: [Keypair.generate().publicKey, mint, claimer], data: burnData(9n, true) }]);
+    expect(burnsIn(claimAndBurn, account.toBase58(), mint.toBase58())).to.deep.eq({ amount: 500n, withClaim: true });
+    expect(burnsIn(plainBurn, account.toBase58(), mint.toBase58())).to.deep.eq({ amount: 7n, withClaim: false });
+    expect(burnsIn(elsewhere, account.toBase58(), mint.toBase58()).amount).eq(0n);
+    // the walk: newest first from the RPC, stored oldest first; a later pass reads only what is newer than its head
+    const chain: Record<string, any> = { s1: claimAndBurn, s2: plainBurn, s3: elsewhere };
+    let sigs = [{ signature: "s2", slot: 2, err: null }, { signature: "s1", slot: 1, err: null }];
+    const deps = { getSignatures: async (_a: PublicKey, o: { until?: string }) => (o.until ? sigs.slice(0, sigs.findIndex((x) => x.signature === o.until)) : sigs), readTx: async (s: string) => chain[s] };
+    expect(await pairedBurnPass(deps, store, { mint: mint.toBase58(), claimer: claimer.toBase58() })).eq(2);
+    sigs = [{ signature: "s3", slot: 3, err: null }, ...sigs];
+    expect(await pairedBurnPass(deps, store, { mint: mint.toBase58(), claimer: claimer.toBase58() })).eq(0);
+    const saved = (await readPairedBurns(store))!;
+    expect(saved.burns.map((b) => [b.signature, b.amountRaw, b.withClaim])).to.deep.eq([["s1", "500", true], ["s2", "7", false]]);
+    expect(saved).to.include({ head: "s3", complete: true, account: account.toBase58() });
+    // an unreadable transaction stops the pass at it: retried, never skipped
+    sigs = [{ signature: "s4", slot: 4, err: null }, ...sigs];
+    await pairedBurnPass({ ...deps, readTx: async (s: string) => (s === "s4" ? null : chain[s]) }, store, { mint: mint.toBase58(), claimer: claimer.toBase58() });
+    expect((await readPairedBurns(store))!).to.include({ head: "s3", complete: false });
   });
 });

@@ -4,6 +4,8 @@
 //   once     a single keeper pass (for scripts and the devnet end-to-end)
 import { burnViewer, burnHistory, parseBurnCursor } from "./burnview";
 import { burnIndexPass, chainDeps } from "./burnindex";
+import { pairedBurnDeps, pairedBurnPass } from "./pairedburns";
+import { BurnClient } from "@cometail/client";
 import { Connection } from "@solana/web3.js";
 import { Chain } from "./chain";
 import { loadConfig } from "./config";
@@ -52,14 +54,32 @@ async function main() {
     // exit status 2 = the API port is taken; the service unit does not restart on it
     const burnView = burnViewer(chain, store, { cluster: cfg.cluster, burnConfigs: cfg.burnConfigs.map((k) => k.toBase58()), legacyConfigs: cfg.migrateConfigs.map((k) => k.toBase58()).filter((k) => !cfg.burnConfigs.some((b) => b.toBase58() === k)), feeIndex });
     const tails = (mint: string | null) => tailView(store, cfg.tails, mint);
+    // the $COMETAIL mint and the paired configs' fee claimer, once a config paired with $COMETAIL is among ours
+    let pairedTarget: { mint: string; claimer: string } | null | undefined;
     const stats = statsViewer(chain, store, { cluster: cfg.cluster, team: cfg.demoActors, feeIndex, burnView, tailView: tails });
-    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster , feeIndex, burnView, burnHistory: async (kind, before, limit) => { const c = parseBurnCursor(before); return c === "invalid" ? "invalid" : burnHistory(store, kind, c, limit); }, tailView: tails, stats }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
+    const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster , feeIndex, burnView, burnHistory: async (kind, before, limit) => { const c = parseBurnCursor(before); return c === "invalid" ? "invalid" : burnHistory(store, kind, c, limit); }, tailView: tails, stats, pairedMint: async () => pairedTarget?.mint ?? null }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
     let passes = 0;
     while (!stopping) {
       let added = 0;
       try { added = await indexer.pass(); } catch (e) { log("indexer pass failed", { error: String((e as Error).message ?? e) }); }
       // the burn program's events: their own cursor, never fatal to the pass
       if (cfg.burnConfigs?.length) { try { await burnIndexPass(chainDeps(chain.connection), store); } catch (e) { log("burn index pass failed", { error: String((e as Error).message ?? e) }); } }
+      // $COMETAIL burned with the paired configs' protocol claims: the burn program's $COMETAIL mint names the paired
+      // configs among ours (their quote); the first one's fee claimer is the account walked; never fatal to the pass
+      if (cfg.burnConfigs?.length) {
+        try {
+          // configs and the burn state's mint never change: looked up once, and again every 30 passes while none is found
+          if (pairedTarget === undefined || (pairedTarget === null && passes % 30 === 0)) {
+            const st = await chain.connection.getAccountInfo(new BurnClient(chain.connection).a.burnState, "confirmed");
+            const mint = st ? new BurnClient(chain.connection).decodeState(st.data).cometailMint.toBase58() : null;
+            const claimers: string[] = [];
+            for (const k of mint ? cfg.skyConfigs : []) { const c: any = await chain.dbcConfig(k); if (c && c.quoteMint.toBase58() === mint) claimers.push(c.feeClaimer.toBase58()); }
+            if (new Set(claimers).size > 1) log("paired configs name more than one fee claimer; walking the first", { claimers });
+            pairedTarget = mint && claimers.length ? { mint, claimer: claimers[0] } : null;
+          }
+          if (pairedTarget) await pairedBurnPass(pairedBurnDeps(chain.connection), store, pairedTarget);
+        } catch (e) { log("paired burn pass failed", { error: String((e as Error).message ?? e) }); }
+      }
       // tail claims and the reserve ledger they are traced through: their own cursors, never fatal to the pass
       if (cfg.tails.length) { try { { const deps = chainWalkDeps(chain.connection); await tailIndexPass(deps, store, cfg.tails, reserveAddress(), (t) => refreshSources(chain, deps, store, t)); } } catch (e) { log("tail index pass failed", { error: String((e as Error).message ?? e) }); } }
       // the Sky refreshes on its schedule, and right away when new events change what it shows

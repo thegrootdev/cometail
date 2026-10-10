@@ -7,6 +7,7 @@ import { PublicKey } from "@solana/web3.js";
 import type { Chain } from "./chain";
 import type { FeeIndex } from "./feeindex";
 import type { Store, TokenRow, TradeRow } from "./store";
+import { readPairedBurns } from "./pairedburns";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 const TTL_MS = 60_000;
@@ -30,25 +31,66 @@ interface Launch {
   mint: string; symbol: string; name: string; kind: TokenRow["tokenKind"]; stage: TokenRow["stage"]; createdAtMs: number | null; config: string;
   creator: string; owner: string | null; team: boolean | null; quoteMint: string; quoteDecimals: number | null; dbcPool: string; dammPool: string | null;
   trades: number; traders: number; volumeLamports: string | null; volumeByVenue: Record<string, string> | null;
+  /** The volume in SOL: the quote leg itself for a SOL launch; for a launch paired with $COMETAIL, each trade valued at
+   *  its own $COMETAIL price (see `valuer`); null for any other quote or while unproven. */
+  volumeSolLamports: string | null; paired: boolean;
   fees: { curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null };
   lockedBps: number | null;
 }
 const sumOrNull = (xs: (bigint | null)[]) => (xs.some((x) => x === null) ? null : xs.reduce<bigint>((t, x) => t + (x as bigint), 0n));
 
-/** Every indexed trade of one launch, oldest page last; null when any trade lacks its quote leg. */
-async function tradesOf(store: Store, t: TokenRow): Promise<{ trades: number; lamports: bigint | null; byVenue: Record<string, bigint>; traders: Set<string> }> {
+/** A trade's value in lamports, or null when it cannot be priced. */
+type Valuer = (r: TradeRow, quoteRaw: bigint) => bigint | null;
+/** Every trade of $COMETAIL's own pool, oldest first: the price of $COMETAIL in SOL at each of them. A paired trade is
+ *  valued at the $COMETAIL leg in its own transaction when it has one (the site's SOL route: exactly the SOL spent or
+ *  received for that $COMETAIL), else at the pool's last trade at or before its slot; before the pool's first trade, unknown. */
+async function cometailValuer(store: Store, pool: string): Promise<{ value: Valuer; legs: Map<string, bigint> }> {
+  const rows: { slot: number; lamports: bigint; raw: bigint }[] = [];
+  const bySig = new Map<string, { lamports: bigint; raw: bigint }>();
+  const legs = new Map<string, bigint>();
+  let before: { slot: number; idx: number; signature: string } | null = null;
+  for (;;) {
+    const page: TradeRow[] = await store.listTradesByPools([pool], PAGE, before);
+    for (const r of page) {
+      const lamports = big(r.quoteAmountLamports), raw = big(r.baseAmountRaw);
+      if (lamports === null || raw === null || raw === 0n) continue;
+      rows.push({ slot: r.slot, lamports, raw });
+      const prev = bySig.get(r.signature);
+      bySig.set(r.signature, prev ? { lamports: prev.lamports + lamports, raw: prev.raw + raw } : { lamports, raw });
+      legs.set(r.signature, (legs.get(r.signature) ?? 0n) + lamports);
+    }
+    if (page.length < PAGE) break;
+    const last = page[page.length - 1];
+    before = { slot: last.slot, idx: last.idx, signature: last.signature };
+  }
+  rows.reverse(); // oldest first (the store pages newest first)
+  const value: Valuer = (r, q) => {
+    const own = bySig.get(r.signature);
+    if (own) return (q * own.lamports) / own.raw;
+    let lo = 0, hi = rows.length - 1, at = -1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (rows[mid].slot <= r.slot) { at = mid; lo = mid + 1; } else hi = mid - 1; }
+    return at < 0 ? null : (q * rows[at].lamports) / rows[at].raw;
+  };
+  return { value, legs };
+}
+
+/** Every indexed trade of one launch, oldest page last; null when any trade lacks its quote leg. With a valuer, each
+ *  trade's quote leg is also valued in lamports (null when any one cannot be). */
+async function tradesOf(store: Store, t: TokenRow, valuer?: Valuer): Promise<{ trades: number; lamports: bigint | null; solLamports: bigint | null; signatures: Set<string>; byVenue: Record<string, bigint>; traders: Set<string> }> {
   const pools = [t.dbcPool, ...(t.dammPool ? [t.dammPool] : [])];
   const traders = new Set<string>();
   const byVenue: Record<string, bigint> = {};
-  let before: { slot: number; idx: number; signature: string } | null = null, n = 0, lamports: bigint | null = 0n;
+  let before: { slot: number; idx: number; signature: string } | null = null, n = 0, lamports: bigint | null = 0n, solLamports: bigint | null = valuer ? 0n : null;
+  const signatures = new Set<string>();
   for (;;) {
     const rows: TradeRow[] = await store.listTradesByPools(pools, PAGE, before);
     for (const r of rows) {
-      n++; traders.add(r.trader);
+      n++; traders.add(r.trader); signatures.add(r.signature);
       const q = big(r.quoteAmountLamports);
-      if (q === null) lamports = null;
+      if (q === null) { lamports = null; solLamports = null; }
       else {
         if (lamports !== null) lamports += q;
+        if (valuer && solLamports !== null) { const v = valuer(r, q); solLamports = v === null ? null : solLamports + v; }
         const v = r.venue ?? "unknown";
         byVenue[v] = (byVenue[v] ?? 0n) + q;
       }
@@ -57,7 +99,7 @@ async function tradesOf(store: Store, t: TokenRow): Promise<{ trades: number; la
     const last = rows[rows.length - 1];
     before = { slot: last.slot, idx: last.idx, signature: last.signature };
   }
-  return { trades: n, lamports, byVenue, traders };
+  return { trades: n, lamports, solLamports, signatures, byVenue, traders };
 }
 
 export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
@@ -106,30 +148,46 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
       chainRead = { slot, atMs: Date.now(), byKey };
     } catch { chainRead = null; }
 
+    let burn: any = null;
+    try { burn = opts.burnView ? await opts.burnView() : null; } catch { burn = null; }
+    const burnLive = burn && burn.status === "live";
+    // coins paired with $COMETAIL: the quote is the burn program's $COMETAIL mint, priced by its pinned pool
+    const pairedMint: string | null = burnLive ? burn.setup?.cometailMint ?? null : null, pairedPool: string | null = burnLive ? burn.setup?.pool ?? null : null;
+    const isPaired = (t: TokenRow) => !!pairedMint && t.quoteMint === pairedMint;
+    const pairedPriced = !!pairedPool && cursorOk.get(pairedPool) === true;
+    const valuation = pairedPool && tokens.some(isPaired) ? await cometailValuer(store, pairedPool) : null;
+    const pairedSignatures = new Set<string>();
+
     const allTraders = new Set<string>();
     const launches: Launch[] = [];
     for (const t of tokens) {
-      const tr = await tradesOf(store, t);
+      const tr = await tradesOf(store, t, isPaired(t) && valuation ? valuation.value : undefined);
+      if (isPaired(t)) tr.signatures.forEach((x) => pairedSignatures.add(x));
       tr.traders.forEach((w) => allTraders.add(w));
       const curve = chainRead?.byKey.get(t.dbcPool);
       const damm = t.dammPool ? chainRead?.byKey.get(t.dammPool) : null;
       const cm = curve?.kind === "curve" ? curve.state.metrics : null;
       const dm = damm?.kind === "damm" ? damm.state : null;
       const dammQuoteIsSol = dm ? dm.tokenBMint.toBase58() === WSOL : false;
+      // a paired launch's graduated pool collects its fees in $COMETAIL (token B), counted in $COMETAIL
+      const dammQuoteIsOwn = dm ? dm.tokenBMint.toBase58() === t.quoteMint : false;
+      const proven = scannedAtMs !== null && covered(t);
       launches.push({
         mint: t.mint, symbol: t.symbol, name: t.name, kind: t.tokenKind, stage: t.stage, createdAtMs: t.createdAtMs, config: t.config,
         creator: t.creator, owner: ownerOf(t), team: isTeam(t), quoteMint: t.quoteMint, quoteDecimals: t.quoteDecimals ?? null, dbcPool: t.dbcPool, dammPool: t.dammPool,
         trades: tr.trades, traders: tr.traders.size,
         // volume in the quote's base units; only WSOL-quoted launches are summed into SOL totals
-        volumeLamports: scannedAtMs !== null && covered(t) ? str(tr.lamports) : null,
+        volumeLamports: proven ? str(tr.lamports) : null,
+        volumeSolLamports: !proven ? null : t.quoteMint === WSOL ? str(tr.lamports) : isPaired(t) && pairedPriced ? str(tr.solLamports) : null,
+        paired: isPaired(t),
         volumeByVenue: scannedAtMs !== null && covered(t) && tr.lamports !== null ? Object.fromEntries(Object.entries(tr.byVenue).map(([k, v]) => [k, v.toString()])) : null,
         fees: {
           // DBC's own counters on the curve: the trading fee net of Meteora's protocol share, and that share
           curveTradingLamports: cm ? cm.totalTradingQuoteFee.toString() : null,
           curveProtocolLamports: cm ? cm.totalProtocolQuoteFee.toString() : null,
           // DAMM v2's counters on the graduated pool, quote side (the pools collect fees in the quote token)
-          poolLpLamports: t.dammPool ? (dm && dammQuoteIsSol ? dm.metrics.totalLpBFee.toString() : null) : "0",
-          poolProtocolLamports: t.dammPool ? (dm && dammQuoteIsSol ? dm.metrics.totalProtocolBFee.toString() : null) : "0",
+          poolLpLamports: t.dammPool ? (dm && (dammQuoteIsSol || dammQuoteIsOwn) ? dm.metrics.totalLpBFee.toString() : null) : "0",
+          poolProtocolLamports: t.dammPool ? (dm && (dammQuoteIsSol || dammQuoteIsOwn) ? dm.metrics.totalProtocolBFee.toString() : null) : "0",
         },
         // the share of the graduated pool's liquidity that is permanently locked, in basis points (exact integer division)
         lockedBps: dm && BigInt(dm.liquidity.toString()) > 0n ? Number((BigInt(dm.permanentLockLiquidity.toString()) * 10000n) / BigInt(dm.liquidity.toString())) : null,
@@ -140,10 +198,17 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
     const curveTrading = sumField(sol, (l) => l.fees.curveTradingLamports), curveProtocol = sumField(sol, (l) => l.fees.curveProtocolLamports);
     const poolLp = sumField(sol, (l) => l.fees.poolLpLamports), poolProtocol = sumField(sol, (l) => l.fees.poolProtocolLamports);
     const total = (xs: (string | null)[]) => str(sumOrNull(xs.map(big)));
-
-    let burn: any = null;
-    try { burn = opts.burnView ? await opts.burnView() : null; } catch { burn = null; }
-    const burnLive = burn && burn.status === "live";
+    // SOL and paired launches together, each in SOL (a paired trade at its own $COMETAIL price)
+    const inSol = launches.filter((l) => l.quoteMint === WSOL || l.paired);
+    const pairedRows = launches.filter((l) => l.paired);
+    // the SOL legs on $COMETAIL's pool that belong to a paired trade's own transaction: counted on that pool too
+    const routed = valuation && pairedPriced ? [...pairedSignatures].reduce((n, sig) => n + (valuation.legs.get(sig) ?? 0n), 0n) : null;
+    // $COMETAIL's price at the read: lamports per whole token, x 10^6 (DAMM v2 sqrt price, Q64.64, 6 and 9 decimals)
+    const cometailPool = pairedPool ? chainRead?.byKey.get(pairedPool) : null;
+    const sq = cometailPool?.kind === "damm" ? BigInt(cometailPool.state.sqrtPrice.toString()) : null;
+    const microLamportsPerToken = sq === null ? null : ((sq * sq * 10n ** 12n) >> 128n).toString();
+    const pairedBurns = pairedMint ? await readPairedBurns(store) : null;
+    const pb = pairedBurns && pairedBurns.mint === pairedMint ? pairedBurns : null;
 
     let tails: any[] | null = null;
     try { tails = opts.tailView ? ((await opts.tailView(null)).tails as any[]) : []; } catch { tails = null; }
@@ -171,9 +236,11 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
         readAtMs: scannedAtMs, complete: indexComplete, pendingPools,
         trades: launches.reduce((n, l) => n + l.trades, 0),
         traders: indexComplete ? allTraders.size : null,
-        volumeLamports: indexComplete ? sumField(sol, (l) => l.volumeLamports) : null,
-        outsideVolumeLamports: indexComplete ? sumField(sol.filter((l) => l.team === false), (l) => l.volumeLamports) : null,
-        basis: "every swap on the launches' curves and graduated pools, as indexed from chain; volume is the quote leg of each trade, WSOL-quoted launches only",
+        volumeLamports: indexComplete ? sumField(inSol, (l) => l.volumeSolLamports) : null,
+        outsideVolumeLamports: indexComplete ? sumField(inSol.filter((l) => l.team === false), (l) => l.volumeSolLamports) : null,
+        pairedVolumeLamports: indexComplete && pairedRows.length ? sumField(pairedRows, (l) => l.volumeSolLamports) : pairedRows.length ? null : "0",
+        pairedRoutedLamports: indexComplete && pairedRows.length ? str(routed) : pairedRows.length ? null : "0",
+        basis: "every swap on the launches' curves and graduated pools, as indexed from chain; volume is the quote leg of each trade in SOL. A launch paired with $COMETAIL has its quote leg in $COMETAIL, valued at the $COMETAIL price of that transaction's own SOL leg on $COMETAIL's pool (the site's route), else of that pool's last trade at or before the trade's slot. A paired buy or sell through the site is two swaps, SOL and $COMETAIL on $COMETAIL's pool and $COMETAIL and the coin, and each counts once on its own pool (pairedRoutedLamports is the first kind); other quotes are left out",
       },
       fees: {
         readAtMs: chainRead?.atMs ?? null, slot: chainRead?.slot ?? null,
@@ -182,7 +249,21 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
         meteoraProtocolLamports: total([curveProtocol, poolProtocol]),
         basis: "the pools' own lifetime counters on chain: DBC virtual pool metrics (totalTradingQuoteFee, totalProtocolQuoteFee) and DAMM v2 pool metrics (totalLpBFee, totalProtocolBFee, which includes the compounding share). Referral payouts are taken out of the protocol fee before these counters and are not included",
         excludes: "referral payouts",
+        // the paired launches' counters, in $COMETAIL's base units (6 decimals): not in the SOL totals above
+        paired: pairedRows.length ? {
+          mint: pairedMint, curveTradingRaw: sumField(pairedRows, (l) => l.fees.curveTradingLamports), curveProtocolRaw: sumField(pairedRows, (l) => l.fees.curveProtocolLamports),
+          poolLpRaw: sumField(pairedRows, (l) => l.fees.poolLpLamports), poolProtocolRaw: sumField(pairedRows, (l) => l.fees.poolProtocolLamports),
+        } : null,
       },
+      pairedQuote: pairedMint ? {
+        mint: pairedMint, pool: pairedPool, readAtMs: chainRead?.atMs ?? null, slot: chainRead?.slot ?? null, microLamportsPerToken,
+        configs: [...new Set(pairedRows.map((l) => l.config))], launches: pairedRows.length,
+        burned: pb ? { account: pb.account, claimer: pb.claimer, readAtMs: pb.atMs, complete: pb.complete, burns: pb.burns.filter((b) => b.withClaim).length,
+          burnedRaw: pb.burns.filter((b) => b.withClaim).reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
+          otherBurnedRaw: pb.burns.filter((b) => !b.withClaim).reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
+          last: pb.burns.slice(-5).reverse(),
+          basis: "every Burn of $COMETAIL from the paired configs' fee claimer's $COMETAIL account in a transaction that also claimed from DBC or DAMM v2 (the claim burns half of what it paid); read from that account's full history" } : null,
+      } : null,
       burn: burnLive ? {
         readAtMs: burn.generatedAtMs, slot: burn.observedSlot ?? null, program: burn.program, reserve: burn.setup?.reserve ?? null, mint: burn.cometail?.mint ?? null,
         burnedRaw: burn.totals.burnedRaw, buybacks: burn.totals.buybacks, spentLamports: burn.totals.spentLamports,
