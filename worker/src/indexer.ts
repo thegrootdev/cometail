@@ -39,6 +39,8 @@ export type IndexedTx = {
     message: {
       getAccountKeys(args?: { accountKeysFromLookups?: { writable: PublicKey[]; readonly: PublicKey[] } }): { get(index: number): PublicKey | undefined; length: number };
       compiledInstructions: { programIdIndex: number; accountKeyIndexes: number[]; data: Uint8Array }[];
+      /** the first numRequiredSignatures account keys are the signers */
+      header?: { numRequiredSignatures: number };
     };
   };
 };
@@ -74,7 +76,7 @@ export async function readRawTx(conn: Connection, signature: string, maxVersion:
   return {
     slot: Number(r.slot), blockTime: r.blockTime ?? null, version: r.version,
     meta: r.meta ? { ...r.meta, loadedAddresses: loaded } : null,
-    transaction: { message: { getAccountKeys: () => keys, compiledInstructions: (r.transaction?.message?.instructions ?? []).map((ix: any) => ({ programIdIndex: Number(ix.programIdIndex), accountKeyIndexes: (ix.accounts ?? []).map(Number), data: Uint8Array.from(utils.bytes.bs58.decode(String(ix.data ?? ""))) })) } },
+    transaction: { message: { getAccountKeys: () => keys, header: r.transaction?.message?.header ? { numRequiredSignatures: Number(r.transaction.message.header.numRequiredSignatures) } : undefined, compiledInstructions: (r.transaction?.message?.instructions ?? []).map((ix: any) => ({ programIdIndex: Number(ix.programIdIndex), accountKeyIndexes: (ix.accounts ?? []).map(Number), data: Uint8Array.from(utils.bytes.bs58.decode(String(ix.data ?? ""))) })) } },
   };
 }
 

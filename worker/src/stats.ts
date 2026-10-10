@@ -275,9 +275,10 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
         configs: [...new Set(pairedRows.map((l) => l.config))], launches: pairedRows.length,
         burned: pb ? { account: pb.account, claimer: pb.claimer, readAtMs: pb.atMs, complete: pb.complete, burns: pb.burns.filter((b) => b.withClaim).length,
           burnedRaw: pb.burns.filter((b) => b.withClaim).reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
-          otherBurnedRaw: pb.burns.filter((b) => !b.withClaim).reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
+          otherBurnedRaw: pb.burns.filter((b) => !b.withClaim && b.kind !== "unproven").reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
+          unprovenBurnedRaw: pb.burns.filter((b) => b.kind === "unproven").reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
           last: pb.burns.slice(-5).reverse(),
-          basis: "every Burn of $COMETAIL from the account a DBC or DAMM v2 claim paid into in the same transaction, when that account held no $COMETAIL before it (the fresh account the paired claim creates, burns half of, sends the rest from to the fee claimer's $COMETAIL account, and closes); read from the full history of the fee claimer's $COMETAIL account. otherBurnedRaw: burns from that account itself" } : null,
+          basis: "a Burn of $COMETAIL counts only when it comes from a fresh account (no $COMETAIL before the transaction) that a top-level DBC or DAMM v2 claim signed by the fee claimer (under one of its paired configs, for a DBC claim) paid into, the claim's own transfers from its quote vault being the only $COMETAIL that entered it, a positive payout P, exactly floor(P/2) burned and the rest sent to the fee claimer's $COMETAIL account; read from the full history of that account. otherBurnedRaw: burns from that account itself. unprovenBurnedRaw: burns from an account a claim paid into whose provenance was not proven (not in burnedRaw)" } : null,
       } : null,
       burn: burnLive ? {
         readAtMs: burn.generatedAtMs, slot: burn.observedSlot ?? null, program: burn.program, reserve: burn.setup?.reserve ?? null, mint: burn.cometail?.mint ?? null,

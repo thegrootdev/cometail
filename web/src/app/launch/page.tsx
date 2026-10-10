@@ -154,8 +154,10 @@ export default function LaunchPage() {
           keep(me, { ...signed, settled: true });
           amount = out;
         }
+        // a confirmed purchase is never forgotten on a balance read: a low read (an RPC node behind the confirmation, or
+        // the $COMETAIL moved elsewhere) stops before step 2 and keeps it; only the explicit choice below drops it
         const have = await readTokenBalance(connection, preset.quoteMint!, publicKey);
-        if (have < BigInt(amount.toString())) { keep(me, null); setError(insufficientTokens(formatAmount(BigInt(amount.toString()), 6, { ticker: "$COMETAIL" }), formatAmount(have, 6, { ticker: "$COMETAIL" }))); return; }
+        if (have < BigInt(amount.toString())) { setError(pairedCopy.launchStep1NotVisible(formatAmount(BigInt(amount.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }), formatAmount(have, 6, { ticker: "$COMETAIL", maxFraction: 2 }))); return; }
         firstBuyQuote = amount; holdsCometail = true;
         setStep(2);
       }
@@ -242,7 +244,13 @@ export default function LaunchPage() {
         {preset.id === "paired" && <p className="form-notice">{pairedCopy.preset.description} {pairedCopy.preset.firstBuySteps}</p>}
         {preset.id === "paired" && step > 0 && <p className="form-notice" role="status">{step === 1 ? pairedCopy.launchStep1 : pairedCopy.launchStep2}</p>}
         {preset.id === "paired" && bought && !bought.settled && step === 0 && !mint && <p className="form-notice">{pairedCopy.launchStep1Sent}</p>}
-        {preset.id === "paired" && pending && pending.settled && step === 0 && !mint && <p className="form-notice">{pairedCopy.launchStep2Pending(formatAmount(BigInt(pending.cometail.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }))}</p>}
+        {preset.id === "paired" && pending && pending.settled && step === 0 && !mint && (
+          <div className="form-notice">
+            <p>{pairedCopy.launchStep2Pending(formatAmount(BigInt(pending.cometail.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }))}</p>
+            {/* the only way a confirmed purchase is dropped: the owner's explicit choice (it moved elsewhere) */}
+            <button type="button" className="button button-secondary" disabled={busy} onClick={() => { if (publicKey) keep(publicKey.toBase58(), null); setError(null); }}>{pairedCopy.launchBuyAgain}</button>
+          </div>
+        )}
         {preset.id === "paired" && bought && bought.settled && !pending && !mint && <p className="form-notice">{pairedCopy.launchBoughtElsewhere(formatAmount(BigInt(bought.cometail.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 }))}</p>}
         <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
           <AmountInput

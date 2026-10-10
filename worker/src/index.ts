@@ -56,7 +56,7 @@ async function main() {
     const tails = (mint: string | null) => tailView(store, cfg.tails, mint);
     // the $COMETAIL mint and the paired configs' fee claimer, once a config paired with $COMETAIL is among ours; and
     // $COMETAIL's identity (mint, pinned pool) from the burn program's state: undefined until read, then kept
-    let pairedTarget: { mint: string; claimer: string } | null | undefined;
+    let pairedTarget: { mint: string; claimer: string; configs: string[] } | null | undefined;
     let cometailIdentity: { mint: string; pool: string } | null | undefined;
     const stats = statsViewer(chain, store, { cluster: cfg.cluster, team: cfg.demoActors, feeIndex, burnView, tailView: tails, pairedIdentity: () => cometailIdentity });
     const api = cfg.apiPort > 0 ? await startApi(store, { host: cfg.apiHost, port: cfg.apiPort, origins: cfg.apiOrigins, ratePerMinute: cfg.apiRatePerMinute, demoActors: cfg.demoActors, plainConfigs: cfg.migrateConfigs.map((k) => k.toBase58()), cluster: cfg.cluster , feeIndex, burnView, burnHistory: async (kind, before, limit) => { const c = parseBurnCursor(before); return c === "invalid" ? "invalid" : burnHistory(store, kind, c, limit); }, tailView: tails, stats, pairedMint: async () => pairedTarget?.mint ?? null }).catch((e) => { log("api refused to start", { error: String((e as Error).message ?? e) }); process.exit(2); }) : null;
@@ -76,10 +76,12 @@ async function main() {
             const decoded = st ? new BurnClient(chain.connection).decodeState(st.data) : null;
             cometailIdentity = decoded ? { mint: decoded.cometailMint.toBase58(), pool: decoded.pool.toBase58() } : null;
             const mint = decoded ? decoded.cometailMint.toBase58() : null;
-            const claimers: string[] = [];
-            for (const k of mint ? cfg.skyConfigs : []) { const c: any = await chain.dbcConfig(k); if (c && c.quoteMint.toBase58() === mint) claimers.push(c.feeClaimer.toBase58()); }
-            if (new Set(claimers).size > 1) log("paired configs name more than one fee claimer; walking the first", { claimers });
-            pairedTarget = mint && claimers.length ? { mint, claimer: claimers[0] } : null;
+            const found: { config: string; claimer: string }[] = [];
+            for (const k of mint ? cfg.skyConfigs : []) { const c: any = await chain.dbcConfig(k); if (c && c.quoteMint.toBase58() === mint) found.push({ config: k.toBase58(), claimer: c.feeClaimer.toBase58() }); }
+            const claimers = [...new Set(found.map((f) => f.claimer))];
+            if (claimers.length > 1) log("paired configs name more than one fee claimer; walking the first", { claimers });
+            // a DBC claim counts only under one of the walked claimer's own paired configs
+            pairedTarget = mint && claimers.length ? { mint, claimer: claimers[0], configs: found.filter((f) => f.claimer === claimers[0]).map((f) => f.config) } : null;
           }
           if (pairedTarget) await pairedBurnPass(pairedBurnDeps(chain.connection), store, pairedTarget);
         } catch (e) { log("paired burn pass failed", { error: String((e as Error).message ?? e) }); }

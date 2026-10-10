@@ -3,6 +3,7 @@
 // trades only once every pool of the launch has a finished cursor and every trade has its quote leg, and a pool
 // account that cannot be read leaves its fees unknown, never zero.
 import { Keypair } from "@solana/web3.js";
+import { utils } from "@coral-xyz/anchor";
 import { expect } from "chai";
 import fs from "fs";
 import os from "os";
@@ -133,54 +134,100 @@ describe("public proof figures", () => {
     expect(v3.trading.pairedVolumeLamports).eq(null);
   });
 
-  it("a burn counts only when it spends what a claim paid into a fresh account in the same transaction (F6)", async () => {
+  it("a burn counts only with its whole provenance: the claimer's own claim, its actual payout as the only inflow, exactly half burned and the rest to its account (F6)", async () => {
     const store = await freshStore();
-    const mint = Keypair.generate().publicKey, claimer = Keypair.generate().publicKey;
+    const mint = Keypair.generate().publicKey, claimer = Keypair.generate().publicKey, config = Keypair.generate().publicKey;
     const account = getAssociatedTokenAddressSync(mint, claimer);
     const DBC = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"), DAMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
-    const CLAIM_FEE = Buffer.from([8, 236, 89, 49, 152, 125, 177, 81]), SWAP2 = Buffer.from([65, 75, 63, 76, 235, 91, 91, 136]), POSITION_FEE = Buffer.from([180, 38, 154, 17, 133, 33, 162, 211]);
-    const burnData = (n: bigint) => { const b = Buffer.alloc(10); b[0] = 15; b.writeBigUInt64LE(n, 1); b[9] = 6; return b; };
+    const CLAIM_FEE = Buffer.from([8, 236, 89, 49, 152, 125, 177, 81]), SURPLUS = Buffer.from([168, 173, 72, 100, 201, 98, 38, 92]), SWAP2 = Buffer.from([65, 75, 63, 76, 235, 91, 91, 136]), POSITION_FEE = Buffer.from([180, 38, 154, 17, 133, 33, 162, 211]);
+    const amountData = (op: number, n: bigint) => { const b = Buffer.alloc(10); b[0] = op; b.writeBigUInt64LE(n, 1); b[9] = 6; return b; };
     const filler = () => Keypair.generate().publicKey;
-    /** accounts: the claim's quote destination at the given index, the rest filler */
-    const claimIx = (program: PublicKey, disc: Buffer, at: number, dest: PublicKey) => ({ program, accounts: Array.from({ length: 12 }, (_, i) => (i === at ? dest : filler())), data: Buffer.concat([disc, Buffer.alloc(16)]) });
-    const tx = (ixs: { program: PublicKey; accounts: PublicKey[]; data: Buffer }[], held: { account: PublicKey; amount: string }[] = []) => {
+    type Ix = { program: PublicKey; accounts: PublicKey[]; data: Buffer; inner?: Ix[] };
+    // Meteora's IDL account orders: [dest, vault, mint, signer, config] indexes per claim
+    const LAYOUT = { fee: { program: DBC, disc: CLAIM_FEE, dest: 4, vault: 6, mint: 8, signer: 9, config: 1, n: 14 }, surplus: { program: DBC, disc: SURPLUS, dest: 3, vault: 4, mint: 5, signer: 6, config: 1, n: 10 }, position: { program: DAMM, disc: POSITION_FEE, dest: 4, vault: 6, mint: 8, signer: 10, config: -1, n: 15 } };
+    const vault = filler();
+    /** a claim paying `paid` from its vault into `dest` (an inner transfer), signed by `by`, quote mint `m`, under `cfg` */
+    const claim = (kind: keyof typeof LAYOUT, dest: PublicKey, paid: bigint, o: { by?: PublicKey; m?: PublicKey; cfg?: PublicKey; disc?: Buffer } = {}): Ix => {
+      const L = LAYOUT[kind];
+      const accounts = Array.from({ length: L.n }, (_, i) => i === L.dest ? dest : i === L.vault ? vault : i === L.mint ? (o.m ?? mint) : i === L.signer ? (o.by ?? claimer) : i === L.config ? (o.cfg ?? config) : filler());
+      return { program: L.program, accounts, data: Buffer.concat([o.disc ?? L.disc, Buffer.alloc(16)]), inner: paid > 0n ? [transfer(vault, dest, paid, filler())] : [] };
+    };
+    const transfer = (from: PublicKey, to: PublicKey, n: bigint, auth = claimer): Ix => ({ program: TOKEN_PROGRAM_ID, accounts: [from, mint, to, auth], data: amountData(12, n) });
+    const burn = (src: PublicKey, n: bigint): Ix => ({ program: TOKEN_PROGRAM_ID, accounts: [src, mint, claimer], data: amountData(15, n) });
+    const mintTo = (to: PublicKey, n: bigint): Ix => ({ program: TOKEN_PROGRAM_ID, accounts: [mint, to, filler()], data: amountData(14, n) });
+    const wrap = (inner: Ix): Ix => ({ program: filler(), accounts: [], data: Buffer.alloc(8), inner: [inner, ...(inner.inner ?? [])] });
+    /** signers: the fee payer and `signers` (the claimer by default) */
+    const tx = (ixs: Ix[], o: { held?: { account: PublicKey; amount: string }[]; signers?: PublicKey[] } = {}) => {
       const keys: PublicKey[] = [];
       const at = (k: PublicKey) => { let i = keys.findIndex((x) => x.equals(k)); if (i < 0) { keys.push(k); i = keys.length - 1; } return i; };
+      const signers = o.signers ?? [claimer];
+      for (const k of signers) at(k);
       const compiled = ixs.map((ix) => ({ programIdIndex: at(ix.program), accountKeyIndexes: ix.accounts.map(at), data: Uint8Array.from(ix.data) }));
-      const pre = held.map((h) => ({ accountIndex: at(h.account), mint: mint.toBase58(), uiTokenAmount: { amount: h.amount } }));
-      return { slot: 1, blockTime: 10, meta: { err: null, innerInstructions: [], preTokenBalances: pre }, transaction: { message: { getAccountKeys: () => ({ get: (i: number) => keys[i], length: keys.length }), compiledInstructions: compiled } } } as any;
+      const innerInstructions = ixs.map((ix, index) => ({ index, instructions: (ix.inner ?? []).map((n) => ({ programIdIndex: at(n.program), accounts: n.accounts.map(at), data: utils.bytes.bs58.encode(n.data) })) })).filter((g) => g.instructions.length);
+      const pre = (o.held ?? []).map((h) => ({ accountIndex: at(h.account), mint: mint.toBase58(), uiTokenAmount: { amount: h.amount } }));
+      return { slot: 1, blockTime: 10, meta: { err: null, innerInstructions, preTokenBalances: pre }, transaction: { message: { header: { numRequiredSignatures: signers.length }, getAccountKeys: () => ({ get: (i: number) => keys[i], length: keys.length }), compiledInstructions: compiled } } } as any;
     };
-    const burn = (src: PublicKey, n: bigint) => ({ program: TOKEN_PROGRAM_ID, accounts: [src, mint, claimer], data: burnData(n) });
-    const fresh = Keypair.generate().publicKey, fresh2 = Keypair.generate().publicKey;
-    // the builder's shape: a curve fee claim into a fresh account, half burned from it
-    const good = tx([claimIx(DBC, CLAIM_FEE, 4, fresh), burn(fresh, 500n)]);
-    // a graduated position's claim the same way
-    const position = tx([claimIx(DAMM, POSITION_FEE, 4, fresh2), burn(fresh2, 40n)]);
-    // a swap next to an ordinary burn from the fee claimer's account: not a claim's burn
-    const swapAndBurn = tx([claimIx(DBC, SWAP2, 4, account), burn(account, 7n)]);
-    // a claim into the fee claimer's own (already holding) account, then a burn from it: earlier tokens could be burned
-    const intoHeld = tx([claimIx(DBC, CLAIM_FEE, 4, account), burn(account, 9n)], [{ account, amount: "1000" }]);
-    // a claim into one account and a burn from another
-    const elsewhere = tx([claimIx(DBC, CLAIM_FEE, 4, fresh), burn(Keypair.generate().publicKey, 3n)]);
+    /** the builder's shape: claim P into a fresh account, burn floor(P/2), the rest to the claimer's account */
+    const shape = (c: Ix, f: PublicKey, P: bigint, extra: Ix[] = []) => [c, ...extra, burn(f, P / 2n), transfer(f, account, P - P / 2n)];
+    const W = { account: account.toBase58(), mint: mint.toBase58(), claimer: claimer.toBase58(), configs: new Set([config.toBase58()]) };
+    const ok = (n: bigint) => ({ amount: n, withClaim: true, other: 0n, unproven: 0n });
+    const no = (n: bigint, other = 0n) => ({ amount: 0n, withClaim: false, other, unproven: n });
+    const f = () => Keypair.generate().publicKey;
+    // the three claim kinds, as the site builds them: counted exactly
+    let a = f(); const good = tx(shape(claim("fee", a, 1000n), a, 1000n));
+    expect(burnsIn(good, W)).to.deep.eq(ok(500n));
+    a = f(); expect(burnsIn(tx(shape(claim("surplus", a, 7n), a, 7n)), W)).to.deep.eq(ok(3n));
+    a = f(); expect(burnsIn(tx(shape(claim("position", a, 80n), a, 80n)), W)).to.deep.eq(ok(40n));
+    // the partner's first case: another claimer's claim (it signs, ours does not), read for our account
+    const other = Keypair.generate().publicKey;
+    a = f(); expect(burnsIn(tx([claim("fee", a, 1000n, { by: other }), burn(a, 500n), transfer(a, account, 1n, other), transfer(a, f(), 499n, other)], { signers: [other] }), W)).to.deep.eq(no(500n));
+    // ... and the claimer named in the claim but not signing it
+    a = f(); expect(burnsIn(tx(shape(claim("fee", a, 1000n), a, 1000n), { signers: [other] }), W)).to.deep.eq(no(500n));
+    // the partner's second case: the fresh account funded by a wallet, the claim pays nothing
+    a = f(); expect(burnsIn(tx([transfer(f(), a, 1000n, other), claim("fee", a, 0n), burn(a, 500n), transfer(a, account, 500n)], { signers: [claimer, other] }), W)).to.deep.eq(no(500n));
+    // a positive payout plus any other inflow (a transfer, a mint) is not proven either
+    a = f(); expect(burnsIn(tx([transfer(f(), a, 10n, other), ...shape(claim("fee", a, 1000n), a, 1000n)], { signers: [claimer, other] }), W)).to.deep.eq(no(500n));
+    a = f(); expect(burnsIn(tx(shape(claim("fee", a, 1000n), a, 1000n, [mintTo(a, 10n)])), W)).to.deep.eq(no(500n));
+    // another split, the rest sent elsewhere, an account that held the mint before, another mint, another config, a claim
+    // made through another program (an inner instruction), an unsupported instruction
+    a = f(); expect(burnsIn(tx([claim("fee", a, 1000n), burn(a, 600n), transfer(a, account, 400n)]), W)).to.deep.eq(no(600n));
+    a = f(); expect(burnsIn(tx([claim("fee", a, 1000n), burn(a, 500n), transfer(a, f(), 500n)]), W)).to.deep.eq(no(500n));
+    a = f(); expect(burnsIn(tx(shape(claim("fee", a, 1000n), a, 1000n), { held: [{ account: a, amount: "5" }] }), W)).to.deep.eq(no(500n));
+    a = f(); expect(burnsIn(tx(shape(claim("fee", a, 1000n, { m: f() }), a, 1000n)), W)).to.deep.eq(no(500n));
+    a = f(); expect(burnsIn(tx(shape(claim("fee", a, 1000n, { cfg: f() }), a, 1000n)), W)).to.deep.eq(no(500n));
+    expect(burnsIn(tx(shape(claim("fee", a, 1000n, { cfg: f() }), a, 1000n)), { ...W, configs: null }), "no config list: the claimer binds it").to.deep.eq(ok(500n));
+    a = f(); expect(burnsIn(tx([wrap(claim("fee", a, 1000n)), burn(a, 500n), transfer(a, account, 500n)]), W)).to.deep.eq(no(500n));
+    a = f(); expect(burnsIn(tx(shape(claim("fee", a, 1000n, { disc: SWAP2 }), a, 1000n)), W)).to.deep.eq({ amount: 0n, withClaim: false, other: 0n, unproven: 0n });
+    // a swap next to an ordinary burn from the fee claimer's account: other; a claim into that account itself, then a
+    // burn from it: other (earlier tokens could be burned); no header: no signer is known, nothing is proven
+    const swapAndBurn = tx([claim("fee", account, 0n, { disc: SWAP2 }), burn(account, 7n)]);
+    expect(burnsIn(swapAndBurn, W)).to.deep.eq({ amount: 0n, withClaim: false, other: 7n, unproven: 0n });
+    expect(burnsIn(tx([claim("fee", account, 9n), burn(account, 4n), transfer(account, account, 5n)], { held: [{ account, amount: "1000" }] }), W)).to.deep.eq(no(4n));
+    a = f(); const headless = tx(shape(claim("fee", a, 1000n), a, 1000n)); delete headless.transaction.message.header;
+    expect(burnsIn(headless, W)).to.deep.eq(no(500n));
+    a = f(); const elsewhere = tx([claim("fee", a, 1000n), burn(f(), 3n)]);
     const A = account.toBase58(), M = mint.toBase58();
-    expect(burnsIn(good, A, M)).to.deep.eq({ amount: 500n, withClaim: true, other: 0n });
-    expect(burnsIn(position, A, M)).to.deep.eq({ amount: 40n, withClaim: true, other: 0n });
-    expect(burnsIn(swapAndBurn, A, M)).to.deep.eq({ amount: 0n, withClaim: false, other: 7n });
-    expect(burnsIn(intoHeld, A, M)).to.deep.eq({ amount: 0n, withClaim: false, other: 9n });
-    expect(burnsIn(elsewhere, A, M)).to.deep.eq({ amount: 0n, withClaim: false, other: 0n });
     // the walk: newest first from the RPC, stored oldest first; a later pass reads only what is newer than its head
     const chain: Record<string, any> = { s1: good, s2: swapAndBurn, s3: elsewhere };
     let sigs = [{ signature: "s2", slot: 2, err: null }, { signature: "s1", slot: 1, err: null }];
     const deps = { getSignatures: async (_a: PublicKey, o: { until?: string }) => (o.until ? sigs.slice(0, sigs.findIndex((x) => x.signature === o.until)) : sigs), readTx: async (s: string) => chain[s] };
-    expect(await pairedBurnPass(deps, store, { mint: M, claimer: claimer.toBase58() })).eq(2);
+    const target = { mint: M, claimer: claimer.toBase58(), configs: [config.toBase58()] };
+    expect(await pairedBurnPass(deps, store, target)).eq(2);
     sigs = [{ signature: "s3", slot: 3, err: null }, ...sigs];
-    expect(await pairedBurnPass(deps, store, { mint: M, claimer: claimer.toBase58() })).eq(0);
+    expect(await pairedBurnPass(deps, store, target)).eq(0);
     const saved = (await readPairedBurns(store))!;
-    expect(saved.burns.map((b) => [b.signature, b.amountRaw, b.withClaim])).to.deep.eq([["s1", "500", true], ["s2", "7", false]]);
+    expect(saved.burns.map((b) => [b.signature, b.amountRaw, b.kind])).to.deep.eq([["s1", "500", "claim"], ["s2", "7", "other"]]);
+    // a walk saved by an earlier parser version (or for other configs) is never reused: rebuilt from the start
+    await store.setMeta("paired_burns", JSON.stringify({ ...saved, version: 1, burns: [{ signature: "old", slot: 0, blockTime: null, amountRaw: "999", withClaim: true }] }));
+    await pairedBurnPass(deps, store, target);
+    expect((await readPairedBurns(store))!.burns.map((b) => b.signature)).to.deep.eq(["s1", "s2"]);
+    await pairedBurnPass(deps, store, { ...target, configs: [Keypair.generate().publicKey.toBase58()] });
+    expect((await readPairedBurns(store))!.burns.map((b) => [b.signature, b.kind])).to.deep.eq([["s1", "unproven"], ["s2", "other"]]);
+    await pairedBurnPass(deps, store, target);
     expect(saved).to.include({ head: "s3", complete: true, account: A });
     // an unreadable transaction stops the pass at it: retried, never skipped
     sigs = [{ signature: "s4", slot: 4, err: null }, ...sigs];
-    await pairedBurnPass({ ...deps, readTx: async (s: string) => (s === "s4" ? null : chain[s]) }, store, { mint: M, claimer: claimer.toBase58() });
+    await pairedBurnPass({ ...deps, readTx: async (s: string) => (s === "s4" ? null : chain[s]) }, store, target);
     expect((await readPairedBurns(store))!).to.include({ head: "s3", complete: false });
   });
 

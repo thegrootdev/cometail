@@ -1,6 +1,7 @@
 import { ComputeBudgetProgram, Keypair, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { FailedTransactionMetadata, LiteSVM, TransactionMetadata } from "litesvm";
 import fs from "fs";
+import { utils } from "@coral-xyz/anchor";
 import path from "path";
 
 export type SendResult = { logs: string[]; computeUnits: bigint; bytes: number };
@@ -27,6 +28,36 @@ export function send(svm: LiteSVM, ixs: TransactionInstruction[], signers: Keypa
 }
 
 /** Expect a failure whose logs contain `needle`. */
+/** Send like `send`, and return the executed transaction the way the worker reads one from an RPC (IndexedTx): the
+ *  compiled message (header, keys, instructions), every inner instruction from the receipt, and the classic token
+ *  accounts' balances before the transaction (preTokenBalances). */
+export function sendIndexed(svm: LiteSVM, ixs: TransactionInstruction[], signers: Keypair[], opts: { cu?: number; label?: string } = {}) {
+  const tx = new Transaction();
+  if (opts.cu) tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: opts.cu }));
+  tx.add(...ixs);
+  tx.feePayer = signers[0].publicKey;
+  tx.recentBlockhash = svm.latestBlockhash();
+  const message = tx.compileMessage();
+  const TOKEN = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+  const preTokenBalances = message.accountKeys.flatMap((k, accountIndex) => {
+    const a = svm.getAccount(k);
+    if (!a || !new PublicKey(a.owner).equals(TOKEN) || a.data.length !== 165) return [];
+    const d = Buffer.from(a.data);
+    return [{ accountIndex, mint: new PublicKey(d.subarray(0, 32)).toBase58(), uiTokenAmount: { amount: d.readBigUInt64LE(64).toString() } }];
+  });
+  tx.sign(...signers);
+  const res = svm.sendTransaction(tx);
+  svm.expireBlockhash();
+  if (res instanceof FailedTransactionMetadata) throw new Error(`${opts.label ?? "tx"} failed: ${res.err()}\n${res.meta().logs().join("\n")}`);
+  const meta = res as TransactionMetadata;
+  if (opts.label) measurements.push({ label: opts.label, bytes: tx.serialize().length, computeUnits: meta.computeUnitsConsumed().toString() });
+  const innerInstructions = meta.innerInstructions().map((group: any[], index: number) => ({
+    index,
+    instructions: group.map((inner: any) => { const ix = inner.instruction(); return { programIdIndex: ix.programIdIndex(), accounts: Array.from(ix.accounts() as Uint8Array), data: utils.bytes.bs58.encode(Buffer.from(ix.data())) }; }),
+  }));
+  return { slot: 1, blockTime: 1, meta: { err: null, innerInstructions, preTokenBalances }, transaction: { message } } as any;
+}
+
 export function expectFail(svm: LiteSVM, ixs: TransactionInstruction[], signers: Keypair[], needle: string, opts: { cu?: number } = {}) {
   try {
     send(svm, ixs, signers, opts);

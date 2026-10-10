@@ -12,11 +12,12 @@
 //     claimer's $COMETAIL account and closes the fresh account: the one close /admin/fees lets through.
 import { BN } from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
-import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, createCloseAccountInstruction, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, createCloseAccountInstruction, createTransferCheckedInstruction, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { CP_AMM_PROGRAM_ID, DEAD_LIQUIDITY } from "@meteora-ag/cp-amm-sdk";
 import { expect } from "chai";
 import { startSvm, fund, DAMM_V2_MIGRATION_CONFIG } from "../harness/svm";
-import { send, expectFail, measurements } from "../harness/tx";
+import { send, sendIndexed, expectFail, measurements } from "../harness/tx";
+import { burnsIn } from "../../worker/src/pairedburns";
 import { Transaction } from "@solana/web3.js";
 import { ensureAta, balance, wrapSol } from "../harness/tokens";
 import { svmConnection } from "../harness/conn";
@@ -184,7 +185,8 @@ describe("gate 23: coins paired with $COMETAIL", () => {
       refuse([ixs[ixs.length - 1], ...body]); // not the last instruction
       refuse(ixs.filter((ix: any) => !ix.programId.equals(SystemProgram.programId))); // an account this transaction did not create
     }
-    send(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: protocol claim + burn half" });
+    // kept as the worker reads it, for its burn counter below
+    w.receipts = { curve: sendIndexed(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: protocol claim + burn half" }), curveBurned: partner / 2n };
     expect(built.pairedBurn).to.deep.include({ claimed: partner, burned: partner / 2n, kept: partner - partner / 2n, exact: true });
     expect(supplyBefore - supply(w.svm, w.cometail.mint)).eq(partner / 2n);
     expect(tokens(w.svm, w.cometail.mint, w.treasury.publicKey)).eq(partner - partner / 2n);
@@ -308,7 +310,8 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     expect(built.pairedBurn.exact).eq(false);
     expect(built.pairedBurn.claimed > 0n).eq(true);
     fees.assertOnlyFreshClose(built.instructions, w.treasury.publicKey, built.signers[0].publicKey);
-    send(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: position claim + burn half" });
+    w.receipts.position = sendIndexed(w.svm, built.instructions, [w.treasury, ...built.signers], { label: "paired: position claim + burn half" });
+    w.receipts.positionBurned = built.pairedBurn.burned;
     // the same claim again: no new fees, so it pays nothing and fails whole (no burn of what the treasury holds)
     const snap = [supply(w.svm, w.cometail.mint), tokens(w.svm, w.cometail.mint, w.treasury.publicKey)];
     expectFail(w.svm, built.instructions, [w.treasury, ...built.signers], "", { cu: 400_000 });
@@ -317,5 +320,82 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     expect(paid).eq(built.pairedBurn.claimed);
     expect(supplyBefore - supply(w.svm, w.cometail.mint)).eq(built.pairedBurn.claimed / 2n);
     expect(tokens(w.svm, w.coin.mint, w.treasury.publicKey)).eq(coinBefore);
+  });
+
+  it("the worker's burn counter counts a burn only with its whole provenance: the three claim kinds exactly, never a forged one", async () => {
+    const T = w.treasury.publicKey, M = w.cometail.mint, treasuryAta = getAssociatedTokenAddressSync(M, T);
+    const watched = { account: treasuryAta.toBase58(), mint: M.toBase58(), claimer: T.toBase58(), configs: new Set([w.paired.toBase58()]) };
+    const none = { amount: 0n, withClaim: false, other: 0n };
+    // the curve fee claim and the position claim made above, as the worker reads them: exactly what each burned
+    expect(burnsIn(w.receipts.curve, watched)).to.deep.eq({ amount: w.receipts.curveBurned, withClaim: true, other: 0n, unproven: 0n });
+    expect(w.receipts.positionBurned > 0n).eq(true);
+    expect(burnsIn(w.receipts.position, watched)).to.deep.eq({ amount: w.receipts.positionBurned, withClaim: true, other: 0n, unproven: 0n });
+    // a DBC claim under a config that is not one of the claimer's paired configs is not its fee
+    expect(burnsIn(w.receipts.curve, { ...watched, configs: new Set([Keypair.generate().publicKey.toBase58()]) })).to.deep.eq({ ...none, unproven: w.receipts.curveBurned });
+
+    // a second paired coin, no trades yet: its curve owes nothing
+    const mint = Keypair.generate();
+    const L = await dbc.createPoolIx({ config: w.paired, baseMint: mint.publicKey, quoteMint: M, creator: w.creator.publicKey, payer: w.creator.publicKey, name: "Paired two", symbol: "PAIR2" });
+    send(w.svm, [L.ix], [w.creator, mint], { cu: 600_000 });
+    expect(BigInt(dbc.getPool(w.svm, L.pool).partnerQuoteFee.toString())).eq(0n);
+    // the buyer's $COMETAIL: SOL swapped on $COMETAIL's pool until it holds 1.3x what the curve takes
+    const R = BigInt(dbc.getConfig(w.svm, w.paired).migrationQuoteThreshold.toString());
+    const sol = getAssociatedTokenAddressSync(NATIVE_MINT, w.buyer.publicKey), cAcc = ensureAta(w.svm, w.buyer, M, w.buyer.publicKey);
+    // most of this test world's $COMETAIL sits in the first coin's graduated pool: its holders sell back into it and
+    // hand the $COMETAIL to the buyer, then SOL buys the rest
+    for (const holder of [w.other, w.buyer]) {
+      const held = tokens(w.svm, w.coin.mint, holder.publicKey);
+      if (held > 0n) send(w.svm, [await damm.swapIx(w.svm, { pool: w.coin.dammPool, payer: holder.publicKey, inputAccount: getAssociatedTokenAddressSync(w.coin.mint, holder.publicKey), outputAccount: ensureAta(w.svm, holder, M, holder.publicKey), amountIn: new BN(held.toString()) })], [holder]);
+    }
+    const fromOther = tokens(w.svm, M, w.other.publicKey);
+    if (fromOther > 0n) send(w.svm, [createTransferCheckedInstruction(getAssociatedTokenAddressSync(M, w.other.publicKey), M, cAcc, w.other.publicKey, fromOther, 6)], [w.other]);
+    for (let i = 0; i < 60 && tokens(w.svm, M, w.buyer.publicKey) < (R * 13n) / 10n; i++) {
+      send(w.svm, [createAssociatedTokenAccountIdempotentInstruction(w.buyer.publicKey, sol, w.buyer.publicKey, NATIVE_MINT), SystemProgram.transfer({ fromPubkey: w.buyer.publicKey, toPubkey: sol, lamports: 200_000_000_000 }), createSyncNativeInstruction(sol)], [w.buyer]);
+      send(w.svm, [await damm.swapIx(w.svm, { pool: w.cometail.dammPool, payer: w.buyer.publicKey, inputAccount: sol, outputAccount: cAcc, amountIn: new BN(200_000_000_000) })], [w.buyer]);
+    }
+    expect(tokens(w.svm, M, w.buyer.publicKey) >= (R * 13n) / 10n, `${tokens(w.svm, M, w.buyer.publicKey)} of ${R}, pool holds ${balance(w.svm, damm.getPool(w.svm, w.cometail.dammPool).tokenAVault)}, buyer SOL ${lamports(w.svm, w.buyer.publicKey)}`).eq(true);
+    const base: any = { kind: "dbc-partner-fee", configLabel: "paired", config: w.paired, pool: L.pool, baseMint: mint.publicKey, claimer: T, quoteMint: M, quoteDecimals: 6, amountBase: 0n, destination: treasuryAta, destinationExists: true };
+
+    // forged (the partner's second case): a wallet funds the fresh account with 1,000 before a claim that pays nothing;
+    // the transaction burns 500 and keeps 500, but no fee paid any of it
+    {
+      const built = await fees.buildPairedClaim(w.conn, { ...base, id: "zero", amountQuote: 1000n }, { status: "absent" });
+      const at = built.instructions.findIndex((ix: any) => ix.data.subarray(0, 8).toString("hex") === "08ec5931987db151");
+      const ixs = [...built.instructions];
+      ixs.splice(at, 0, createTransferCheckedInstruction(cAcc, M, built.signers[0].publicKey, w.buyer.publicKey, 1000n, 6));
+      const s0 = supply(w.svm, M);
+      const r = sendIndexed(w.svm, ixs, [w.treasury, w.buyer, ...built.signers], { cu: 400_000 });
+      expect(s0 - supply(w.svm, M)).eq(500n);
+      expect(burnsIn(r, watched)).to.deep.eq({ ...none, unproven: 500n });
+    }
+
+    // fees: a buy that completes the curve (this config's curve ends at its target: no exact-in buy can pass it, so a
+    // surplus is only rounding, 1 raw on devnet)
+    await dbc.buy(w.svm, w.buyer, L.pool, cAcc, ensureAta(w.svm, w.buyer, mint.publicKey, w.buyer.publicKey), new BN((R * 2n).toString()));
+    expect(Number(dbc.getPool(w.svm, L.pool).migrationProgress)).gt(0);
+
+    // forged (the partner's first case): the claimer's own curve fee claim, then 1 raw sent to another wallet's
+    // account; read from that other wallet's history it is not its claim, read from the claimer's it is exactly owed/2
+    {
+      const owed = BigInt(dbc.getPool(w.svm, L.pool).partnerQuoteFee.toString());
+      expect(owed > 0n).eq(true);
+      const otherAta = ensureAta(w.svm, w.owner, M, w.owner.publicKey);
+      const built = await fees.buildPairedClaim(w.conn, { ...base, id: "fee2", amountQuote: owed }, { status: "absent" });
+      const r = sendIndexed(w.svm, [...built.instructions, createTransferCheckedInstruction(treasuryAta, M, otherAta, T, 1n, 6)], [w.treasury, ...built.signers], { cu: 400_000 });
+      expect(burnsIn(r, watched)).to.deep.eq({ amount: owed / 2n, withClaim: true, other: 0n, unproven: 0n });
+      expect(burnsIn(r, { account: otherAta.toBase58(), mint: M.toBase58(), claimer: w.owner.publicKey.toBase58(), configs: null })).to.deep.eq({ ...none, unproven: owed / 2n });
+    }
+
+    // the third claim kind, the curve's surplus after migration: whatever it pays, the counter reports exactly what it burned
+    await dbc.migrateToDammV2(w.svm, w.keeper, L.pool, DAMM_V2_MIGRATION_CONFIG.customizable);
+    const surplus = BigInt(dbc.getPool(w.svm, L.pool).quoteReserve.toString()) - R;
+    let built: any = null;
+    try { built = await fees.buildPairedClaim(w.conn, { ...base, id: "surplus", kind: "dbc-partner-surplus", amountQuote: null }, { status: "absent" }); }
+    catch (e) { expect(String((e as Error).message)).match(/pays no \$COMETAIL now/); }
+    console.log(`      surplus above the target: ${surplus} raw; the partner's claim ${built ? `pays ${built.pairedBurn.claimed}, burns ${built.pairedBurn.burned}` : "pays nothing"}`);
+    if (built) {
+      const r = sendIndexed(w.svm, built.instructions, [w.treasury, ...built.signers], { cu: 400_000, label: "paired: surplus claim + burn half" });
+      expect(burnsIn(r, watched)).to.deep.eq({ amount: built.pairedBurn.burned, withClaim: built.pairedBurn.burned > 0n, other: 0n, unproven: 0n });
+    }
   });
 });

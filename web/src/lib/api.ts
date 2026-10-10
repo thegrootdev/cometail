@@ -148,7 +148,7 @@ export interface Stats {
   feeIndex: { readAtMs: number | null; mode: string | null; pools: number | null; configs: number | null; claimsConfirmed: number | null; historySinceMs: number | null; refreshMinutes: number | null } | null;
   /** $COMETAIL as a quote: its pool price at the read (lamports per whole token x 10^6) and the burns from paired-coin fees. */
   pairedQuote?: { mint: string; pool: string | null; readAtMs: number | null; slot: number | null; microLamportsPerToken: string | null; configs: string[]; launches: number;
-    burned: { account: string; claimer: string; readAtMs: number; complete: boolean; burns: number; burnedRaw: string; otherBurnedRaw: string; last: { signature: string; slot: number; blockTime: number | null; amountRaw: string; withClaim: boolean }[]; basis: string } | null } | null;
+    burned: { account: string; claimer: string; readAtMs: number; complete: boolean; burns: number; burnedRaw: string; otherBurnedRaw: string; unprovenBurnedRaw?: string; last: { signature: string; slot: number; blockTime: number | null; amountRaw: string; withClaim: boolean; kind?: "claim" | "other" | "unproven" }[]; basis: string } | null } | null;
 }
 export const api = {
   stats: () => get<Stats>("/api/stats"),

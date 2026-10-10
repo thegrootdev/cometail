@@ -898,6 +898,8 @@ export const paired = {
   launchStep1Done: "You hold the $COMETAIL for the first buy; creating the coin did not complete. Try again: the coin is created with the $COMETAIL already in your wallet.",
   launchStep1Sent: "Your $COMETAIL purchase for the first buy was sent but is not confirmed yet. Launching checks it on chain first and never buys $COMETAIL again while it can still land.",
   launchStep1Unsettled: "Your $COMETAIL purchase for the first buy is not confirmed yet, so nothing else was bought. Wait a minute and launch again: it is checked on chain first.",
-  launchStep2Pending: (amount: string) => `Step 1 is done: ${amount} for the first buy is in your wallet. Launching now creates the coin and spends exactly that; it needs only the launch costs in SOL.`,
+  launchStep1NotVisible: (amount: string, have: string) => `Your purchase of ${amount} for the first buy is confirmed, but your wallet shows ${have} right now, so the coin was not created. This is usually a node catching up: launch again in a moment and it uses that purchase. If you moved that $COMETAIL elsewhere, choose "Buy new $COMETAIL instead".`,
+  launchBuyAgain: "Buy new $COMETAIL instead",
+  launchStep2Pending: (amount: string) => `Step 1 is done: ${amount} for the first buy was bought and confirmed. Launching now creates the coin and spends exactly that; it needs only the launch costs in SOL.`,
   launchBoughtElsewhere: (amount: string) => `The ${amount} bought earlier for a first buy stays in your wallet. It was bought for a different wallet, preset or amount, so this launch buys its own.`,
 } as const;
