@@ -80,7 +80,10 @@ with two swaps (`web/src/lib/paired.ts`):
 
 - **Buy:** an exact-out swap on $COMETAIL's own DAMM v2 pool (the pool the burn program pinned, `GjpM…qG7T`)
   buys exactly the $COMETAIL the coin leg spends, for at most the SOL typed, then that $COMETAIL buys the
-  coin on its curve or, after graduation, on its coin/$COMETAIL pool. Nothing is left in $COMETAIL.
+  coin on its curve or, after graduation, on its coin/$COMETAIL pool. A buy that completes the curve buys only
+  what the curve still takes (fee included). Nothing is left in $COMETAIL, unless another buy lands first: one that
+  costs this buy more than 1% of its coins makes it fail whole; a smaller one lets it land with the curve taking a
+  little less, and that part stays in the wallet as $COMETAIL (the site says so on buys close to completion).
 - **Sell:** the coin is sold for $COMETAIL; with "SOL" chosen, the guaranteed minimum of that $COMETAIL is
   sold for SOL in the same transaction, so the slippage margin (at most 1%) stays in the wallet as
   $COMETAIL. With "$COMETAIL" chosen, the seller keeps it.
@@ -90,10 +93,12 @@ with two swaps (`web/src/lib/paired.ts`):
 
 At graduation the raise goes into a coin/$COMETAIL DAMM v2 pool (compounding, 1%, all liquidity permanently
 locked, fees in $COMETAIL). Creators earn their 75% of the curve fee in $COMETAIL. The protocol's share also
-arrives in $COMETAIL; its fee claimer is the launch treasury, which claims on `/admin/fees`, and each claim
-burns half of what it pays from the treasury's $COMETAIL account in the same transaction (a curve fee
-claim exactly, because the claim is capped at the scanned amount; a graduated position's fees as measured
-by simulating the claim). The other half stays in that account.
+arrives in $COMETAIL; its fee claimer is the launch treasury, which claims on `/admin/fees`. Each claim pays into a
+fresh token account created in the same transaction; exactly half of the amount the claim was built for is burned
+from it, the other half goes to the treasury's $COMETAIL account, and the fresh account is closed. The chain enforces
+the split: a claim that pays any other amount (a stale scan, a claim already made, fees that arrived since) fails as a
+whole, so nothing already in the treasury can be burned. A curve fee claim is built for the scanned amount; a
+graduated position's fees and a curve's surplus for what a simulation of the claim pays at that moment.
 
 Sizing: 75,000,000 to 450,000,000 $COMETAIL is about 10 to 61 SOL at the $COMETAIL price of 10 October
 2026 (1.36e-7 SOL). Prices and market caps are shown in SOL and dollars at $COMETAIL's current pool price,
@@ -103,7 +108,8 @@ $COMETAIL side, and raise $COMETAIL's price roughly 2.2 times along the way.
 
 ### Where paired coins show up (checked 10 October 2026)
 
-- **On cometail.fun** the SOL route always works: the site builds both swaps itself.
+- **On cometail.fun** the site builds both swaps itself, so a paired coin can be bought and sold with SOL whenever
+  $COMETAIL's pool and the coin's curve or pool can take the trade within the 1% bounds.
 - **Graduation is ours to run.** Meteora's migration keepers only graduate curves quoted in SOL, USDC, TRUMP, JUP,
   USD1, MET, JupUSD, VIRTUAL, stock tokens, or a Jupiter-verified token with an Organic Score above 50
   (docs.meteora.ag, DBC migration and liquidity). $COMETAIL is none of these, so the paired config is in the
@@ -114,5 +120,7 @@ $COMETAIL side, and raise $COMETAIL's price roughly 2.2 times along the way.
   market-listing rules also drop a curve that has not graduated 30 days after the token was created.
 - **DexScreener** lists custom-quote curve pairs but shows no USD price or liquidity for them; after graduation it
   prices some custom-quote pools and not others. **GeckoTerminal** priced the ones it listed.
-- **Axiom, Photon and BONKbot** do not list pools whose quote is not SOL (Meteora's DAMM v2 pool page says so).
+- **Axiom, Photon and BONKbot**: Meteora's DAMM v2 pool page offers no link to them for pools whose quote is not SOL
+  ("For pools without SOL as the quote token, BONKbot, Photon, and Axiom won't be in the list"); whether those
+  platforms list such pools themselves was not established.
   Nothing public was found either way for GMGN, BullX, Padre, Trojan, Maestro, Banana Gun or Birdeye.

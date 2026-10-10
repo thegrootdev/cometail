@@ -133,37 +133,91 @@ describe("public proof figures", () => {
     expect(v3.trading.pairedVolumeLamports).eq(null);
   });
 
-  it("counts $COMETAIL burned from the fee claimer's account with a claim in the same transaction, read oldest first", async () => {
+  it("a burn counts only when it spends what a claim paid into a fresh account in the same transaction (F6)", async () => {
     const store = await freshStore();
     const mint = Keypair.generate().publicKey, claimer = Keypair.generate().publicKey;
     const account = getAssociatedTokenAddressSync(mint, claimer);
-    const DBC = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN");
-    const burnData = (n: bigint, checked: boolean) => { const b = Buffer.alloc(checked ? 10 : 9); b[0] = checked ? 15 : 8; b.writeBigUInt64LE(n, 1); if (checked) b[9] = 6; return b; };
-    const tx = (ixs: { program: PublicKey; accounts: PublicKey[]; data: Buffer }[]) => {
+    const DBC = new PublicKey("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"), DAMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+    const CLAIM_FEE = Buffer.from([8, 236, 89, 49, 152, 125, 177, 81]), SWAP2 = Buffer.from([65, 75, 63, 76, 235, 91, 91, 136]), POSITION_FEE = Buffer.from([180, 38, 154, 17, 133, 33, 162, 211]);
+    const burnData = (n: bigint) => { const b = Buffer.alloc(10); b[0] = 15; b.writeBigUInt64LE(n, 1); b[9] = 6; return b; };
+    const filler = () => Keypair.generate().publicKey;
+    /** accounts: the claim's quote destination at the given index, the rest filler */
+    const claimIx = (program: PublicKey, disc: Buffer, at: number, dest: PublicKey) => ({ program, accounts: Array.from({ length: 12 }, (_, i) => (i === at ? dest : filler())), data: Buffer.concat([disc, Buffer.alloc(16)]) });
+    const tx = (ixs: { program: PublicKey; accounts: PublicKey[]; data: Buffer }[], held: { account: PublicKey; amount: string }[] = []) => {
       const keys: PublicKey[] = [];
       const at = (k: PublicKey) => { let i = keys.findIndex((x) => x.equals(k)); if (i < 0) { keys.push(k); i = keys.length - 1; } return i; };
       const compiled = ixs.map((ix) => ({ programIdIndex: at(ix.program), accountKeyIndexes: ix.accounts.map(at), data: Uint8Array.from(ix.data) }));
-      return { slot: 1, blockTime: 10, meta: { err: null, innerInstructions: [] }, transaction: { message: { getAccountKeys: () => ({ get: (i: number) => keys[i], length: keys.length }), compiledInstructions: compiled } } } as any;
+      const pre = held.map((h) => ({ accountIndex: at(h.account), mint: mint.toBase58(), uiTokenAmount: { amount: h.amount } }));
+      return { slot: 1, blockTime: 10, meta: { err: null, innerInstructions: [], preTokenBalances: pre }, transaction: { message: { getAccountKeys: () => ({ get: (i: number) => keys[i], length: keys.length }), compiledInstructions: compiled } } } as any;
     };
-    const claimAndBurn = tx([{ program: DBC, accounts: [claimer], data: Buffer.from([1]) }, { program: TOKEN_PROGRAM_ID, accounts: [account, mint, claimer], data: burnData(500n, true) }]);
-    const plainBurn = tx([{ program: TOKEN_PROGRAM_ID, accounts: [account, mint, claimer], data: burnData(7n, false) }]);
-    const elsewhere = tx([{ program: TOKEN_PROGRAM_ID, accounts: [Keypair.generate().publicKey, mint, claimer], data: burnData(9n, true) }]);
-    expect(burnsIn(claimAndBurn, account.toBase58(), mint.toBase58())).to.deep.eq({ amount: 500n, withClaim: true });
-    expect(burnsIn(plainBurn, account.toBase58(), mint.toBase58())).to.deep.eq({ amount: 7n, withClaim: false });
-    expect(burnsIn(elsewhere, account.toBase58(), mint.toBase58()).amount).eq(0n);
+    const burn = (src: PublicKey, n: bigint) => ({ program: TOKEN_PROGRAM_ID, accounts: [src, mint, claimer], data: burnData(n) });
+    const fresh = Keypair.generate().publicKey, fresh2 = Keypair.generate().publicKey;
+    // the builder's shape: a curve fee claim into a fresh account, half burned from it
+    const good = tx([claimIx(DBC, CLAIM_FEE, 4, fresh), burn(fresh, 500n)]);
+    // a graduated position's claim the same way
+    const position = tx([claimIx(DAMM, POSITION_FEE, 4, fresh2), burn(fresh2, 40n)]);
+    // a swap next to an ordinary burn from the fee claimer's account: not a claim's burn
+    const swapAndBurn = tx([claimIx(DBC, SWAP2, 4, account), burn(account, 7n)]);
+    // a claim into the fee claimer's own (already holding) account, then a burn from it: earlier tokens could be burned
+    const intoHeld = tx([claimIx(DBC, CLAIM_FEE, 4, account), burn(account, 9n)], [{ account, amount: "1000" }]);
+    // a claim into one account and a burn from another
+    const elsewhere = tx([claimIx(DBC, CLAIM_FEE, 4, fresh), burn(Keypair.generate().publicKey, 3n)]);
+    const A = account.toBase58(), M = mint.toBase58();
+    expect(burnsIn(good, A, M)).to.deep.eq({ amount: 500n, withClaim: true, other: 0n });
+    expect(burnsIn(position, A, M)).to.deep.eq({ amount: 40n, withClaim: true, other: 0n });
+    expect(burnsIn(swapAndBurn, A, M)).to.deep.eq({ amount: 0n, withClaim: false, other: 7n });
+    expect(burnsIn(intoHeld, A, M)).to.deep.eq({ amount: 0n, withClaim: false, other: 9n });
+    expect(burnsIn(elsewhere, A, M)).to.deep.eq({ amount: 0n, withClaim: false, other: 0n });
     // the walk: newest first from the RPC, stored oldest first; a later pass reads only what is newer than its head
-    const chain: Record<string, any> = { s1: claimAndBurn, s2: plainBurn, s3: elsewhere };
+    const chain: Record<string, any> = { s1: good, s2: swapAndBurn, s3: elsewhere };
     let sigs = [{ signature: "s2", slot: 2, err: null }, { signature: "s1", slot: 1, err: null }];
     const deps = { getSignatures: async (_a: PublicKey, o: { until?: string }) => (o.until ? sigs.slice(0, sigs.findIndex((x) => x.signature === o.until)) : sigs), readTx: async (s: string) => chain[s] };
-    expect(await pairedBurnPass(deps, store, { mint: mint.toBase58(), claimer: claimer.toBase58() })).eq(2);
+    expect(await pairedBurnPass(deps, store, { mint: M, claimer: claimer.toBase58() })).eq(2);
     sigs = [{ signature: "s3", slot: 3, err: null }, ...sigs];
-    expect(await pairedBurnPass(deps, store, { mint: mint.toBase58(), claimer: claimer.toBase58() })).eq(0);
+    expect(await pairedBurnPass(deps, store, { mint: M, claimer: claimer.toBase58() })).eq(0);
     const saved = (await readPairedBurns(store))!;
     expect(saved.burns.map((b) => [b.signature, b.amountRaw, b.withClaim])).to.deep.eq([["s1", "500", true], ["s2", "7", false]]);
-    expect(saved).to.include({ head: "s3", complete: true, account: account.toBase58() });
+    expect(saved).to.include({ head: "s3", complete: true, account: A });
     // an unreadable transaction stops the pass at it: retried, never skipped
     sigs = [{ signature: "s4", slot: 4, err: null }, ...sigs];
-    await pairedBurnPass({ ...deps, readTx: async (s: string) => (s === "s4" ? null : chain[s]) }, store, { mint: mint.toBase58(), claimer: claimer.toBase58() });
+    await pairedBurnPass({ ...deps, readTx: async (s: string) => (s === "s4" ? null : chain[s]) }, store, { mint: M, claimer: claimer.toBase58() });
     expect((await readPairedBurns(store))!).to.include({ head: "s3", complete: false });
+  });
+
+  it("a burn-view outage keeps the paired launches: the kept identity values them, and without it the totals are unknown (F4)", async () => {
+    const store = await freshStore();
+    const cometailMint = key(), cometailPool = key(), w1 = key();
+    const cometail = token({ mint: cometailMint, stage: "graduated", dammPool: cometailPool });
+    const coin = token({ quoteMint: cometailMint, quoteDecimals: 6 });
+    await store.upsertTokens([cometail, coin]);
+    await store.insertTrades([trade(cometailPool, w1, "2000000000", "damm", { slot: 10, baseAmountRaw: "10000000000000", signature: "r1" }), trade(coin.dbcPool, w1, "10000000000000", "curve", { slot: 10, idx: 1, signature: "r1" })]);
+    for (const p of [cometail.dbcPool, cometailPool, coin.dbcPool]) await store.setPoolCursor(p, { head: "h", tail: null, target: null, newHead: null, status: "ok" });
+    await store.setMeta("tokens_scanned_at", "1000");
+    const down = async () => ({ status: "unavailable" });
+    const kept = await statsViewer(blindChain, store, { cluster: "test", team: [], feeIndex: null, burnView: down, tailView: null, pairedIdentity: () => ({ mint: cometailMint, pool: cometailPool }) })() as any;
+    expect(kept.trading).to.include({ volumeLamports: "4000000000", pairedVolumeLamports: "2000000000", pairedIdentity: "known" });
+    const unknown = await statsViewer(blindChain, store, { cluster: "test", team: [], feeIndex: null, burnView: down, tailView: null, pairedIdentity: () => undefined })() as any;
+    expect(unknown.trading).to.include({ volumeLamports: null, outsideVolumeLamports: null, pairedVolumeLamports: null, pairedIdentity: "unknown" });
+    // a program that is not set up at all: no paired quote exists, the SOL totals stand
+    const none = await statsViewer(blindChain, store, { cluster: "test", team: [], feeIndex: null, burnView: async () => ({ status: "not-set-up" }), tailView: null })() as any;
+    expect(none.trading).to.include({ volumeLamports: "2000000000", pairedIdentity: "none" });
+  });
+
+  it("a $COMETAIL leg with an unknown side is never skipped for an older price; its known SOL still counts as routed (F5)", async () => {
+    const store = await freshStore();
+    const cometailMint = key(), cometailPool = key(), w1 = key();
+    const cometail = token({ mint: cometailMint, stage: "graduated", dammPool: cometailPool });
+    const coin = token({ quoteMint: cometailMint, quoteDecimals: 6 });
+    await store.upsertTokens([cometail, coin]);
+    const old = trade(cometailPool, w1, "1000000000", "damm", { slot: 5, baseAmountRaw: "10000000000000" });
+    // the route's own $COMETAIL leg: 9 SOL known, its $COMETAIL side missing
+    const leg = trade(cometailPool, w1, "9000000000", "damm", { slot: 10, baseAmountRaw: undefined, signature: "route" });
+    const paired = trade(coin.dbcPool, w1, "10000000000000", "curve", { slot: 10, idx: 1, signature: "route" });
+    await store.insertTrades([old, leg, paired]);
+    for (const p of [cometail.dbcPool, cometailPool, coin.dbcPool]) await store.setPoolCursor(p, { head: "h", tail: null, target: null, newHead: null, status: "ok" });
+    await store.setMeta("tokens_scanned_at", "1000");
+    const v: any = await statsViewer(blindChain, store, { cluster: "test", team: [], feeIndex: null, burnView: null, tailView: null, pairedIdentity: () => ({ mint: cometailMint, pool: cometailPool }) })();
+    expect(v.launches.list.find((l: any) => l.mint === coin.mint).volumeSolLamports, "not the older 1 SOL per 10M").eq(null);
+    expect(v.trading).to.include({ pairedVolumeLamports: null, pairedRoutedLamports: "9000000000" });
   });
 });

@@ -246,7 +246,7 @@ export const statsPage = {
     note: "The burn program's own counters, read from its state account. It can only buy $COMETAIL and burn it; its build is verified against this repository.",
     pairedBurned: "Burned from paired-coin fees",
     pairedSub: (claims: number) => `${claims.toLocaleString("en-US")} claim${claims === 1 ? "" : "s"}`,
-    pairedNote: "Coins paired with $COMETAIL pay the protocol in $COMETAIL. Each claim burns half of what it pays in the same transaction, from the protocol's $COMETAIL account; the other half stays in the treasury.",
+    pairedNote: "Coins paired with $COMETAIL pay the protocol in $COMETAIL. Each claim pays into a fresh account that burns exactly half and sends the other half to the treasury, in the same transaction; a claim that pays anything else fails.",
     page: "Every buyback",
   },
   liquidity: {
@@ -878,6 +878,7 @@ export const paired = {
   about: "This coin trades against $COMETAIL, not SOL. You still pay with SOL: one transaction buys $COMETAIL on $COMETAIL's own pool, then this coin. Prices and market caps are shown in SOL and dollars at $COMETAIL's current pool price, so they also move when $COMETAIL moves.",
   route: "Two swaps in one transaction: SOL to $COMETAIL on $COMETAIL's pool, then $COMETAIL to this coin, each with its 1% fee. If either price moves more than 1% before it lands, neither swap happens.",
   payAtMost: "You pay at most",
+  nearCompletion: "This buy completes the curve or comes close. If another buy lands first, this one either fails whole (when you would get more than 1% fewer coins) or lands with the curve taking a little less: the $COMETAIL it no longer takes stays in your wallet.",
   through: "Bought in between",
   receive: "Receive",
   receiveSol: "SOL",
@@ -895,4 +896,6 @@ export const paired = {
   launchStep1: "Buying $COMETAIL for the first buy (1 of 2)",
   launchStep2: "Creating the coin with its first buy (2 of 2)",
   launchStep1Done: "You hold the $COMETAIL for the first buy; creating the coin did not complete. Try again: the coin is created with the $COMETAIL already in your wallet.",
+  launchStep2Pending: (amount: string) => `Step 1 is done: ${amount} for the first buy is in your wallet. Launching now creates the coin and spends exactly that; it needs only the launch costs in SOL.`,
+  launchBoughtElsewhere: (amount: string) => `The ${amount} bought earlier for a first buy stays in your wallet. It was bought for a different wallet, preset or amount, so this launch buys its own.`,
 } as const;

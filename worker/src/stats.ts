@@ -20,6 +20,9 @@ export interface StatsOptions {
   feeIndex: FeeIndex | null;
   burnView: (() => Promise<unknown>) | null;
   tailView: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null;
+  /** $COMETAIL's mint and pinned pool from the burn program's state, read once and kept: null when the program is not
+   *  set up, undefined while it has not been read. Without it the burn view's copy is used. */
+  pairedIdentity?: () => { mint: string; pool: string } | null | undefined;
 }
 
 const big = (v: unknown): bigint | null => {
@@ -44,20 +47,23 @@ type Valuer = (r: TradeRow, quoteRaw: bigint) => bigint | null;
 /** Every trade of $COMETAIL's own pool, oldest first: the price of $COMETAIL in SOL at each of them. A paired trade is
  *  valued at the $COMETAIL leg in its own transaction when it has one (the site's SOL route: exactly the SOL spent or
  *  received for that $COMETAIL), else at the pool's last trade at or before its slot; before the pool's first trade, unknown. */
-async function cometailValuer(store: Store, pool: string): Promise<{ value: Valuer; legs: Map<string, bigint> }> {
-  const rows: { slot: number; lamports: bigint; raw: bigint }[] = [];
-  const bySig = new Map<string, { lamports: bigint; raw: bigint }>();
-  const legs = new Map<string, bigint>();
+async function cometailValuer(store: Store, pool: string): Promise<{ value: Valuer; legs: Map<string, bigint | null> }> {
+  // a leg missing either side is kept as unknown: it is never skipped in favour of an older price
+  const rows: { slot: number; lamports: bigint | null; raw: bigint | null }[] = [];
+  const bySig = new Map<string, { lamports: bigint | null; raw: bigint | null }>();
+  const legs = new Map<string, bigint | null>();
+  const add = (a: bigint | null, b: bigint | null) => (a === null || b === null ? null : a + b);
   let before: { slot: number; idx: number; signature: string } | null = null;
   for (;;) {
     const page: TradeRow[] = await store.listTradesByPools([pool], PAGE, before);
     for (const r of page) {
-      const lamports = big(r.quoteAmountLamports), raw = big(r.baseAmountRaw);
-      if (lamports === null || raw === null || raw === 0n) continue;
+      const lamports = big(r.quoteAmountLamports), rawLeg = big(r.baseAmountRaw);
+      const raw = rawLeg === 0n ? null : rawLeg;
       rows.push({ slot: r.slot, lamports, raw });
       const prev = bySig.get(r.signature);
-      bySig.set(r.signature, prev ? { lamports: prev.lamports + lamports, raw: prev.raw + raw } : { lamports, raw });
-      legs.set(r.signature, (legs.get(r.signature) ?? 0n) + lamports);
+      bySig.set(r.signature, prev ? { lamports: add(prev.lamports, lamports), raw: add(prev.raw, raw) } : { lamports, raw });
+      // the SOL of the leg is known whenever its quote side is, even when its $COMETAIL side is not
+      legs.set(r.signature, legs.has(r.signature) ? add(legs.get(r.signature)!, lamports) : lamports);
     }
     if (page.length < PAGE) break;
     const last = page[page.length - 1];
@@ -66,10 +72,12 @@ async function cometailValuer(store: Store, pool: string): Promise<{ value: Valu
   rows.reverse(); // oldest first (the store pages newest first)
   const value: Valuer = (r, q) => {
     const own = bySig.get(r.signature);
-    if (own) return (q * own.lamports) / own.raw;
+    if (own) return own.lamports === null || own.raw === null ? null : (q * own.lamports) / own.raw;
     let lo = 0, hi = rows.length - 1, at = -1;
     while (lo <= hi) { const mid = (lo + hi) >> 1; if (rows[mid].slot <= r.slot) { at = mid; lo = mid + 1; } else hi = mid - 1; }
-    return at < 0 ? null : (q * rows[at].lamports) / rows[at].raw;
+    if (at < 0) return null;
+    const p = rows[at];
+    return p.lamports === null || p.raw === null ? null : (q * p.lamports) / p.raw;
   };
   return { value, legs };
 }
@@ -151,8 +159,14 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
     let burn: any = null;
     try { burn = opts.burnView ? await opts.burnView() : null; } catch { burn = null; }
     const burnLive = burn && burn.status === "live";
-    // coins paired with $COMETAIL: the quote is the burn program's $COMETAIL mint, priced by its pinned pool
-    const pairedMint: string | null = burnLive ? burn.setup?.cometailMint ?? null : null, pairedPool: string | null = burnLive ? burn.setup?.pool ?? null : null;
+    // coins paired with $COMETAIL: the quote is the burn program's $COMETAIL mint, priced by its pinned pool. The identity
+    // comes from the program's state as the worker read it (kept), else from the burn view; while neither is known, a
+    // launch in any quote but SOL could be paired, so the totals that would include it are unknown, not smaller
+    const kept = opts.pairedIdentity ? opts.pairedIdentity() : undefined;
+    const identity = kept !== undefined ? kept : burnLive && burn.setup ? { mint: burn.setup.cometailMint as string, pool: burn.setup.pool as string }
+      : burn && burn.status === "not-set-up" ? null : opts.burnView ? undefined : null; // no program set up: no paired quote
+    const identityUnknown = identity === undefined && tokens.some((t) => t.quoteMint !== WSOL);
+    const pairedMint: string | null = identity?.mint ?? null, pairedPool: string | null = identity?.pool ?? null;
     const isPaired = (t: TokenRow) => !!pairedMint && t.quoteMint === pairedMint;
     const pairedPriced = !!pairedPool && cursorOk.get(pairedPool) === true;
     const valuation = pairedPool && tokens.some(isPaired) ? await cometailValuer(store, pairedPool) : null;
@@ -202,7 +216,7 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
     const inSol = launches.filter((l) => l.quoteMint === WSOL || l.paired);
     const pairedRows = launches.filter((l) => l.paired);
     // the SOL legs on $COMETAIL's pool that belong to a paired trade's own transaction: counted on that pool too
-    const routed = valuation && pairedPriced ? [...pairedSignatures].reduce((n, sig) => n + (valuation.legs.get(sig) ?? 0n), 0n) : null;
+    const routed = valuation && pairedPriced ? [...pairedSignatures].reduce<bigint | null>((n, sig) => { const leg = valuation.legs.has(sig) ? valuation.legs.get(sig)! : 0n; return n === null || leg === null ? null : n + leg; }, 0n) : null;
     // $COMETAIL's price at the read: lamports per whole token, x 10^6 (DAMM v2 sqrt price, Q64.64, 6 and 9 decimals)
     const cometailPool = pairedPool ? chainRead?.byKey.get(pairedPool) : null;
     const sq = cometailPool?.kind === "damm" ? BigInt(cometailPool.state.sqrtPrice.toString()) : null;
@@ -236,10 +250,11 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
         readAtMs: scannedAtMs, complete: indexComplete, pendingPools,
         trades: launches.reduce((n, l) => n + l.trades, 0),
         traders: indexComplete ? allTraders.size : null,
-        volumeLamports: indexComplete ? sumField(inSol, (l) => l.volumeSolLamports) : null,
-        outsideVolumeLamports: indexComplete ? sumField(inSol.filter((l) => l.team === false), (l) => l.volumeSolLamports) : null,
-        pairedVolumeLamports: indexComplete && pairedRows.length ? sumField(pairedRows, (l) => l.volumeSolLamports) : pairedRows.length ? null : "0",
-        pairedRoutedLamports: indexComplete && pairedRows.length ? str(routed) : pairedRows.length ? null : "0",
+        volumeLamports: indexComplete && !identityUnknown ? sumField(inSol, (l) => l.volumeSolLamports) : null,
+        outsideVolumeLamports: indexComplete && !identityUnknown ? sumField(inSol.filter((l) => l.team === false), (l) => l.volumeSolLamports) : null,
+        pairedVolumeLamports: identityUnknown ? null : indexComplete && pairedRows.length ? sumField(pairedRows, (l) => l.volumeSolLamports) : pairedRows.length ? null : "0",
+        pairedRoutedLamports: identityUnknown ? null : indexComplete && pairedRows.length ? str(routed) : pairedRows.length ? null : "0",
+        pairedIdentity: identityUnknown ? "unknown" : identity ? "known" : "none",
         basis: "every swap on the launches' curves and graduated pools, as indexed from chain; volume is the quote leg of each trade in SOL. A launch paired with $COMETAIL has its quote leg in $COMETAIL, valued at the $COMETAIL price of that transaction's own SOL leg on $COMETAIL's pool (the site's route), else of that pool's last trade at or before the trade's slot. A paired buy or sell through the site is two swaps, SOL and $COMETAIL on $COMETAIL's pool and $COMETAIL and the coin, and each counts once on its own pool (pairedRoutedLamports is the first kind); other quotes are left out",
       },
       fees: {
@@ -262,7 +277,7 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
           burnedRaw: pb.burns.filter((b) => b.withClaim).reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
           otherBurnedRaw: pb.burns.filter((b) => !b.withClaim).reduce((n, b) => n + BigInt(b.amountRaw), 0n).toString(),
           last: pb.burns.slice(-5).reverse(),
-          basis: "every Burn of $COMETAIL from the paired configs' fee claimer's $COMETAIL account in a transaction that also claimed from DBC or DAMM v2 (the claim burns half of what it paid); read from that account's full history" } : null,
+          basis: "every Burn of $COMETAIL from the account a DBC or DAMM v2 claim paid into in the same transaction, when that account held no $COMETAIL before it (the fresh account the paired claim creates, burns half of, sends the rest from to the fee claimer's $COMETAIL account, and closes); read from the full history of the fee claimer's $COMETAIL account. otherBurnedRaw: burns from that account itself" } : null,
       } : null,
       burn: burnLive ? {
         readAtMs: burn.generatedAtMs, slot: burn.observedSlot ?? null, program: burn.program, reserve: burn.setup?.reserve ?? null, mint: burn.cometail?.mint ?? null,
