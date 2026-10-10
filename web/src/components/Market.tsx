@@ -28,7 +28,7 @@ function Metric({ label, value, note, exact }: { label: string; value: React.Rea
 }
 function TokenStats({ token, observedAt }: { token: MarketToken; observedAt: number }) {
   const rate = quoteRate(token.quoteUsd, observedAt);
-  const asset = quoteAsset(token.quoteMint, token.quoteDecimals);
+  const asset = quoteAsset(token.quoteMint, token.quoteDecimals, null, token.quoteUsd?.sol);
   const supply = rawUnits(token.totalSupplyRaw, token.decimals);
   const price = token.priceStatus === "stale" || token.priceStatus === "unavailable" ? null : token.priceQuote;
   const fdvSol = supply !== null && price !== null ? Number(supply) * Number(price) : null;
@@ -36,7 +36,7 @@ function TokenStats({ token, observedAt }: { token: MarketToken; observedAt: num
   const holders = token.holders?.status === "unavailable" ? null : token.holders?.count;
   return <dl className="market-stats">
     <Metric label={copy.price} value={<Money sol={price} price quote={asset} quoteRate={rate} />} exact={token.priceQuote} note={token.priceStatus === "stale" ? copy.stale : undefined} />
-    <Metric label={copy.fdv} value={rate.status === "fresh" ? formatUsd(fdv) : <span className="money-pair"><span className="money-quote">—</span><small className="money-sol">{rate.status === "stale" ? money.stale : money.missing}</small></span>} />
+    <Metric label={copy.fdv} value={asset.paired ? <Money sol={fdvSol} quote={asset} quoteRate={rate} /> : rate.status === "fresh" ? formatUsd(fdv) : <span className="money-pair"><span className="money-quote">—</span><small className="money-sol">{rate.status === "stale" ? money.stale : money.missing}</small></span>} />
     <Metric label={copy.volume} value={<Money quote={asset} quoteRate={rate} lamports={token.volumeStatus === "stale" ? null : token.volume24hLamports} />} note={!token.complete || token.volumeStatus === "partial" ? copy.partial : token.volumeStatus === "stale" ? copy.stale : undefined} />
     <Metric label={copy.holders} value={marketNumber(holders, 0)} note={token.holders?.status === "stale" ? copy.stale : token.holders?.status === "partial" ? copy.partial : undefined} />
     <Metric label={money.liquidity} value={<Money quote={asset} quoteRate={rate} lamports={token.liquidityBasis ? token.liquidityLamports ?? null : null} />} note={token.liquidityBasis === "curve-quote-reserve" ? money.curveLiquidity : token.liquidityBasis === "damm-quote-x2" ? money.poolLiquidity : money.unknownLiquidity} />
@@ -80,7 +80,7 @@ function TradeResults({ path, decimals, cursor, onCursor, onChain = false, symbo
     {trades.length ? <ul className="trade-list">{trades.map(t => <li key={t.id} className={`trade-row trade-row-${t.side}${fresh.includes(t.id) ? " market-new-trade" : ""}`}>
       <span className={`trade-side trade-${t.side}`}>{t.side === "buy" ? copy.buy : copy.sell}</span>
       <span className="trade-main">
-        <span className="trade-quote" title={rawUnits(t.quoteAmountLamports, t.quoteDecimals) ?? undefined}><Money lamports={t.quoteAmountLamports} quote={quoteAsset(t.quoteMint, t.quoteDecimals, quote?.mint === t.quoteMint ? quote.symbol : null)} quoteRate={quote?.mint === t.quoteMint ? rate : undefined} /></span>
+        <span className="trade-quote" title={rawUnits(t.quoteAmountLamports, t.quoteDecimals) ?? undefined}><Money lamports={t.quoteAmountLamports} quote={quoteAsset(t.quoteMint, t.quoteDecimals, quote?.mint === t.quoteMint ? quote.symbol : null, quote?.mint === t.quoteMint ? quote.sol : null)} quoteRate={quote?.mint === t.quoteMint ? rate : undefined} /></span>
         <span className="trade-meta">
           <span title={rawUnits(t.baseAmountRaw, decimals) ?? undefined}>{t.baseAmountRaw !== null && /^\d+$/.test(t.baseAmountRaw) ? formatAmount(BigInt(t.baseAmountRaw), decimals, { ticker: symbol ?? undefined, maxFraction: 0 }) : "—"}</span>
           <span>{t.trader ? <a href={EXPLORER("address", t.trader)} target="_blank" rel="noopener noreferrer" aria-label={`${copy.trader} ${t.trader}`}>{short(t.trader)}</a> : copy.unknownTrader}{t.trader && t.traderKind === "feePayer" ? <span className="micro"> · {copy.payer}</span> : null}</span>

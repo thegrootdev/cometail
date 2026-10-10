@@ -1,10 +1,10 @@
 // The launch presets as the site presents them. Numbers are the full-size parameters from
 // configs/*.json (the raise is the curve's migration quote threshold); on devnet the Standard
 // preset the site launches with is the small e2e config, which the page says.
-export type PresetKey = "standard" | "long" | "flat" | "exp" | "stockUsdc" | "stockXstock";
+export type PresetKey = "standard" | "long" | "flat" | "exp" | "stockUsdc" | "stockXstock" | "paired";
 export interface PresetInfo {
   key: PresetKey; name: string; tagline: string; forWhom: string; curve: string;
-  quote: "WSOL" | "USDC" | "stock"; quoteLabel: string; quoteDecimals: number;
+  quote: "WSOL" | "USDC" | "stock" | "COMETAIL"; quoteLabel: string; quoteDecimals: number;
   initialCap: string; migrationCap: string; raise: string; unit: string; file: string;
   available: boolean;
 }
@@ -15,6 +15,7 @@ export const presets: PresetInfo[] = [
   { key: "exp", name: "Exponential", tagline: "Gentle start. Steeper finish.", forWhom: "Launches that want a gradual opening price climb and sharper price movement as the curve fills.", curve: "Sixteen segments with falling liquidity weights, from a 20 SOL to a 240 SOL FDV. The configured end price is twelve times the start.", quote: "WSOL", quoteLabel: "SOL", quoteDecimals: 9, initialCap: "20 SOL", migrationCap: "240 SOL", raise: "30.675 SOL", unit: "SOL", file: "configs/exp.json", available: true },
   { key: "stockUsdc", name: "Dollar-paired", tagline: "Quoted in USDC.", forWhom: "Launches priced in dollars from the first trade; the curve, the fees and the pool are all in USDC.", curve: "One segment from a 2,000 USDC to a 12,000 USDC FDV.", quote: "USDC", quoteLabel: "USDC", quoteDecimals: 6, initialCap: "2,000 USDC", migrationCap: "12,000 USDC", raise: "3,478.78 USDC", unit: "USDC", file: "configs/stock-usdc.json", available: true },
   { key: "stockXstock", name: "Stock-paired", tagline: "A smaller raise in stock units.", forWhom: "For thinly traded or newly tokenized stock quotes: a smaller raise asks buyers for fewer stock units, while rising liquidity weights put more depth near graduation. Early buys move the price more; the curve cannot remove the quote token’s own volatility or limited liquidity.", curve: "Sixteen segments with rising liquidity weights, from 2 to 16 stock units of FDV.", quote: "stock", quoteLabel: "stock units", quoteDecimals: 8, initialCap: "2 units", migrationCap: "16 units", raise: "5.667 units", unit: "units", file: "configs/stock-xstock.json", available: true },
+  { key: "paired", name: "Paired with $COMETAIL", tagline: "Bought with SOL, held in $COMETAIL.", forWhom: "Coins that want to be part of $COMETAIL: buyers pay SOL, every buy buys $COMETAIL first on its own pool, and at graduation the raise goes into a coin/$COMETAIL pool locked for good. The coin's SOL price also moves with $COMETAIL.", curve: "One segment from a 75,000,000 to a 450,000,000 $COMETAIL FDV (about 10 and 61 SOL at the $COMETAIL price of 10 Oct 2026).", quote: "COMETAIL", quoteLabel: "$COMETAIL", quoteDecimals: 6, initialCap: "75,000,000 $COMETAIL", migrationCap: "450,000,000 $COMETAIL", raise: "130,454,076.85 $COMETAIL", unit: "$COMETAIL", file: "configs/paired.json", available: true },
 ];
 export const presetsPage = {
   kicker: "Pick a curve",

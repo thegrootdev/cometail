@@ -422,3 +422,12 @@ h3 { font-size: 19px; }
 }
 .home-numbers.is-last-known .home-number strong { color: #aab4d0; }
 .home-numbers-stale { grid-column: 1 / -1; color: #8a96b8; }
+
+/* Coins paired with $COMETAIL: a plain label on the card and the coin page, and the sale's SOL / $COMETAIL choice. */
+.coin-paired { display: block; margin-top: 2px; font-size: 11px; font-weight: 700; color: var(--dust); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.token-paired { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 800; color: #1c1303; background: var(--dust); white-space: nowrap; }
+.trade-paired { margin: 0; font-size: 13px; }
+.trade-receive { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+.trade-receive span { margin-right: 4px; }
+.trade-receive button { min-height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--glass-line); background: transparent; color: #a9b4d2; font: 800 14px var(--font-body); cursor: pointer; }
+.trade-receive button[aria-pressed="true"] { background: #ffffff14; color: var(--starlight); border-color: var(--glass-line-strong); }

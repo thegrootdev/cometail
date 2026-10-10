@@ -1,12 +1,19 @@
-import { ADDRESSES, CLUSTER } from "./addresses";
+import { ADDRESSES, CLUSTER, OFFICIAL_MINT } from "./addresses";
 import { missingRate, PRICE_MAX_AGE_MS, type SolUsdRate } from "./usd";
 
-export interface QuoteAsset { mint: string | null; decimals: number | null; symbol: string }
-export interface QuoteUsd { value: number | null; source: string | null; status: "fresh" | "stale" | "missing" }
+/** `sol`: SOL per one whole quote token when the API knows it (a coin paired with $COMETAIL: its pool's price). */
+export interface QuoteAsset { mint: string | null; decimals: number | null; symbol: string; sol?: number | null; paired?: boolean }
+export interface QuoteUsd { value: number | null; source: string | null; status: "fresh" | "stale" | "missing"; sol?: number | null; solSource?: string | null }
 export const WSOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /** An unknown mint never inherits SOL units or decimals. */
-export function quoteAsset(mint: string | null | undefined, decimals?: number | null, symbol?: string | null): QuoteAsset {
+/** The protocol's own token as a quote: coins paired with $COMETAIL. */
+export const isPairedMint = (mint: string | null | undefined) => !!mint && !!OFFICIAL_MINT && mint === OFFICIAL_MINT.toBase58();
+export function quoteAsset(mint: string | null | undefined, decimals?: number | null, symbol?: string | null, sol?: number | null): QuoteAsset {
+  if (isPairedMint(mint)) {
+    const valid = typeof sol === "number" && Number.isFinite(sol) && sol > 0;
+    return { mint: mint!, decimals: 6, symbol: "$COMETAIL", sol: valid ? sol : null, paired: true };
+  }
   const native = mint === WSOL;
   const usdc = mint === USDC || !!mint && mint === ADDRESSES.quoteMints.usdc?.toBase58();
   const stock = !!mint && mint === ADDRESSES.quoteMints.stock?.toBase58();

@@ -6,11 +6,11 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { API_URL, CLUSTER, OFFICIAL_MINT, isListed, isOfficial } from "@/lib/addresses";
 import { useMarket, normalizeToken, rawUnits, type MarketEnvelope, type MarketToken, type TokenList } from "@/lib/market";
-import { quoteAsset, quoteRate } from "@/lib/quotes";
+import { isPairedMint, quoteAsset, quoteRate } from "@/lib/quotes";
 import { usdValue } from "@/lib/usd";
 import { shownName, shownSymbol, tickerText } from "@/lib/token-display";
 import { short } from "@/lib/format";
-import { home as copy, market } from "@/content/cometail";
+import { home as copy, market, paired as pairedCopy } from "@/content/cometail";
 import { DataState, TokenAvatar } from "./Experience";
 
 type Tab = "new" | "trending" | "soon" | "graduated";
@@ -25,13 +25,17 @@ export function compactUsd(value: string | number | null | undefined): string | 
 /** FDV: current price × total supply (the worker reports no circulating supply, so this is not a
  *  circulating market cap). USD only through a fresh quote rate observed with the data; otherwise the
  *  quote-token figure. A stale or missing price gives no figure at all. */
-export function fdvValue(t: MarketToken, observedAt: number): { text: string; usd: boolean } {
+export function fdvValue(t: MarketToken, observedAt: number): { text: string; usd: boolean; sol?: string | null } {
   const price = t.priceStatus === "stale" || t.priceStatus === "unavailable" ? null : t.priceQuote;
   const supply = rawUnits(t.totalSupplyRaw, t.decimals);
   const quote = supply !== null && price !== null ? Number(supply) * Number(price) : null;
   if (quote === null || !Number.isFinite(quote)) return { text: "—", usd: false };
   const usd = compactUsd(usdValue(quote, quoteRate(t.quoteUsd, observedAt)));
-  if (usd) return { text: usd, usd: true };
+  // a coin paired with $COMETAIL: in SOL at $COMETAIL's pool price as well
+  const asset = quoteAsset(t.quoteMint, t.quoteDecimals, null, t.quoteUsd?.sol);
+  const sol = asset.paired && asset.sol ? `${(quote * asset.sol).toLocaleString("en-US", { maximumFractionDigits: quote * asset.sol >= 100 ? 0 : 2 })} SOL` : null;
+  if (usd) return { text: usd, usd: true, sol };
+  if (sol) return { text: sol, usd: false, sol };
   return { text: `${quote.toLocaleString("en-US", { maximumFractionDigits: quote >= 100 ? 0 : 2 })} ${quoteAsset(t.quoteMint, t.quoteDecimals).symbol}`, usd: false };
 }
 export function progressOf(t: MarketToken): number | null {
@@ -60,6 +64,7 @@ export function CoinCard({ token: t, observedAt, official = false }: { token: Ma
           <strong>{shownName(t.mint, t.name?.trim()) || short(t.mint)}</strong>
           {official ? <span className="coin-badge">{copy.official}</span> : <span className="coin-ticker">{tickerText(shownSymbol(t.mint, t.symbol)) || "—"}</span>}
         </span>
+        {isPairedMint(t.quoteMint) && <span className="coin-paired">{pairedCopy.label}</span>}
         <span className="coin-progress">
           <span className={`coin-bar ${done ? "is-done" : ""}`} role="progressbar" aria-label={market.progress} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined}>
             <span style={{ width: `${progress ?? 0}%` }} />
@@ -69,7 +74,7 @@ export function CoinCard({ token: t, observedAt, official = false }: { token: Ma
       </span>
       <span className="coin-side">
         <span className="coin-cap"><strong>{fdv.text}</strong></span>
-        <span className="coin-age"><abbr title={copy.fdvTitle}>{copy.fdv}</abbr>{lastKnown ? ` · ${copy.lastKnown}` : t.createdAtMs ? ` · ${age(t.createdAtMs)}` : ""}</span>
+        <span className="coin-age"><abbr title={copy.fdvTitle}>{copy.fdv}</abbr>{fdv.usd && fdv.sol ? ` · ${fdv.sol}` : ""}{lastKnown ? ` · ${copy.lastKnown}` : t.createdAtMs ? ` · ${age(t.createdAtMs)}` : ""}</span>
       </span>
     </Link>
   );

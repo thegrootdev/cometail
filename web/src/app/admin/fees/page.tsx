@@ -13,7 +13,8 @@ import { PageHeader } from "@/components/Experience";
 import { CopyAddress } from "@/components/CopyAddress";
 import { useTx } from "@/lib/hooks";
 import { ADMIN, CLUSTER, EXPLORER } from "@/lib/addresses";
-import { buildProtocolClaim, formatQuote, scanProtocolClaims, treasuryToBurnIx, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
+import { isPairedMint } from "@/lib/quotes";
+import { buildPairedClaim, buildProtocolClaim, formatQuote, type PairedBurn, scanProtocolClaims, treasuryToBurnIx, type ProtocolClaim, type ProtocolScan } from "@/lib/protocol-fees";
 import { api, type BurnView } from "@/lib/api";
 import { parseAmount } from "@/lib/amounts";
 
@@ -23,7 +24,7 @@ const KIND_LABEL: Record<ProtocolClaim["kind"], string> = {
   "dbc-partner-creation-fee": "Partner share of the pool creation fee",
   "damm-position-fee": "Fees on the liquidity position",
 };
-const symbolOf = (mint: PublicKey) => (mint.toBase58() === "So11111111111111111111111111111111111111112" ? "SOL" : mint.toBase58().slice(0, 4) + "…");
+const symbolOf = (mint: PublicKey) => (mint.toBase58() === "So11111111111111111111111111111111111111112" ? "SOL" : isPairedMint(mint.toBase58()) ? "$COMETAIL" : mint.toBase58().slice(0, 4) + "…");
 
 export default function AdminFeesPage() {
   const { connection } = useConnection();
@@ -50,20 +51,24 @@ export default function AdminFeesPage() {
     if (!publicKey) throw new Error("connect the wallet that owns this claim");
     if (!publicKey.equals(claim.claimer)) throw new Error(`this claim is signed by ${claim.claimer.toBase58()}, not the connected wallet`);
     if (!scan) throw new Error("the chain has not been read yet");
-    const { instructions, removedCloses } = await buildProtocolClaim(connection, claim, scan.burn);
+    // a $COMETAIL claim (coins paired with $COMETAIL): the claim, then half of what it pays burned in the same transaction
+    const { instructions, removedCloses, pairedBurn } = isPairedMint(claim.quoteMint.toBase58())
+      ? await buildPairedClaim(connection, claim, scan.burn)
+      : { ...(await buildProtocolClaim(connection, claim, scan.burn)), pairedBurn: null as PairedBurn | null };
     if (instructions.some((ix) => ix.data.length >= 1 && ix.data[0] === 9 && /Token/.test(ix.programId.toBase58()))) throw new Error("a close instruction survived; refusing");
     const tx = new Transaction().add(...instructions);
     tx.feePayer = publicKey;
-    return { tx, removedCloses };
+    return { tx, removedCloses, pairedBurn };
   }, [connection, publicKey?.toBase58(), scan]);
 
   const simulate = async (claim: ProtocolClaim) => {
     setActive(claim.id);
     try {
-      const { tx, removedCloses } = await build(claim);
+      const { tx, removedCloses, pairedBurn } = await build(claim);
       tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
       const res = await connection.simulateTransaction(tx);
-      const note = `${tx.instructions.length} instructions, ${removedCloses} close instruction${removedCloses === 1 ? "" : "s"} removed`;
+      const burnNote = pairedBurn ? `; claims ${formatQuote(pairedBurn.claimed, 6, "$COMETAIL")}${pairedBurn.exact ? "" : " (as simulated now)"}, burns ${formatQuote(pairedBurn.burned, 6, "$COMETAIL")}, keeps ${formatQuote(pairedBurn.kept, 6, "$COMETAIL")}` : "";
+      const note = `${tx.instructions.length} instructions, ${removedCloses} close instruction${removedCloses === 1 ? "" : "s"} removed${burnNote}`;
       setSimulations((s) => ({ ...s, [claim.id]: res.value.err ? `simulation FAILED: ${JSON.stringify(res.value.err)} ${(res.value.logs ?? []).filter((l) => /Error|failed/.test(l)).slice(-3).join(" | ")}` : `simulation OK: ${res.value.unitsConsumed ?? "?"} compute units; ${note}` }));
     } catch (e: any) { setSimulations((s) => ({ ...s, [claim.id]: `simulation FAILED: ${String(e?.message ?? e)}` })); }
     finally { setActive(null); }
@@ -164,7 +169,7 @@ export default function AdminFeesPage() {
                 <li>amount: {formatQuote(claim.amountQuote, claim.quoteDecimals, symbolOf(claim.quoteMint))}{claim.amountBase > 0n ? ` plus ${claim.amountBase.toString()} raw base tokens` : ""}{claim.note ? ` (${claim.note})` : ""}</li>
                 <li>pool: <CopyAddress address={claim.pool.toBase58()} />{claim.position ? <> · position <CopyAddress address={claim.position.toBase58()} /></> : null}</li>
                 <li>signed by: {claim.claimer.toBase58()}{mine(claim) ? " (connected)" : ""}</li>
-                <li>{!claim.quoteMint.equals(new PublicKey("So11111111111111111111111111111111111111112")) ? "not paid in SOL: outside the 50% scope, claimed as before" : scan?.burn.status === "live" ? "through the burn program: it measures what this claim pays and sends exactly half to the burn reserve and half to your own wrapped-SOL account, in the same transaction" : scan?.burn.status === "unavailable" ? "BLOCKED: the burn program's state could not be read, so the 50% cannot be guaranteed; rescan" : "burn program not set up yet: claimed as before, nothing goes to a burn reserve"}</li>
+                <li>{isPairedMint(claim.quoteMint.toBase58()) ? `paid in $COMETAIL: the same transaction burns half of what the claim pays from ${claim.claimer.toBase58().slice(0, 4)}…'s $COMETAIL account (${claim.kind === "dbc-partner-fee" ? "exactly half: the claim is capped at the amount shown" : "half of what it pays when simulated; fees arriving in between stay"}); the other half stays there as the treasury's $COMETAIL` : !claim.quoteMint.equals(new PublicKey("So11111111111111111111111111111111111111112")) ? "not paid in SOL: outside the 50% scope, claimed as before" : scan?.burn.status === "live" ? "through the burn program: it measures what this claim pays and sends exactly half to the burn reserve and half to your own wrapped-SOL account, in the same transaction" : scan?.burn.status === "unavailable" ? "BLOCKED: the burn program's state could not be read, so the 50% cannot be guaranteed; rescan" : "burn program not set up yet: claimed as before, nothing goes to a burn reserve"}</li>
                 <li>lands in: <CopyAddress address={claim.destination.toBase58()} /> ({claim.claimer.toBase58().slice(0, 4)}…&apos;s {symbolOf(claim.quoteMint) === "SOL" ? "wrapped-SOL" : "quote token"} account{claim.destinationExists ? "" : ", created by this claim"}){claim.amountBase > 0n ? "; base tokens in the claimer's token account for the base mint" : ""}</li>
               </ul>
               <div className="mt-2 flex flex-wrap gap-2">

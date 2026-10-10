@@ -17,6 +17,15 @@ export function Money({ lamports, sol, price = false, secondary = true, quote, q
   const usd = usdValue(amount, rate);
   const quoteNumber = amount === null || amount === undefined ? "—" : marketNumber(amount, price ? 9 : 5);
   const quoteText = amount === null || amount === undefined ? "—" : `${quoteNumber} ${asset.symbol}`;
+  // a coin paired with $COMETAIL: its amounts are held in $COMETAIL and shown in dollars and in SOL at $COMETAIL's pool price
+  if (asset.paired) {
+    const sol = amount === null || amount === undefined || !asset.sol ? null : Number(amount) * asset.sol;
+    const solText = sol === null || !Number.isFinite(sol) ? null : `≈ ${marketNumber(sol, price ? 12 : 4)} SOL`;
+    return <span className="money-pair" data-price-status={rate.status} title={quoteText}>
+      <span className={usd === null ? "money-quote" : "money-usd"}>{usd !== null ? formatUsd(usd, price) : solText ?? quoteNumber}</span>
+      {secondary && <small className="money-sol">{usd !== null && solText ? `${solText} · ${quoteText}` : usd === null && solText ? quoteText : amount === null || amount === undefined ? money.missing : `${asset.symbol} · ${money.missing}`}</small>}
+    </span>;
+  }
   // Without a USD rate the quote amount takes the headline slot and its unit the small line, so a
   // long price never wraps inside the number; the rate's status reads small as well.
   return <span className="money-pair" data-price-status={rate.status}>

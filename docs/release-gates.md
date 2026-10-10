@@ -63,3 +63,11 @@ runs the indexer and accounting regressions on every push.
     liquidity in the wallet's own position (including a position shared with a migration); the exact split, the
     transaction size, the lock, the pool math the builder predicts, the one-time make-up of an unsplit claim, the
     graduation payout, and the tail's graduated position through the burn program's owner claim.
+23. **Coins paired with $COMETAIL** (`tests/gates/23-paired.test.ts`): the site's own builders (`web/src/lib/paired.ts`,
+    `protocol-fees.ts`) through a LiteSVM-backed connection: the config from `configs/paired.json` (quote $COMETAIL,
+    the treasury as fee claimer, a raise near 130M $COMETAIL); a SOL buy in one transaction that buys exactly the
+    $COMETAIL the curve takes and leaves none; a moved $COMETAIL price failing both legs; a sale to SOL (the margin kept
+    as $COMETAIL) and a sale keeping $COMETAIL; a launch with a SOL first buy measured (1,262 bytes: two transactions);
+    graduation into a coin/$COMETAIL pool with every position locked and trades there; creator fees in $COMETAIL; a curve
+    fee claim burning exactly half of what it pays and a graduated position's claim burning half of what it measured.
+    Devnet: `tests/devnet/e2e-paired.ts` runs the same path on devnet with the worker reading it back.

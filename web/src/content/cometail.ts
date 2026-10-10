@@ -210,6 +210,7 @@ export const statsPage = {
     traders: "Wallets that traded",
     outside: "Volume on coins launched by others",
     note: "Every swap on our launches' curves and on their pools after graduation, summed from the trades we index from chain. Volume is the SOL side of each trade.",
+    paired: (volume: string, routed: string) => `Coins paired with $COMETAIL: ${volume}, each trade valued at its own $COMETAIL price. A buy or sell through the site is two swaps, and ${routed} of the total is the SOL ↔ $COMETAIL swap that also counts on $COMETAIL's pool.`,
     partial: "The trade index is still catching up, so volume and wallets read unknown until it completes.",
   },
   fees: {
@@ -218,6 +219,7 @@ export const statsPage = {
     curve: "To creators and launchpads on the curves",
     pool: "To liquidity in graduated pools",
     meteora: "Paid to Meteora's protocol",
+    paired: (amount: string, sol: string) => `Coins paired with $COMETAIL collect their fees in $COMETAIL: ${amount}${sol ? ` (≈ ${sol} at today's price)` : ""}, not in the SOL totals above.`,
     note: "From the pools' own lifetime counters on chain: DBC's trading and protocol fee totals on each curve, DAMM v2's LP (including the share that compounds) and protocol fee totals on each graduated pool. Referral payouts are taken out of the protocol fee before these counters and are not included.",
   },
   launches: {
@@ -228,6 +230,7 @@ export const statsPage = {
     outside: "Launched by others",
     unattributed: "Owner unknown",
     note: "\"Us\" means the team's own wallets, listed in the raw figures. A coin a vault holds counts for whoever deposited it.",
+    pairedVolume: "≈ SOL, valued at each trade's $COMETAIL price",
     none: "No launches yet.",
     coin: "Coin", by: "By", stage: "Stage", trades: "Trades", volume: "Volume", fees: "Fees", locked: "Locked",
     us: "us", them: "others", unknownOwner: "unknown", graduatedStage: "graduated", bonding: "on its curve", completed: "curve complete",
@@ -241,6 +244,9 @@ export const statsPage = {
     supply: "$COMETAIL supply now",
     split: "Fees split by the burn program",
     note: "The burn program's own counters, read from its state account. It can only buy $COMETAIL and burn it; its build is verified against this repository.",
+    pairedBurned: "Burned from paired-coin fees",
+    pairedSub: (claims: number) => `${claims.toLocaleString("en-US")} claim${claims === 1 ? "" : "s"}`,
+    pairedNote: "Coins paired with $COMETAIL pay the protocol in $COMETAIL. Each claim burns half of what it pays in the same transaction, from the protocol's $COMETAIL account; the other half stays in the treasury.",
     page: "Every buyback",
   },
   liquidity: {
@@ -680,6 +686,7 @@ export const plainLaunch = {
     exp: { name: "Exponential", body: "A gentle start, then a steeper climb as liquidity tapers toward graduation." },
     stockUsdc: { name: "Dollar-paired", body: "The standard curve, bought and sold in USDC." },
     stockXstock: { name: "Stock-paired", body: "A smaller raise in stock units, with more liquidity near graduation. Early buys move the price more." },
+    paired: { name: "Paired with $COMETAIL", body: "The coin trades against $COMETAIL. Buyers pay SOL; every buy buys $COMETAIL first, and the raise goes into a coin/$COMETAIL pool locked for good." },
     quote: "Quoted in",
     unavailable: "Unavailable on this network",
     shapeNote: "Shapes illustrate the designs; they are not price forecasts. Your curve is fixed at launch.",
@@ -801,6 +808,7 @@ export const launchSimple = {
   socialsInvalid: "One of the social links needs fixing before you can continue.",
   create: "Create coin",
   signs: "You sign twice: once to save the image, once to create the coin.",
+  signsPaired: "You sign three times: once to save the image, once to buy the $COMETAIL for the first buy, once to create the coin.",
   preview: "Preview your coin card",
   details: "Details",
   presetTitle: "Price curve",
@@ -812,6 +820,7 @@ export const launchSimple = {
     exp: "Starts slow, then climbs faster near graduation.",
     stockUsdc: "The classic curve, bought and sold in USDC.",
     stockXstock: "Bought and sold in a tokenized stock instead of SOL.",
+    paired: "Paired with $COMETAIL: buyers pay SOL, every buy buys $COMETAIL first.",
   },
 } as const;
 
@@ -861,4 +870,29 @@ export const tokenSimple = {
 export const sellSimple = {
   body: "Get SOL now for your coin's future trading fees. Nothing moves until you sign.",
   advanced: "Advanced: highest buyback price",
+} as const;
+
+/** Coins paired with $COMETAIL: launched on a config whose quote is $COMETAIL, bought and sold with SOL. */
+export const paired = {
+  label: "Paired with $COMETAIL",
+  about: "This coin trades against $COMETAIL, not SOL. You still pay with SOL: one transaction buys $COMETAIL on $COMETAIL's own pool, then this coin. Prices and market caps are shown in SOL and dollars at $COMETAIL's current pool price, so they also move when $COMETAIL moves.",
+  route: "Two swaps in one transaction: SOL to $COMETAIL on $COMETAIL's pool, then $COMETAIL to this coin, each with its 1% fee. If either price moves more than 1% before it lands, neither swap happens.",
+  payAtMost: "You pay at most",
+  through: "Bought in between",
+  receive: "Receive",
+  receiveSol: "SOL",
+  receiveCometail: "$COMETAIL",
+  kept: (amount: string) => `Up to ${amount} may stay in your wallet as $COMETAIL: the margin kept so the sale cannot fail on a small move.`,
+  keepNote: "You keep the $COMETAIL. Sell it or use it to buy any paired coin.",
+  notConfigured: "Paired coins are not set up on this site yet.",
+  priceNote: "SOL values use $COMETAIL's current price on its pool.",
+  preset: {
+    name: "Paired with $COMETAIL",
+    description: "The coin trades against $COMETAIL instead of SOL. Buyers still pay with SOL, and every buy buys $COMETAIL first. The raise is held in $COMETAIL and, at graduation, it goes into a coin/$COMETAIL pool whose liquidity is locked for good.",
+    curve: (start: string, end: string) => `Starts at ${start} and graduates at ${end} (at today's $COMETAIL price; both move with $COMETAIL)`,
+    firstBuySteps: "A first buy paid in SOL takes two signatures: the first buys exactly the $COMETAIL it needs, the second creates the coin and makes that buy in the same transaction.",
+  },
+  launchStep1: "Buying $COMETAIL for the first buy (1 of 2)",
+  launchStep2: "Creating the coin with its first buy (2 of 2)",
+  launchStep1Done: "You hold the $COMETAIL for the first buy; creating the coin did not complete. Try again: the coin is created with the $COMETAIL already in your wallet.",
 } as const;

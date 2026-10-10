@@ -29,6 +29,7 @@ program's designated presets; DBC itself permits other creators to launch on tho
 | Exponential | WSOL | 16 segments, weights 1.3^-i (gentle first, steep late) | 20 SOL | 240 SOL | 30.675 SOL | `configs/exp.json` |
 | Stock, USDC | USDC (6 dp) | market caps, one segment | 2,000 USDC | 12,000 USDC | 3,478.78 USDC | `configs/stock-usdc.json` |
 | Stock, tokenized stock | NVIDIA xStock (NVDAx, `Xsc9qvGR…`, badged Token-2022, 8 dp) on mainnet; a stand-in mint on devnet | 16 segments, weights 1.2^i (more depth near graduation; sharper early price movement) | 2 units | 16 units | 5.667 units | `configs/stock-xstock.json` |
+| Paired with $COMETAIL | $COMETAIL (`z4Zr7w…`, classic SPL, 6 dp) on mainnet; the burn program's stand-in on devnet | market caps, one segment | 75,000,000 $COMETAIL | 450,000,000 $COMETAIL | 130,454,076.85 $COMETAIL | `configs/paired.json` |
 
 What each means for a creator: Standard graduates at a 120 SOL market cap after a 34.8 SOL
 raise; Long stretches price discovery three and a half times further before graduating; Flat
@@ -70,3 +71,32 @@ Every preset's on-chain parameters are read back and compared with its file, fie
 (quote mint and decimals, threshold, curve segments, fees, liquidity split, migration
 settings, the stock badge), by `tests/mainnet/verify-configs.ts` with `CLUSTER=devnet` or
 `CLUSTER=mainnet`.
+
+## Paired with $COMETAIL
+
+The seventh preset quotes the coin in $COMETAIL instead of SOL (`configs/paired.json`: the USDC preset's
+economics, with the market caps in $COMETAIL). Buyers still pay with SOL. The site builds one transaction
+with two swaps (`web/src/lib/paired.ts`):
+
+- **Buy:** an exact-out swap on $COMETAIL's own DAMM v2 pool (the pool the burn program pinned, `GjpM…qG7T`)
+  buys exactly the $COMETAIL the coin leg spends, for at most the SOL typed, then that $COMETAIL buys the
+  coin on its curve or, after graduation, on its coin/$COMETAIL pool. Nothing is left in $COMETAIL.
+- **Sell:** the coin is sold for $COMETAIL; with "SOL" chosen, the guaranteed minimum of that $COMETAIL is
+  sold for SOL in the same transaction, so the slippage margin (at most 1%) stays in the wallet as
+  $COMETAIL. With "$COMETAIL" chosen, the seller keeps it.
+- Each leg has its own 1% bound; if either moves past it, the whole transaction fails and nothing happens.
+- A launch with a first buy paid in SOL takes two transactions (one would be 1,262 bytes, over the
+  1,232-byte limit): the first buys exactly the $COMETAIL, the second creates the coin with that first buy.
+
+At graduation the raise goes into a coin/$COMETAIL DAMM v2 pool (compounding, 1%, all liquidity permanently
+locked, fees in $COMETAIL). Creators earn their 75% of the curve fee in $COMETAIL. The protocol's share also
+arrives in $COMETAIL; its fee claimer is the launch treasury, which claims on `/admin/fees`, and each claim
+burns half of what it pays from the treasury's $COMETAIL account in the same transaction (a curve fee
+claim exactly, because the claim is capped at the scanned amount; a graduated position's fees as measured
+by simulating the claim). The other half stays in that account.
+
+Sizing: 75,000,000 to 450,000,000 $COMETAIL is about 10 to 61 SOL at the $COMETAIL price of 10 October
+2026 (1.36e-7 SOL). Prices and market caps are shown in SOL and dollars at $COMETAIL's current pool price,
+so a paired coin's SOL value also moves with $COMETAIL. $COMETAIL's pool held about 54 SOL that day: a
+graduation reached entirely through SOL buys would buy 130M $COMETAIL from it, about a third of its
+$COMETAIL side, and raise $COMETAIL's price roughly 2.2 times along the way.

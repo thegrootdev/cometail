@@ -4,7 +4,8 @@ import { friendlyError, insufficientSol, insufficientTokens } from "@/lib/errors
 import { AmountInput } from "@/components/AmountInput";
 import { readTokenBalance, useSolBalance, useTokenBalance } from "@/lib/balances";
 import { formatAmount, inputValue, parseAmount, share, spendable } from "@/lib/amounts";
-import { quoteAsset, quoteRate } from "@/lib/quotes";
+import { isPairedMint, quoteAsset, quoteRate } from "@/lib/quotes";
+import { pairedBuy, pairedSell, type PairedPlan } from "@/lib/paired";
 import { useMarket, type MarketToken } from "@/lib/market";
 import { formatUsd, usdValue } from "@/lib/usd";
 import { CopyAddress } from "@/components/CopyAddress";
@@ -22,7 +23,7 @@ import { creatorClaims } from "@/lib/creator-fees";
 // trades in both states, the creator's fee claim, and the door to selling the tail.
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, Transaction } from "@solana/web3.js";
 import { VAULT_PROGRAM_ID } from "@cometail/client";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { NATIVE_MINT } from "@solana/spl-token";
@@ -33,7 +34,7 @@ import {
   BackToSky,
 } from "@/components/Experience";
 import { Shell, Stat, ConnectWallet } from "@/components/Shell";
-import { tokenPage, amounts, experience as c, failures, tailsPage, tokenSimple as simple } from "@/content/cometail";
+import { tokenPage, amounts, experience as c, failures, tailsPage, tokenSimple as simple, paired as pairedCopy } from "@/content/cometail";
 import { QuickStats, PriceChart, HolderList } from "@/components/TokenView";
 import { ADDRESSES, EXPLORER } from "@/lib/addresses";
 import {
@@ -123,7 +124,9 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const [amount, setAmount] = useState("");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [lower, setLower] = useState<"trades" | "holders">("trades");
-  const [quote, setQuote] = useState<{ inRaw: bigint; out: bigint; minOut: bigint; side: "buy" | "sell" } | null>(null);
+  const [quote, setQuote] = useState<{ inRaw: bigint; out: bigint; minOut: bigint; side: "buy" | "sell"; plan?: PairedPlan; owner?: string; receive?: "sol" | "cometail" } | null>(null);
+  // a coin paired with $COMETAIL: a sale returns SOL (the default) or keeps the $COMETAIL
+  const [receive, setReceive] = useState<"sol" | "cometail">("sol");
   const quoteSeq = useRef(0);
   const market = useMarket<MarketToken>(`/api/tokens/${encodeURIComponent(mintStr)}`);
   const rate = quoteRate(market.data?.data.quoteMint === view?.quoteMint.toBase58() ? market.data?.data.quoteUsd : null, market.error ? null : market.data?.generatedAtMs);
@@ -131,11 +134,15 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   const nativeQuote = !!quoteMint?.equals(NATIVE_MINT);
   const quoteDecimals = view?.quoteDecimals ?? 9;
   const { data: quoteMeta } = useLoad(() => quoteMint && !nativeQuote ? readMetadata(connection, quoteMint) : Promise.resolve(null), [quoteMint?.toBase58()]);
-  const asset = quoteAsset(quoteMint?.toBase58(), view?.quoteDecimals, nativeQuote ? null : quoteMeta?.symbol);
+  const asset = quoteAsset(quoteMint?.toBase58(), view?.quoteDecimals, nativeQuote ? null : quoteMeta?.symbol, market.data?.data.quoteUsd?.sol);
+  // paired with $COMETAIL: buys are typed and paid in SOL, sales return SOL or $COMETAIL; amounts shown in SOL and dollars
+  const pairedCoin = isPairedMint(quoteMint?.toBase58());
+  const solAsset = quoteAsset("So11111111111111111111111111111111111111112");
   const solBalance = useSolBalance(publicKey);
   const tokenBalance = useTokenBalance(mint, publicKey);
   const quoteBalance = useTokenBalance(nativeQuote ? null : quoteMint, publicKey);
-  const buyBalance = nativeQuote ? solBalance.lamports : quoteBalance.raw;
+  const buyBalance = nativeQuote || pairedCoin ? solBalance.lamports : quoteBalance.raw;
+  const buyDecimals = pairedCoin ? 9 : quoteDecimals;
   const graduated = view?.progress === MigrationProgress.CreatedPool;
   const bonding = view?.progress === MigrationProgress.PreBondingCurve;
   const progressPct = view
@@ -164,7 +171,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
   /** Lamports kept back on a buy for the network fee and the token account. */
   const TRADE_RESERVE = 10_000_000n;
   const amountRaw = () => {
-    const raw = parseAmount(amount, side === "buy" ? quoteDecimals : dec);
+    const raw = parseAmount(amount, side === "buy" ? buyDecimals : dec);
     return raw && raw > 0n ? new BN(raw.toString()) : null;
   };
   const quoteWithUsd = (lamports: bigint) => {
@@ -172,8 +179,15 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     // Preserve quote-token units; USD is display-only and requires the matching fresh rate.
     return `${formatAmount(lamports, quoteDecimals, { ticker: asset.symbol, maxFraction: Math.min(quoteDecimals, 6) })}${usd === null ? "" : ` · ${formatUsd(usd)}`}`;
   };
+  const solWithUsd = (lamports: bigint) => {
+    const solRate = quoteRate(market.data?.solUsd ? { value: Number(market.data.solUsd.value), source: market.data.solUsd.source, status: market.data.solUsd.status === "ok" ? "fresh" : "stale" } : null, market.error ? null : market.data?.generatedAtMs);
+    const usd = usdValue(inputValue(lamports, 9), solRate);
+    return `${formatAmount(lamports, 9, { ticker: "SOL", maxFraction: 6 })}${usd === null ? "" : ` · ${formatUsd(usd)}`}`;
+  };
+  const cometailText = (raw: bigint) => { const v = asset.sol ? (Number(raw) / 1e6) * asset.sol : null; return `${formatAmount(raw, 6, { ticker: "$COMETAIL", maxFraction: 2 })}${v === null ? "" : ` · ≈ ${v >= 0.0001 ? v.toLocaleString("en-US", { maximumFractionDigits: 4 }) : v.toPrecision(2)} SOL`}`; };
+  const buySymbol = pairedCoin ? solAsset.symbol : asset.symbol;
   const quickAmounts = side === "buy"
-    ? [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} ${asset.symbol}`, value: v })), { label: amounts.max, value: buyBalance === null ? null : inputValue(nativeQuote ? spendable(buyBalance, TRADE_RESERVE) ?? 0n : buyBalance, quoteDecimals) }]
+    ? [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} ${buySymbol}`, value: v })), { label: amounts.max, value: buyBalance === null ? null : inputValue(nativeQuote || pairedCoin ? spendable(buyBalance, TRADE_RESERVE) ?? 0n : buyBalance, buyDecimals) }]
     : [25, 50, 75, 100].map((p) => ({ label: `${p}%`, value: tokenBalance.raw === null ? null : inputValue(share(tokenBalance.raw, p), dec) }));
   const dammPool = view
     ? derivedDammPool(mint, view.migrationFeeOption, view.quoteMint)
@@ -188,6 +202,19 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     const timer = setTimeout(async () => {
       try {
         let out: BN, minOut: BN;
+        if (pairedCoin) {
+          // the whole paired transaction is built for the quote and sent as reviewed (a placeholder owner until a wallet connects)
+          const owner = publicKey ?? PublicKey.default;
+          const venue = bonding ? { kind: "curve" as const, view } : { kind: "damm" as const, pool: dammPool, baseMint: mint, baseDecimals: dec };
+          const plan = side === "buy" ? await pairedBuy(connection, owner, venue, raw) : await pairedSell(connection, owner, venue, raw, receive === "sol");
+          if (seq !== quoteSeq.current) return;
+          const toSol = side === "sell" && receive === "sol";
+          setQuote({ inRaw: BigInt(raw.toString()), side, plan, owner: owner.toBase58(), receive,
+            out: BigInt((side === "buy" ? plan.coinOut! : toSol ? plan.solOut! : plan.cometailOut!).toString()),
+            minOut: BigInt((side === "buy" ? plan.coinMinOut! : toSol ? plan.solMinOut! : plan.cometailMinOut!).toString()) });
+          setActionError(null);
+          return;
+        }
         if (bonding) {
           const q: any = await curveQuote(connection, view, raw, side === "sell");
           out = q.outputAmount; minOut = q.minimumAmountOut;
@@ -208,7 +235,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
     }, 350);
     return () => { clearTimeout(timer); quoteSeq.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [amount, side, view?.quoteReserve?.toString(), view?.progress, view?.pool.toBase58(), quoteMint?.toBase58(), quoteDecimals, dec, status.state === "done" ? status.signature : null]);
+  }, [amount, side, receive, publicKey?.toBase58(), view?.quoteReserve?.toString(), view?.progress, view?.pool.toBase58(), quoteMint?.toBase58(), quoteDecimals, dec, status.state === "done" ? status.signature : null]);
   const trade = async () => {
     setActionError(null);
     try {
@@ -217,10 +244,10 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       if (!view || !publicKey) return;
       // Check native fee funding separately from the input token, before the wallet prompt.
       const inputNeed = BigInt(raw.toString());
-      const solNeed = TRADE_RESERVE + (side === "buy" && nativeQuote ? inputNeed : 0n);
+      const solNeed = TRADE_RESERVE + (side === "buy" && (nativeQuote || pairedCoin) ? inputNeed : 0n);
       const solHave = BigInt(await connection.getBalance(publicKey));
       if (solHave < solNeed) { setActionError(insufficientSol(solNeed, solHave)); return; }
-      if (side === "sell" || !nativeQuote) {
+      if (side === "sell" || (!nativeQuote && !pairedCoin)) {
         const inputMint = side === "buy" ? view.quoteMint : mint;
         const inputDecimals = side === "buy" ? quoteDecimals : dec;
         const inputTicker = side === "buy" ? asset.symbol : ticker;
@@ -233,7 +260,12 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       if (!reviewed) { setActionError(tokenPage.quoteStale); return; }
       const minimumOut = new BN(reviewed.minOut.toString());
       let signature: string | null = null;
-      if (bonding) {
+      if (pairedCoin) {
+        // the reviewed transaction itself: both legs with the bounds shown; built for this wallet
+        if (!reviewed.plan || reviewed.owner !== publicKey.toBase58() || reviewed.receive !== receive) { setActionError(tokenPage.quoteStale); return; }
+        const plan = reviewed.plan;
+        signature = await run(async () => new Transaction().add(...plan.instructions), [], 400_000);
+      } else if (bonding) {
         signature = await run(
           () =>
             curveSwapTx(
@@ -280,6 +312,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
       {bonding && vaultBacked !== false && ADDRESSES.streamConfigs.some((k) => k.equals(new PublicKey(view.state.config))) && (
         <p className="form-notice">{tokenPage.streamUnwindNote}</p>
       )}
+      {pairedCoin && <p className="form-notice trade-paired">{pairedCopy.about}</p>}
       {!bonding && !graduated && <p className="trade-paused">{simple.migrating}</p>}
       {(bonding || graduated) && (
         <>
@@ -301,17 +334,39 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           </div>
           <AmountInput
             label={side === "buy" ? tokenPage.solIn : tokenPage.tokensIn}
-            unit={side === "buy" ? asset.symbol : ticker}
+            unit={side === "buy" ? buySymbol : ticker}
             value={amount}
             onChange={setAmount}
-            balance={!publicKey ? undefined : side === "buy" ? (buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: asset.symbol })) : (tokenBalance.raw === null ? null : formatAmount(tokenBalance.raw, dec, { ticker }))}
+            balance={!publicKey ? undefined : side === "buy" ? (buyBalance === null ? null : formatAmount(buyBalance, buyDecimals, { ticker: buySymbol })) : (tokenBalance.raw === null ? null : formatAmount(tokenBalance.raw, dec, { ticker }))}
             quick={quickAmounts}
-            hint={!nativeQuote ? c.quoteFees : side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined}
+            hint={pairedCoin ? (side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined) : !nativeQuote ? c.quoteFees : side === "buy" && publicKey ? amounts.maxKeepsTradeFees : undefined}
             disabled={status.state === "sending"}
           />
+          {pairedCoin && side === "sell" && (
+            <div className="trade-receive" role="group" aria-label={pairedCopy.receive}>
+              <span>{pairedCopy.receive}</span>
+              {(["sol", "cometail"] as const).map((r) => (
+                <button key={r} type="button" aria-pressed={receive === r} onClick={() => { setReceive(r); setQuote(null); }}>{r === "sol" ? pairedCopy.receiveSol : pairedCopy.receiveCometail}</button>
+              ))}
+            </div>
+          )}
           {(quote || quoting) && (
             <div className="quote-card" aria-busy={quoting} aria-live="polite">
-              {quote ? (
+              {quote && quote.plan ? (
+                <>
+                  {quote.side === "buy" ? <>
+                    <div className="quote-row"><span>{pairedCopy.payAtMost}</span><strong>{solWithUsd(quote.inRaw)}</strong></div>
+                    <div className="quote-row"><span>{pairedCopy.through}</span><strong>{cometailText(BigInt(quote.plan.cometail.toString()))}</strong></div>
+                    <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{formatAmount(quote.out, dec, { ticker })}</strong></div>
+                    <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{formatAmount(quote.minOut, dec, { ticker })}</strong></div>
+                  </> : <>
+                    <div className="quote-row"><span>{tokenPage.youSell}</span><strong>{formatAmount(quote.inRaw, dec, { ticker })}</strong></div>
+                    <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.receive === "sol" ? solWithUsd(quote.out) : cometailText(quote.out)}</strong></div>
+                    <div className="quote-row"><span>{tokenPage.minimum}</span><strong>{quote.receive === "sol" ? solWithUsd(quote.minOut) : cometailText(quote.minOut)}</strong></div>
+                  </>}
+                  <p className="quote-note">{quote.side === "sell" && quote.receive === "sol" && quote.plan.cometailKept.gtn(0) ? pairedCopy.kept(formatAmount(BigInt(quote.plan.cometailKept.toString()), 6, { ticker: "$COMETAIL", maxFraction: 2 })) : quote.side === "sell" ? pairedCopy.keepNote : pairedCopy.route}</p>
+                </>
+              ) : quote ? (
                 <>
                   <div className="quote-row"><span>{quote.side === "buy" ? tokenPage.youPay : tokenPage.youSell}</span><strong>{quote.side === "buy" ? quoteWithUsd(quote.inRaw) : formatAmount(quote.inRaw, dec, { ticker })}</strong></div>
                   <div className="quote-row"><span>{tokenPage.youReceive}</span><strong>{quote.side === "buy" ? formatAmount(quote.out, dec, { ticker }) : quoteWithUsd(quote.out)}</strong></div>
@@ -326,7 +381,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           {publicKey ? (
             <button
               onClick={trade}
-              disabled={!publicKey || status.state === "sending" || quoting || !quote || quote.side !== side || quote.inRaw !== (parseAmount(amount, side === "buy" ? quoteDecimals : dec) ?? -1n)}
+              disabled={!publicKey || status.state === "sending" || quoting || !quote || quote.side !== side || quote.inRaw !== (parseAmount(amount, side === "buy" ? buyDecimals : dec) ?? -1n) || (pairedCoin && (quote.owner !== publicKey.toBase58() || quote.receive !== receive))}
               className={`button button-full ${side === "buy" ? "button-primary" : "button-sell"}`}
             >
               {status.state === "sending"
@@ -371,6 +426,7 @@ function TokenDetail({ mintStr }: { mintStr: string }) {
           <h1>{shownName(mintStr, meta?.name || feeCoin?.name) || short(mintStr)}</h1>
           <div className="token-top-sub">
             {tickerText(shownSymbol(mintStr, meta?.symbol)) && <span className="token-ticker">{tickerText(shownSymbol(mintStr, meta?.symbol))}</span>}
+            {pairedCoin && <span className="token-paired">{pairedCopy.label}</span>}
             <span className="address-with-link"><CopyAddress address={mintStr} /><a className="address-explorer" href={EXPLORER("address", mintStr)} target="_blank" rel="noreferrer" aria-label="View the mint on the explorer">↗</a></span>
           </div>
         </div>

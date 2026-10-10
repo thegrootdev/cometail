@@ -5,7 +5,8 @@ import { LAUNCH_PRESETS, type LaunchPresetId } from "@/lib/launch-presets";
 import { useEffect, useState } from "react";
 import { CopyAddress } from "@/components/CopyAddress";
 import Link from "next/link";
-import { Keypair } from "@solana/web3.js";
+import { Keypair, Transaction } from "@solana/web3.js";
+import { cometailForSol } from "@/lib/paired";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import BN from "bn.js";
 import { Shell, ConnectWallet } from "@/components/Shell";
@@ -15,7 +16,7 @@ import {
   IdentityPreview,
   type TokenImage,
 } from "@/components/TokenIdentity";
-import { plainLaunch, amounts, experience as c, launchSimple as launchCopy } from "@/content/cometail";
+import { plainLaunch, amounts, experience as c, launchSimple as launchCopy, paired as pairedCopy } from "@/content/cometail";
 import { presetsPage } from "@/content/presets";
 import { launchTx } from "@/lib/dbc";
 import { uploadIdentity } from "@/lib/upload";
@@ -48,19 +49,23 @@ export default function LaunchPage() {
   const [mint, setMint] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // a paired launch with a first buy: the $COMETAIL bought in step 1, kept for a retry of step 2
+  const [boughtCometail, setBoughtCometail] = useState<BN | null>(null);
+  const [step, setStep] = useState<0 | 1 | 2>(0);
   const storage = useStorageReady();
   const blocked = storage.checked && !storage.ready;
   const solBalance = useSolBalance(publicKey);
   const quoteBalance = useTokenBalance(preset.native ? null : preset.quoteMint, publicKey);
-  const quoteDecimals = preset.quote.decimals ?? 9;
-  const quoteTicker = preset.quote.symbol;
-  const buyBalance = preset.native ? solBalance.lamports : quoteBalance.raw;
+  // a paired preset's first buy is typed and paid in SOL; the other presets in their quote
+  const quoteDecimals = preset.paidInSol ? 9 : preset.quote.decimals ?? 9;
+  const quoteTicker = preset.paidInSol ? "SOL" : preset.quote.symbol;
+  const buyBalance = preset.paidInSol ? solBalance.lamports : quoteBalance.raw;
   // the typed first buy in quote base units: 0n when empty, null when malformed
   const firstBuyRaw = firstBuy.trim() ? parseAmount(firstBuy, quoteDecimals) : 0n;
-  const need = (preset.native ? firstBuyRaw ?? 0n : 0n) + LAUNCH_OVERHEAD_LAMPORTS;
+  const need = (preset.paidInSol ? firstBuyRaw ?? 0n : 0n) + LAUNCH_OVERHEAD_LAMPORTS;
   // the shortfall is said at the field, before anything is signed
-  const shortfall = publicKey && firstBuyRaw !== null && solBalance.lamports !== null && solBalance.lamports < need ? insufficientSol(need, solBalance.lamports) : publicKey && !preset.native && firstBuyRaw !== null && buyBalance !== null && buyBalance < firstBuyRaw ? insufficientTokens(formatAmount(firstBuyRaw, quoteDecimals, { ticker: quoteTicker }), formatAmount(buyBalance, quoteDecimals, { ticker: quoteTicker })) : null;
-  const quickBuys = [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} ${quoteTicker}`, value: v })), { label: amounts.max, value: buyBalance === null ? null : inputValue(preset.native ? spendable(buyBalance, LAUNCH_OVERHEAD_LAMPORTS) ?? 0n : buyBalance, quoteDecimals) }];
+  const shortfall = publicKey && firstBuyRaw !== null && solBalance.lamports !== null && solBalance.lamports < need ? insufficientSol(need, solBalance.lamports) : publicKey && !preset.paidInSol && firstBuyRaw !== null && buyBalance !== null && buyBalance < firstBuyRaw ? insufficientTokens(formatAmount(firstBuyRaw, quoteDecimals, { ticker: quoteTicker }), formatAmount(buyBalance, quoteDecimals, { ticker: quoteTicker })) : null;
+  const quickBuys = [...["0.1", "0.5", "1"].map((v) => ({ label: `${v} ${quoteTicker}`, value: v })), { label: amounts.max, value: buyBalance === null ? null : inputValue(preset.paidInSol ? spendable(buyBalance, LAUNCH_OVERHEAD_LAMPORTS) ?? 0n : buyBalance, quoteDecimals) }];
   const valid =
     !!preset.config &&
     linksValid(links) &&
@@ -81,11 +86,11 @@ export default function LaunchPage() {
       // the launch pays the first buy, the 0.01 SOL creation fee, the mint and metadata rent and the
       // network fees (about 0.035 SOL): the wallet must hold that before anything is signed
       {
-        const need = (preset.native ? BigInt(lamports?.toString() ?? "0") : 0n) + LAUNCH_OVERHEAD_LAMPORTS;
+        const need = (preset.paidInSol ? BigInt(lamports?.toString() ?? "0") : 0n) + LAUNCH_OVERHEAD_LAMPORTS;
         const have = BigInt(await connection.getBalance(publicKey));
         if (have < need) { setError(insufficientSol(need, have)); return; }
       }
-      if (!preset.native && firstBuyRaw && preset.quoteMint) {
+      if (!preset.paidInSol && firstBuyRaw && preset.quoteMint) {
         const have = await readTokenBalance(connection, preset.quoteMint, publicKey);
         if (have < firstBuyRaw) { setError(insufficientTokens(formatAmount(firstBuyRaw, quoteDecimals, { ticker: quoteTicker }), formatAmount(have, quoteDecimals, { ticker: quoteTicker }))); return; }
       }
@@ -98,6 +103,22 @@ export default function LaunchPage() {
         owner: publicKey,
         signMessage,
       });
+      // paired: the first buy's $COMETAIL is bought first (one transaction), then the coin is created with exactly that buy
+      let firstBuyQuote = lamports, holdsCometail = false;
+      if (preset.id === "paired" && lamports) {
+        let bought = boughtCometail;
+        if (!bought) {
+          setStep(1);
+          let out: BN | null = null;
+          const sig1 = await run(async () => { const r = await cometailForSol(connection, publicKey, lamports); out = r.cometail; return new Transaction().add(...r.instructions); }, [], 300_000);
+          if (!sig1 || !out) return;
+          bought = out; setBoughtCometail(out);
+        }
+        const have = await readTokenBalance(connection, preset.quoteMint!, publicKey);
+        if (have < BigInt(bought.toString())) { setBoughtCometail(null); setError(insufficientTokens(formatAmount(BigInt(bought.toString()), 6, { ticker: "$COMETAIL" }), formatAmount(have, 6, { ticker: "$COMETAIL" }))); return; }
+        firstBuyQuote = bought; holdsCometail = true;
+        setStep(2);
+      }
       const kp = Keypair.generate();
       const sig = await run(
         () =>
@@ -108,19 +129,21 @@ export default function LaunchPage() {
             name: name.trim(),
             symbol: cleanSymbolInput(symbol),
             uri,
-            firstBuyRaw: lamports,
+            firstBuyRaw: firstBuyQuote,
             quoteMint: preset.quoteMint!,
-            quoteDecimals,
+            quoteDecimals: preset.quote.decimals ?? 9,
           }),
         [kp],
       );
-      if (sig) setMint(kp.publicKey.toBase58());
+      if (sig) { setMint(kp.publicKey.toBase58()); setBoughtCometail(null); }
+      else if (holdsCometail) setError(pairedCopy.launchStep1Done);
       solBalance.reload();
       quoteBalance.reload();
     } catch (e) {
       setError(friendlyError(e, c.launchFailure));
     } finally {
       setPreparing(false);
+      setStep(0);
     }
   };
   return (
@@ -175,7 +198,10 @@ export default function LaunchPage() {
           {!linksValid(links) && <p className="form-error" role="alert">{launchCopy.socialsInvalid}</p>}
         </fieldset>
         <LaunchPresets value={presetId} onChange={id => { setPresetId(id); setFirstBuy(""); }} disabled={busy || !!mint || blocked} />
-        {!preset.native && CLUSTER === "devnet" && <p className="form-notice">{c.testQuote}</p>}
+        {!preset.paidInSol && CLUSTER === "devnet" && <p className="form-notice">{c.testQuote}</p>}
+        {preset.id === "paired" && <p className="form-notice">{pairedCopy.preset.description} {pairedCopy.preset.firstBuySteps}</p>}
+        {preset.id === "paired" && step > 0 && <p className="form-notice" role="status">{step === 1 ? pairedCopy.launchStep1 : pairedCopy.launchStep2}</p>}
+        {preset.id === "paired" && boughtCometail && step === 0 && !mint && <p className="form-notice">{pairedCopy.launchStep1Done}</p>}
         <fieldset disabled={busy || !!mint || blocked} className="identity-fields">
           <AmountInput
             label={`${c.firstBuy} · ${c.optional}`}
@@ -184,7 +210,7 @@ export default function LaunchPage() {
             onChange={setFirstBuy}
             balance={!publicKey ? undefined : buyBalance === null ? null : formatAmount(buyBalance, quoteDecimals, { ticker: quoteTicker })}
             quick={quickBuys}
-            hint={!preset.native ? c.quoteFees : publicKey ? amounts.maxKeepsFees : c.firstBuyHint}
+            hint={!preset.paidInSol ? c.quoteFees : publicKey ? amounts.maxKeepsFees : c.firstBuyHint}
             error={firstBuyRaw === null ? c.buyInvalid : shortfall}
             disabled={busy}
           />
@@ -205,7 +231,7 @@ export default function LaunchPage() {
           ) : (
             <ConnectWallet />
           )}
-          <p className="launch-cost">{plainLaunch.creationFee} {launchCopy.signs}</p>
+          <p className="launch-cost">{plainLaunch.creationFee} {preset.id === "paired" && firstBuyRaw ? launchCopy.signsPaired : launchCopy.signs}</p>
         </div>
         {(error || status.state === "error") && (
           <p className="form-error" role="alert">

@@ -34,11 +34,13 @@ function Out({ href, children }: { href: string; children: React.ReactNode }) {
 function Fig({ label, href, children, sub }: { label: string; href: string; children: React.ReactNode; sub?: React.ReactNode }) {
   return <div><span className="micro">{label}</span><strong><a className="stats-figure" href={href} target={href.startsWith("/") ? undefined : "_blank"} rel="noreferrer">{children}</a></strong>{sub ? <span className="micro">{sub}</span> : null}</div>;
 }
-function Lamports({ v, quote }: { v: string | null | undefined; quote?: { mint: string; decimals: number | null } }) {
+function Lamports({ v, quote }: { v: string | null | undefined; quote?: { mint: string; decimals: number | null; sol?: number | null } }) {
   if (v === null || v === undefined) return <>{copy.unknown}</>;
-  // a launch quoted in another token shows its own unit, never SOL
-  return quote && quote.mint !== WSOL ? <Money lamports={v} quote={quoteAsset(quote.mint, quote.decimals)} /> : <Money lamports={v} />;
+  // a launch quoted in another token shows its own unit, never SOL (a $COMETAIL one adds SOL at today's pool price)
+  return quote && quote.mint !== WSOL ? <Money lamports={v} quote={quoteAsset(quote.mint, quote.decimals, null, quote.sol)} /> : <Money lamports={v} />;
 }
+/** SOL per whole $COMETAIL at the stats read, from its pool (lamports per token x 10^6). */
+const cometailSol = (s: Stats) => { const m = s.pairedQuote?.microLamportsPerToken; return m ? Number(m) / 1e15 : null; };
 function Footer({ readAtMs, href, label = copy.check }: { readAtMs: number | null | undefined; href: string; label?: string }) {
   return <p className="micro mt-3">{copy.read(when(readAtMs))} · <Out href={href}>{label} ↗</Out></p>;
 }
@@ -59,7 +61,9 @@ export default function StatsPage() {
 }
 
 function Body({ s, raw }: { s: Stats; raw: string }) {
-  const L = s.launches, T = s.trading, F = s.fees, B = s.burn;
+  const L = s.launches, T = s.trading, F = s.fees, B = s.burn, P = s.pairedQuote ?? null;
+  const pairedSol = cometailSol(s);
+  const pairedFees = F.paired ? sum([F.paired.curveTradingRaw, F.paired.curveProtocolRaw, F.paired.poolLpRaw, F.paired.poolProtocolRaw]) : null;
   const graduated = L.list.filter((l) => l.dammPool);
   const d = B?.decimals ?? 6;
   const coin = (rawAmount: string | null | undefined) => (rawAmount === null || rawAmount === undefined ? copy.unknown : units(rawAmount, d, 0));
@@ -81,6 +85,7 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
           <Fig label={copy.trading.outside} href={raw}><Lamports v={T.outsideVolumeLamports} /></Fig>
         </div>
         <p className="micro mt-3">{T.complete ? copy.trading.note : copy.trading.partial}</p>
+        {P && P.launches > 0 && <p className="micro mt-2">{copy.trading.paired(T.pairedVolumeLamports ? `${units(T.pairedVolumeLamports, 9, 2)} SOL` : copy.unknown, T.pairedRoutedLamports ? `${units(T.pairedRoutedLamports, 9, 2)} SOL` : copy.unknown)}</p>}
         <Footer readAtMs={T.readAtMs} href={raw} label={copy.json} />
       </Card>
 
@@ -92,6 +97,7 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
           <Fig label={copy.fees.meteora} href={raw}><Lamports v={F.meteoraProtocolLamports} /></Fig>
         </div>
         <p className="micro mt-3">{copy.fees.note}</p>
+        {F.paired && <p className="micro mt-2">{copy.fees.paired(pairedFees === null ? copy.unknown : `${units(pairedFees, 6, 0)} $COMETAIL`, pairedFees !== null && pairedSol ? `${(Number(pairedFees) / 1e6 * pairedSol).toLocaleString("en-US", { maximumFractionDigits: 4 })} SOL` : "")}</p>}
         <Footer readAtMs={F.readAtMs} href={raw} label={copy.json} />
       </Card>
 
@@ -103,7 +109,7 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
           <Fig label={copy.launches.outside} href={raw} sub={L.unattributed ? `${copy.launches.unattributed}: ${L.unattributed}` : undefined}>{n(L.outside)}</Fig>
         </div>
         <p className="micro mt-3">{copy.launches.note}</p>
-        <LaunchTable list={L.list} />
+        <LaunchTable list={L.list} pairedSol={pairedSol} />
         <Footer readAtMs={L.readAtMs} href={`${API_URL}/api/tokens?sort=newest&limit=100`} />
       </Card>
 
@@ -114,8 +120,10 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
             <Fig label={copy.burn.buybacks} href={`${API_URL}/api/burn`}>{n(B.buybacks)}</Fig>
             <Fig label={copy.burn.spent} href={`${API_URL}/api/burn`}><Lamports v={B.spentLamports} /></Fig>
             <Fig label={copy.burn.supply} href={B.mint ? EXPLORER("address", B.mint) : `${API_URL}/api/burn`}>{coin(B.supplyRaw)}</Fig>
+            {P?.burned && <Fig label={copy.burn.pairedBurned} href={EXPLORER("address", P.burned.account)} sub={P.burned.complete ? copy.burn.pairedSub(P.burned.burns) : copy.trading.partial}>{P.burned.complete ? coin(P.burned.burnedRaw) : copy.unknown}</Fig>}
           </div>
           <p className="micro mt-3">{copy.burn.note}</p>
+          {P?.burned && <p className="micro mt-2">{copy.burn.pairedNote} {copy.read(when(P.burned.readAtMs))}</p>}
           <p className="micro mt-2">{copy.burn.split}: <Money lamports={B.splitLamports} secondary={false} />{B.mint ? <> · <Link className="text-link" href={`/token/${B.mint}`}>{copy.burn.page} →</Link></> : null}</p>
           <Footer readAtMs={B.readAtMs} href={EXPLORER("address", B.program)} />
         </> : <p className="text-sm">{copy.unknown}</p>}
@@ -182,11 +190,13 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
 
 const display = (l: StatsLaunch) => tickerText(shownSymbol(l.mint, l.symbol)) || l.mint.slice(0, 4);
 
-function LaunchTable({ list }: { list: StatsLaunch[] }) {
+function LaunchTable({ list, pairedSol }: { list: StatsLaunch[]; pairedSol: number | null }) {
   const C = copy.launches;
-  // SOL-quoted launches by volume first; amounts in other quote tokens are not comparable with SOL, so those follow by trades
-  const sol = (l: StatsLaunch) => l.quoteMint === WSOL;
-  const rows = [...list].sort((a, b) => Number(sol(b)) - Number(sol(a)) || (sol(a) ? Number(BigInt(b.volumeLamports ?? "0") - BigInt(a.volumeLamports ?? "0")) : b.trades - a.trades));
+  // launches valued in SOL (SOL-quoted, and paired with $COMETAIL at each trade's price) by volume first; amounts in other
+  // quote tokens are not comparable with SOL, so those follow by trades
+  const sol = (l: StatsLaunch) => l.quoteMint === WSOL || !!l.paired;
+  const solVolume = (l: StatsLaunch) => BigInt((l.paired ? l.volumeSolLamports : l.volumeLamports) ?? "0");
+  const rows = [...list].sort((a, b) => Number(sol(b)) - Number(sol(a)) || (sol(a) ? Number(solVolume(b) - solVolume(a)) : b.trades - a.trades));
   if (!rows.length) return <p className="text-sm mt-3">{C.none}</p>;
   return (
     <div className="table-scroll mt-3">
@@ -201,8 +211,8 @@ function LaunchTable({ list }: { list: StatsLaunch[] }) {
                 <td data-label={C.by}>{l.team === null ? C.unknownOwner : l.team ? C.us : C.them}</td>
                 <td data-label={C.stage}>{l.stage === "graduated" ? C.graduatedStage : l.stage === "completed" ? C.completed : C.bonding}</td>
                 <td data-label={C.trades}><Out href={`${API_URL}/api/tokens/${l.mint}/trades?limit=100`}>{n(l.trades)}</Out></td>
-                <td className="money" data-label={C.volume}><Lamports v={l.volumeLamports} quote={{ mint: l.quoteMint, decimals: l.quoteDecimals }} /></td>
-                <td className="money" data-label={C.fees}><Out href={EXPLORER("address", l.dbcPool)}><Lamports v={fees} quote={{ mint: l.quoteMint, decimals: l.quoteDecimals }} /></Out>{l.dammPool ? <p className="micro"><Out href={EXPLORER("address", l.dammPool)}>{C.pool} ↗</Out></p> : null}</td>
+                <td className="money" data-label={C.volume}>{l.paired ? <><Lamports v={l.volumeSolLamports ?? null} /><p className="micro">{C.pairedVolume}</p></> : <Lamports v={l.volumeLamports} quote={{ mint: l.quoteMint, decimals: l.quoteDecimals }} />}</td>
+                <td className="money" data-label={C.fees}><Out href={EXPLORER("address", l.dbcPool)}><Lamports v={fees} quote={{ mint: l.quoteMint, decimals: l.quoteDecimals, sol: l.paired ? pairedSol : null }} /></Out>{l.dammPool ? <p className="micro"><Out href={EXPLORER("address", l.dammPool)}>{C.pool} ↗</Out></p> : null}</td>
                 <td data-label={C.locked}>{l.dammPool ? <Out href={EXPLORER("address", l.dammPool)}>{pctBps(l.lockedBps)}</Out> : "—"}</td>
               </tr>
             );

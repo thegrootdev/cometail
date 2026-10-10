@@ -22,8 +22,11 @@ const DAMM_POOL_AUTHORITY = "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC";
  *  not known, and a short note when a figure is last known, partial or stale. */
 export function QuickStats({ token, observedAt }: { token: MarketToken | null; observedAt: number }) {
   const rate = quoteRate(token?.quoteUsd ?? null, observedAt);
-  const asset = token ? quoteAsset(token.quoteMint, token.quoteDecimals) : null;
+  const asset = token ? quoteAsset(token.quoteMint, token.quoteDecimals, null, token.quoteUsd?.sol) : null;
   const price = token && token.priceStatus !== "unavailable" && token.priceStatus !== "stale" ? token.priceQuote : null;
+  // a coin paired with $COMETAIL: its price and cap also in SOL, at $COMETAIL's pool price
+  const inSol = (v: string | number | null) => (asset?.paired && asset.sol && v !== null && Number.isFinite(Number(v)) ? Number(v) * asset.sol : null);
+  const priceSol = inSol(price);
   const priceUsd = usdValue(price, rate);
   const volume = token && token.volumeStatus !== "stale" ? rawUnits(token.volume24hLamports, token.quoteDecimals ?? 9) : null;
   const volumeUsd = usdValue(volume, rate);
@@ -33,8 +36,8 @@ export function QuickStats({ token, observedAt }: { token: MarketToken | null; o
   const cell = (label: string, value: string, note: string | null, tone = "") => <div className={`quick-stat ${tone}`}><span>{label}</span><strong>{value}</strong>{note && <small>{note}</small>}</div>;
   return (
     <div className="quick-stats">
-      {cell(copy.fdv, fdv?.text ?? "—", lastKnown ? marketCopy.stale : copy.fdvNote, "is-cap")}
-      {cell(copy.price, priceUsd !== null ? formatUsd(priceUsd, true) : price !== null && asset ? `${Number(price).toPrecision(3)} ${asset.symbol}` : "—", token?.priceStatus === "stale" ? marketCopy.stale : lastKnown ? marketCopy.stale : null)}
+      {cell(copy.fdv, fdv?.text ?? "—", lastKnown ? marketCopy.stale : fdv?.usd && fdv.sol ? `≈ ${fdv.sol}` : copy.fdvNote, "is-cap")}
+      {cell(copy.price, priceUsd !== null ? formatUsd(priceUsd, true) : priceSol !== null ? `${priceSol.toPrecision(3)} SOL` : price !== null && asset ? `${Number(price).toPrecision(3)} ${asset.symbol}` : "—", token?.priceStatus === "stale" ? marketCopy.stale : lastKnown ? marketCopy.stale : priceUsd !== null && priceSol !== null ? `≈ ${priceSol.toPrecision(3)} SOL` : null)}
       {cell(copy.volume, volumeUsd !== null ? compactUsd(volumeUsd) ?? "—" : volume !== null && asset ? `${Number(volume).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${asset.symbol}` : "—",
         !token ? null : token.volumeStatus === "stale" ? marketCopy.stale : !token.complete || token.volumeStatus === "partial" ? marketCopy.partial : lastKnown ? marketCopy.stale : null)}
       {cell(copy.holders, marketNumber(holders, 0), token?.holders?.status === "stale" ? marketCopy.stale : token?.holders?.status === "partial" ? marketCopy.partial : lastKnown ? marketCopy.stale : null)}

@@ -131,18 +131,24 @@ export interface StatsLaunch {
   mint: string; symbol: string; name: string; kind: "plain" | "stream"; stage: "bonding" | "completed" | "graduated"; createdAtMs: number | null; config: string;
   creator: string; owner: string | null; team: boolean | null; quoteMint: string; quoteDecimals: number | null; dbcPool: string; dammPool: string | null;
   trades: number; traders: number; volumeLamports: string | null; volumeByVenue: Record<string, string> | null;
+  /** SOL value of the volume (SOL launches: the same; paired with $COMETAIL: at each trade's price); absent before the paired release */
+  volumeSolLamports?: string | null; paired?: boolean;
   fees: { curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null };
   lockedBps: number | null;
 }
 export interface Stats {
   schemaVersion: number; cluster: string; generatedAtMs: number; team: string[];
   launches: { readAtMs: number | null; total: number; team: number; outside: number; unattributed: number; graduated: { total: number; team: number; outside: number }; list: StatsLaunch[] };
-  trading: { readAtMs: number | null; complete: boolean; pendingPools: number; trades: number; traders: number | null; volumeLamports: string | null; outsideVolumeLamports: string | null };
-  fees: { readAtMs: number | null; slot: number | null; curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null; totalLamports: string | null; meteoraProtocolLamports: string | null };
+  trading: { readAtMs: number | null; complete: boolean; pendingPools: number; trades: number; traders: number | null; volumeLamports: string | null; outsideVolumeLamports: string | null; pairedVolumeLamports?: string | null; pairedRoutedLamports?: string | null };
+  fees: { readAtMs: number | null; slot: number | null; curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null; totalLamports: string | null; meteoraProtocolLamports: string | null;
+    paired?: { mint: string; curveTradingRaw: string | null; curveProtocolRaw: string | null; poolLpRaw: string | null; poolProtocolRaw: string | null } | null };
   burn: { readAtMs: number; slot: number | null; program: string; reserve: string | null; mint: string | null; burnedRaw: string; buybacks: number; spentLamports: string; splitLamports: string; toReserveLamports: string; lastBuyAtSec: number | null; supplyRaw: string | null; decimals: number | null; reconciled: boolean | null } | null;
   tails: { readAtMs: number; list: { mint: string; claims: number | null; notSplit: number | null; madeUp: number | null; claimedLamports: string | null; toBurnLamports: string | null; liquidityLamports: string | null; liquidityRaw: string | null; complete: boolean }[] } | null;
   vaults: { readAtMs: number | null; total: number; launched: number; list: { vault: string; depositor: string; team: boolean; status: string | null; stMint: string | null; harvestedLamports: string | null; toDepositorLamports: string | null; toProtocolLamports: string | null; waitingLamports: string | null; routedLamports: string | null; burnedStRaw: string | null; readAtMs: number }[] };
   feeIndex: { readAtMs: number | null; mode: string | null; pools: number | null; configs: number | null; claimsConfirmed: number | null; historySinceMs: number | null; refreshMinutes: number | null } | null;
+  /** $COMETAIL as a quote: its pool price at the read (lamports per whole token x 10^6) and the burns from paired-coin fees. */
+  pairedQuote?: { mint: string; pool: string | null; readAtMs: number | null; slot: number | null; microLamportsPerToken: string | null; configs: string[]; launches: number;
+    burned: { account: string; claimer: string; readAtMs: number; complete: boolean; burns: number; burnedRaw: string; otherBurnedRaw: string; last: { signature: string; slot: number; blockTime: number | null; amountRaw: string; withClaim: boolean }[]; basis: string } | null } | null;
 }
 export const api = {
   stats: () => get<Stats>("/api/stats"),
