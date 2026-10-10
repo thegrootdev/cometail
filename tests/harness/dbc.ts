@@ -29,7 +29,7 @@ export function normalize(v: any): any {
   return v;
 }
 
-export type PresetName = "stream-25" | "stream-50" | "stream-75" | "plain" | "long" | "flat" | "exp" | "stock-usdc" | "stock-xstock";
+export type PresetName = "stream-25" | "stream-50" | "stream-75" | "plain" | "long" | "flat" | "exp" | "stock-usdc" | "stock-xstock" | "paired";
 /** The preset file's `curve.mode` picks the SDK builder: market caps alone, or market caps with
  *  16 liquidity weights (the Long and Flat curves). Everything else in the file is the builder's input. */
 export function configParams(name: PresetName): any {

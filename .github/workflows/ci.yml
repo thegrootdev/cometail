@@ -30,3 +30,7 @@ jobs:
           ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 300000
           regression/stats.test.ts regression/tail-math.test.ts regression/tail-index.test.ts
           regression/makeup-reservation.test.ts regression/burn-index.test.ts
+      # coins paired with $COMETAIL: the site's builders against Meteora's mainnet binaries (committed fixtures)
+      - name: Paired preset gate
+        working-directory: tests
+        run: ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 600000 gates/23-paired.test.ts

@@ -34,6 +34,8 @@ export const ADDRESSES = {
     exp: presetKey(process.env.NEXT_PUBLIC_EXP_CONFIG, "13mkYqFj1MU1DX8XP5VmnWpwjmdnqymxFsfeF3zKdNPf"),
     stockUsdc: presetKey(process.env.NEXT_PUBLIC_STOCK_USDC_CONFIG, "3SGJgHzALLPm15owz5Tw83SQdaBzd8AoSFyMZHy3NxBe"),
     stockXstock: presetKey(process.env.NEXT_PUBLIC_STOCK_XSTOCK_CONFIG, "AKQKx6QymFZ3A8y7QfBdNxnkdCFGMLVFBU1Dkpe9LQNa"),
+    // coins paired with $COMETAIL (configs/paired.json): quote $COMETAIL, bought and sold with SOL through COMETAIL_POOL
+    paired: presetKey(process.env.NEXT_PUBLIC_PAIRED_CONFIG, ""),
   },
   quoteMints: {
     wsol: new PublicKey("So11111111111111111111111111111111111111112"),

@@ -5,13 +5,14 @@
 // wrapped-SOL account for SOL quotes); nothing here ever closes a token account: the SDKs' builders
 // append an unwrap (a close of the wrapped-SOL account) and that instruction is removed, since the
 // admin's wrapped-SOL account is the protocol treasury the vault program pays into.
-import { Connection, PublicKey, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import BN from "bn.js";
-import { createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { createAssociatedTokenAccountIdempotentInstruction, createBurnCheckedInstruction, createTransferInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { BurnClient, type BurnState } from "@cometail/client";
 import { CpAmm, getUnClaimLpFee, getTokenProgram } from "@meteora-ag/cp-amm-sdk";
 import { ADDRESSES, LEGACY_CONFIGS } from "./addresses";
 import { dbcClient, mintDecimals, MigrationProgress } from "./dbc";
+import { isPairedQuote, PAIRED_DECIMALS } from "./paired";
 
 export type ClaimKind = "dbc-partner-fee" | "dbc-partner-surplus" | "dbc-partner-creation-fee" | "damm-position-fee";
 
@@ -239,6 +240,38 @@ export async function buildProtocolClaim(connection: Connection, claim: Protocol
   }
   const kept = instructions.filter((ix) => !isCloseAccount(ix));
   return { instructions: kept, removedCloses: instructions.length - kept.length, throughBurn: false };
+}
+
+/** What a paired claim ($COMETAIL quote) pays and burns: half of the $COMETAIL it pays is burned from the claimer's
+ *  $COMETAIL account in the same transaction; the other half stays there (the treasury's $COMETAIL). */
+export interface PairedBurn { claimed: bigint; burned: bigint; kept: bigint; exact: boolean }
+/** The claim with its burn appended. A curve fee claim is capped at the scanned amount, so it pays exactly that and
+ *  the burn is exactly half of it. Any other claim (a graduated position's fees, a curve's surplus) is measured by
+ *  simulating it now; fees that arrive between that check and the transaction landing are not burned, they stay. */
+export async function buildPairedClaim(connection: Connection, claim: ProtocolClaim, burn: BurnStatus): Promise<{ instructions: TransactionInstruction[]; removedCloses: number; pairedBurn: PairedBurn }> {
+  if (!isPairedQuote(claim.quoteMint)) throw new Error("not a $COMETAIL claim");
+  const built = await buildProtocolClaim(connection, claim, burn);
+  const destination = getAssociatedTokenAddressSync(claim.quoteMint, claim.claimer, false, TOKEN_PROGRAM_ID);
+  if (!claim.destination.equals(destination)) throw new Error("the claim does not land in the claimer's own $COMETAIL account");
+  const pre = [createAssociatedTokenAccountIdempotentInstruction(claim.claimer, destination, claim.claimer, claim.quoteMint)];
+  let claimed: bigint, exact: boolean;
+  if (claim.kind === "dbc-partner-fee" && claim.amountQuote !== null) { claimed = claim.amountQuote; exact = true; }
+  else {
+    const tx = new Transaction().add(...pre, ...built.instructions);
+    tx.feePayer = claim.claimer; tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+    const before = await connection.getAccountInfo(destination, "confirmed");
+    const sim = await connection.simulateTransaction(tx, undefined, [destination]);
+    if (sim.value.err) throw new Error(`the claim does not simulate: ${JSON.stringify(sim.value.err)}`);
+    const after = sim.value.accounts?.[0];
+    if (!after) throw new Error("the simulation returned no $COMETAIL account");
+    const amountOf = (data: Buffer | null) => (data && data.length >= 72 ? data.readBigUInt64LE(64) : 0n);
+    claimed = amountOf(Buffer.from(after.data[0], "base64")) - amountOf(before ? Buffer.from(before.data) : null);
+    exact = false;
+  }
+  if (claimed < 0n) throw new Error("the claim would pay a negative amount");
+  const burned = claimed / 2n;
+  const burnIx = burned > 0n ? [createBurnCheckedInstruction(destination, claim.quoteMint, claim.claimer, burned, PAIRED_DECIMALS)] : [];
+  return { instructions: [...pre, ...built.instructions, ...burnIx], removedCloses: built.removedCloses, pairedBurn: { claimed, burned, kept: claimed - burned, exact } };
 }
 
 /** A transfer of wrapped SOL from the owner's treasury account to the burn reserve (never a close or an unwrap). */

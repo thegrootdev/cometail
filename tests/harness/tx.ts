@@ -39,16 +39,18 @@ export function expectFail(svm: LiteSVM, ixs: TransactionInstruction[], signers:
 
 // ---- test-only forwarder: a program-derived signer for Meteora paths ----
 const FWD_DIR = path.resolve(__dirname, "..", "programs", "test_forwarder", "target", "deploy");
-export const FORWARDER_ID = (() => {
-  const kp = JSON.parse(fs.readFileSync(path.join(FWD_DIR, "test_forwarder-keypair.json"), "utf8"));
-  return Keypair.fromSecretKey(Uint8Array.from(kp)).publicKey;
-})();
+// read when first used, so a gate that never forwards (and CI, which has no forwarder build) can import this file
+let forwarderId: PublicKey | null = null;
+export function FORWARDER(): PublicKey {
+  if (!forwarderId) forwarderId = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(path.join(FWD_DIR, "test_forwarder-keypair.json"), "utf8")))).publicKey;
+  return forwarderId;
+}
 export function loadForwarder(svm: LiteSVM) {
-  svm.addProgramFromFile(FORWARDER_ID, path.join(FWD_DIR, "test_forwarder.so"));
+  svm.addProgramFromFile(FORWARDER(), path.join(FWD_DIR, "test_forwarder.so"));
 }
 export function pdaSigner(seed: string): { key: PublicKey; bump: number; seed: Buffer } {
   const s = Buffer.from(seed);
-  const [key, bump] = PublicKey.findProgramAddressSync([Buffer.from("vault"), s], FORWARDER_ID);
+  const [key, bump] = PublicKey.findProgramAddressSync([Buffer.from("vault"), s], FORWARDER());
   return { key, bump, seed: s };
 }
 /** Wrap `ix` so the forwarder re-invokes it with `signer.key` signing. */
@@ -58,5 +60,5 @@ export function forward(ix: TransactionInstruction, signer: { key: PublicKey; bu
     ...ix.keys.map((k) => ({ pubkey: k.pubkey, isWritable: k.isWritable, isSigner: k.pubkey.equals(signer.key) ? false : k.isSigner })),
   ];
   const data = Buffer.concat([Buffer.from([signer.bump, signer.seed.length]), signer.seed, Buffer.from(ix.data)]);
-  return new TransactionInstruction({ programId: FORWARDER_ID, keys, data });
+  return new TransactionInstruction({ programId: FORWARDER(), keys, data });
 }
