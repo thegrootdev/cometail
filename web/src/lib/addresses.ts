@@ -56,6 +56,15 @@ export const OFFICIAL_MINT = presetKey(process.env.NEXT_PUBLIC_OFFICIAL_MINT, ""
  *  by link, and the indexer, the API and /api/metrics are untouched; a comma-separated list. */
 export const HIDDEN_MINTS = new Set((process.env.NEXT_PUBLIC_HIDDEN_MINTS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 export const isListed = (mint: string) => !HIDDEN_MINTS.has(mint);
+/** Our early coins (TAIL, its fee token tTAIL) and tTAIL's vault, kept off every list: the home feed, All tokens
+ *  and its sky, the fee tokens on /tails, the per-coin rows of /stats. Unlike HIDDEN_MINTS, every count and total
+ *  still includes them; their pages stay reachable by link and the Fee Index lists them as it lists every coin. */
+const EARLY_MINTS = new Set(CLUSTER === "mainnet-beta" ? ["GNJmutvZ6achDMR35WqYuo8xdqQxUmvVocLU2tpwGqcP", "3acCYgu7nF7qY68xUZ81VaCxYicQSkAmYprDMfW3myxz"] : []);
+const EARLY_VAULTS = new Set(CLUSTER === "mainnet-beta" ? ["3g1bQEVcF35NcxjT6CkyV9PCtfVziH54nxqjxs2MDtij"] : []);
+export const isEarly = (mint: string) => EARLY_MINTS.has(mint);
+/** Whether a coin gets a row in the home feed and All tokens (hidden and early coins do not). */
+export const inLists = (mint: string) => isListed(mint) && !isEarly(mint);
+export const vaultInLists = (vault: string) => !EARLY_VAULTS.has(vault);
 /** Hidden wins over official: a mint in both lists is hidden everywhere. */
 export const isOfficial = (mint: string) => !!OFFICIAL_MINT && OFFICIAL_MINT.toBase58() === mint && isListed(mint);
 /** Meteora's DAMM v2 configs for DBC migrations, by the config's migration fee option (0-5 fixed fees, 6 customizable). */

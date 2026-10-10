@@ -4,7 +4,7 @@
 // cursor; "About to graduate" reads every coin still on its curve (bounded) and orders them by progress.
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { API_URL, CLUSTER, OFFICIAL_MINT, isListed, isOfficial } from "@/lib/addresses";
+import { API_URL, CLUSTER, OFFICIAL_MINT, inLists, isOfficial } from "@/lib/addresses";
 import { useMarket, normalizeToken, rawUnits, type MarketEnvelope, type MarketToken, type TokenList } from "@/lib/market";
 import { isPairedMint, quoteAsset, quoteRate } from "@/lib/quotes";
 import { usdValue } from "@/lib/usd";
@@ -163,7 +163,7 @@ function PagedList({ tab, search }: { tab: Exclude<Tab, "soon">; search: string 
   const seen = new Set<string>();
   const rows: { token: MarketToken; observedAt: number }[] = [];
   for (const [list, at] of [[data.data.tokens, firstObserved] as const, ...older.map((p) => [p.tokens, p.observedAt] as const)])
-    for (const t of Array.isArray(list) ? list : []) if (isListed(t.mint) && !seen.has(t.mint)) { seen.add(t.mint); rows.push({ token: t, observedAt: at }); }
+    for (const t of Array.isArray(list) ? list : []) if (inLists(t.mint) && !seen.has(t.mint)) { seen.add(t.mint); rows.push({ token: t, observedAt: at }); }
   // the official coin pinned on the plain New tab: its own read when healthy, else the list's row, else the cached read marked last known
   const listRow = pinned ? rows.find((r) => r.token.mint === officialMint) ?? null : null;
   const pin = !pinned ? null
@@ -224,7 +224,7 @@ function SoonList({ search }: { search: string }) {
   if (!state) return <DataState compact kind={failed ? "error" : "loading"} title={failed ? market.failed : market.loading} body={failed ? market.failedBody : market.loadingBody} onRetry={failed ? () => setTick((n) => n + 1) : undefined} />;
   const seen = new Set<string>();
   const ranked = state.tokens
-    .filter((t) => isListed(t.mint) && (t.migrationStage ?? t.stage) !== "graduated" && !seen.has(t.mint) && (seen.add(t.mint), true))
+    .filter((t) => inLists(t.mint) && (t.migrationStage ?? t.stage) !== "graduated" && !seen.has(t.mint) && (seen.add(t.mint), true))
     .sort((a, b) => (progressOf(b) ?? -1) - (progressOf(a) ?? -1));
   const at = failed ? 0 : state.observedAt;
   return (

@@ -9,7 +9,7 @@ import { Shell, Card } from "@/components/Shell";
 import { PageHeader, DataState } from "@/components/Experience";
 import { Money } from "@/components/Money";
 import { api, type Stats, type StatsLaunch } from "@/lib/api";
-import { API_URL, EXPLORER } from "@/lib/addresses";
+import { API_URL, EXPLORER, isEarly, vaultInLists } from "@/lib/addresses";
 import { units } from "@/lib/format";
 import { quoteAsset, WSOL } from "@/lib/quotes";
 import { shownName, shownSymbol, tickerText } from "@/lib/token-display";
@@ -64,7 +64,8 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
   const L = s.launches, T = s.trading, F = s.fees, B = s.burn, P = s.pairedQuote ?? null;
   const pairedSol = cometailSol(s);
   const pairedFees = F.paired ? sum([F.paired.curveTradingRaw, F.paired.curveProtocolRaw, F.paired.poolLpRaw, F.paired.poolProtocolRaw]) : null;
-  const graduated = L.list.filter((l) => l.dammPool);
+  // every figure counts all our launches; the per-coin rows leave out our early coins
+  const graduated = L.list.filter((l) => l.dammPool && !isEarly(l.mint));
   const d = B?.decimals ?? 6;
   const coin = (rawAmount: string | null | undefined) => (rawAmount === null || rawAmount === undefined ? copy.unknown : units(rawAmount, d, 0));
   const tailRows = s.tails?.list ?? [];
@@ -109,7 +110,7 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
           <Fig label={copy.launches.outside} href={raw} sub={L.unattributed ? `${copy.launches.unattributed}: ${L.unattributed}` : undefined}>{n(L.outside)}</Fig>
         </div>
         <p className="micro mt-3">{copy.launches.note}</p>
-        <LaunchTable list={L.list} pairedSol={pairedSol} />
+        <LaunchTable list={L.list.filter((l) => !isEarly(l.mint))} pairedSol={pairedSol} />
         <Footer readAtMs={L.readAtMs} href={`${API_URL}/api/tokens?sort=newest&limit=100`} />
       </Card>
 
@@ -156,7 +157,7 @@ function Body({ s, raw }: { s: Stats; raw: string }) {
           <Fig label={copy.vaults.harvested} href={`${API_URL}/api/vaults`}><Lamports v={sum(v.list.map((x) => x.harvestedLamports))} /></Fig>
           <Fig label={copy.vaults.waiting} href={`${API_URL}/api/vaults`}><Lamports v={sum(v.list.map((x) => x.waitingLamports))} /></Fig>
         </div>
-        <p className="micro mt-3">{copy.vaults.note} {v.list.filter((x) => x.status !== "open").map((x, i) => <span key={x.vault}>{i ? " · " : ""}<Link className="text-link" href={`/vault/${x.vault}`}>{x.vault.slice(0, 4)}… →</Link></span>)}</p>
+        <p className="micro mt-3">{copy.vaults.note} {v.list.filter((x) => x.status !== "open" && vaultInLists(x.vault)).map((x, i) => <span key={x.vault}>{i ? " · " : ""}<Link className="text-link" href={`/vault/${x.vault}`}>{x.vault.slice(0, 4)}… →</Link></span>)}</p>
         <Footer readAtMs={v.readAtMs} href={`${API_URL}/api/vaults`} />
       </Card>
 

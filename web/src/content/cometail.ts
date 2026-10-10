@@ -182,6 +182,7 @@ export const tailsPage = {
   retry: "Try again", walletClaimed: "Fees claimed", walletToBurn: "To the burn", walletLocked: "Locked as liquidity",
   vaultTitle: "Fee tokens",
   vaultBody: "A token launched on a coin's future fees. Those fees buy the fee token back below the market and burn what they buy.",
+  vaultNone: "A fee token is launched on a coin's future fees, which buy it back below the market and burn what they buy.",
   walletEmpty: "None yet.",
   source: "Fees from", raise: "Raise", flowing: "Fees in", buybacks: "Buybacks filled", placed: (sol: string) => `placed ${sol}`.trimEnd() + " ", burned: "Tail tokens burned", unwind: "Unwind opens",
   unavailable: "unavailable", more: "Show more", of: (n: number, total: number) => `${n} of ${total}`,

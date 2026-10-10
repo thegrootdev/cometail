@@ -16,15 +16,17 @@ import {
   Badge,
 } from "@/components/Experience";
 import { experience as copy, sky, wizard, market } from "@/content/cometail";
-import { isListed, isOfficial } from "@/lib/addresses";
+import { inLists, isListed, isOfficial } from "@/lib/addresses";
 import { useLoad } from "@/lib/hooks";
 import type { SkyStream } from "@/lib/api";
 export default function SkyPage() {
   const { data, loading, error, reload } = useLoad(loadSky, [], 30000);
   const [query, setQuery] = useState(""),
     [eligible, setEligible] = useState(false);
+  // the totals count every listed coin; the sky and the table leave out our early ones (inLists)
   const streams = useMemo(() => (data?.streams ?? []).filter((s) => isListed(s.baseMint)), [data]);
-  const shown = streams.filter(
+  const rows = useMemo(() => streams.filter((s) => inLists(s.baseMint)), [streams]);
+  const shown = rows.filter(
     (s) =>
       (!eligible || s.eligible) &&
       [s.pool, s.baseMint, s.creator, s.token?.name || "", s.token?.symbol || ""].some((x) =>
@@ -63,7 +65,7 @@ export default function SkyPage() {
       <div className="catalogue-header">
         <h2>{copy.list}</h2>
         <span className="micro">
-          {coins.length} / {new Set(streams.map((s) => s.baseMint)).size}
+          {coins.length} / {new Set(rows.map((s) => s.baseMint)).size}
         </span>
       </div>
       <div className="atlas-search">
@@ -143,7 +145,7 @@ export default function SkyPage() {
             </tbody>
           </table>
         </div>
-      ) : !loading && !error && streams.length > 0 ? (
+      ) : !loading && !error && rows.length > 0 ? (
         <DataState title={copy.noResults} body={copy.noResultsBody}>
           <button
             className="button button-secondary"

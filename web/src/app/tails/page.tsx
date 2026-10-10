@@ -13,7 +13,8 @@ import { CoinCell } from "@/components/CoinCell";
 import { api, type Tail, type TailInfo } from "@/lib/api";
 import { useMarket, type MarketToken } from "@/lib/market";
 import { short, units } from "@/lib/format";
-import { tailsPage as copy } from "@/content/cometail";
+import { nav, tailsPage as copy } from "@/content/cometail";
+import { vaultInLists } from "@/lib/addresses";
 
 const PAGE = 25;
 
@@ -33,19 +34,21 @@ export default function TailsPage() {
   useEffect(() => { void load(0); }, []);
   const more = async () => { if (paging) return; setPaging(true); try { await load(rows.length); } finally { setPaging(false); } };
   const now = Date.now() / 1000;
-  // a vault whose fee token is not launched has nothing to show yet: no token, no raise, no buybacks
-  const launched = rows.filter((t) => t.status !== "open");
+  // a vault whose fee token is not launched has nothing to show yet: no token, no raise, no buybacks; our early
+  // vault is left out of the list (vaultInLists)
+  const launched = rows.filter((t) => t.status !== "open" && vaultInLists(t.vault));
+  // nothing to list: what a fee token is and where to make one, instead of an empty table
+  const none = state === "ok" && launched.length === 0 && rows.length >= total;
   const statusLabel = (s: string) => (s === "live" ? copy.live : s === "launched" ? copy.launched : s === "unwound" ? copy.unwound : copy.open);
   return (
     <Shell wide>
       <PageHeader eyebrow={copy.eyebrow} title={copy.title} body={copy.body} />
       <WalletTails />
       <h2 className="section-title mt-6">{copy.vaultTitle}</h2>
-      <p className="text-sm mb-3">{copy.vaultBody}</p>
+      {none ? <p className="text-sm mb-3">{copy.vaultNone} <Link className="text-link" href="/sell">{nav.sell} →</Link></p> : <p className="text-sm mb-3">{copy.vaultBody}</p>}
       {state === "loading" && <DataState kind="loading" />}
       {state === "error" && <DataState kind="error" onRetry={() => { setState("loading"); void load(0); }} />}
-      {state === "ok" && rows.length === 0 && <DataState title={copy.empty} />}
-      {state === "ok" && rows.length > 0 && (
+      {state === "ok" && !none && (
         <div className="table-scroll">
           <table className="stream-table fee-table">
             <thead><tr><th>Tail</th><th>{copy.source}</th><th>{copy.raise}</th><th>{copy.flowing}</th><th>{copy.buybacks}</th><th>{copy.burned}</th><th>{copy.unwind}</th></tr></thead>
