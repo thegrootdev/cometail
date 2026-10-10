@@ -100,3 +100,19 @@ Sizing: 75,000,000 to 450,000,000 $COMETAIL is about 10 to 61 SOL at the $COMETA
 so a paired coin's SOL value also moves with $COMETAIL. $COMETAIL's pool held about 54 SOL that day: a
 graduation reached entirely through SOL buys would buy 130M $COMETAIL from it, about a third of its
 $COMETAIL side, and raise $COMETAIL's price roughly 2.2 times along the way.
+
+### Where paired coins show up (checked 10 October 2026)
+
+- **On cometail.fun** the SOL route always works: the site builds both swaps itself.
+- **Graduation is ours to run.** Meteora's migration keepers only graduate curves quoted in SOL, USDC, TRUMP, JUP,
+  USD1, MET, JupUSD, VIRTUAL, stock tokens, or a Jupiter-verified token with an Organic Score above 50
+  (docs.meteora.ag, DBC migration and liquidity). $COMETAIL is none of these, so the paired config is in the
+  keeper's migrate list (`COMETAIL_MIGRATE_CONFIGS`); the devnet run graduated a paired coin that way.
+- **Jupiter** routes SOL to coins quoted in small tokens through the quote token, but not always: on the free quote
+  API, 55 of 97 recent custom-quote DBC coins routed and 31 were refused at the multi-hop step, while jup.ag routed
+  each one tried. Whether it accepts $COMETAIL as the middle hop cannot be known until a paired coin trades. Its
+  market-listing rules also drop a curve that has not graduated 30 days after the token was created.
+- **DexScreener** lists custom-quote curve pairs but shows no USD price or liquidity for them; after graduation it
+  prices some custom-quote pools and not others. **GeckoTerminal** priced the ones it listed.
+- **Axiom, Photon and BONKbot** do not list pools whose quote is not SOL (Meteora's DAMM v2 pool page says so).
+  Nothing public was found either way for GMGN, BullX, Padre, Trojan, Maestro, Banana Gun or Birdeye.
