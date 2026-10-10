@@ -10,10 +10,12 @@ export type Check = { what: string; ok: boolean; detail: string };
 export const PROTOCOL_SET: PresetName[] = ["stream-25", "stream-50", "stream-75", "plain"];
 export const PUBLIC_SET: PresetName[] = ["long", "flat", "exp", "stock-usdc", "stock-xstock"];
 export const CONFIG_NAMES: PresetName[] = [...PROTOCOL_SET, ...PUBLIC_SET];
+// Created after the nine by their own script (paired-config.ts): read back when recorded, never required.
+export const OPTIONAL_NAMES: PresetName[] = ["paired"];
 export const STREAM_SET: PresetName[] = ["stream-25", "stream-50", "stream-75"];
 /** Authority selection is independent of the manifest's configs/presets buckets. */
 export function configAuthorities(name: PresetName, admin: string, treasuryOwner: string): { feeClaimer: string; leftoverReceiver: string } {
-  if (!CONFIG_NAMES.includes(name)) throw new Error(`unknown config ${name}`);
+  if (!CONFIG_NAMES.includes(name) && !OPTIONAL_NAMES.includes(name)) throw new Error(`unknown config ${name}`);
   const owner = STREAM_SET.includes(name) ? admin : treasuryOwner;
   if (!owner) throw new Error(`missing authority for ${name}`);
   return { feeClaimer: owner, leftoverReceiver: owner };
@@ -127,10 +129,10 @@ export function compareConfig(c: any, p: any, exp: { quoteMint: string; quoteIs2
   return out;
 }
 
-/** The state file itself: cluster, genesis, program id, the authorities and exactly the nine config names. */
+/** The state file itself: cluster, genesis, program id, the authorities, the nine config names and no names but those and the optional ones. */
 export function fileChecks(file: any, exp: { clusterName: string; genesis: string; programId: string; admin?: string; treasuryOwner?: string }): Check[] {
   const recorded: Record<string, string> = { ...(file.configs ?? {}), ...(file.presets ?? {}) };
-  const unknown = Object.keys(recorded).filter((n) => !CONFIG_NAMES.includes(n as PresetName));
+  const unknown = Object.keys(recorded).filter((n) => !CONFIG_NAMES.includes(n as PresetName) && !OPTIONAL_NAMES.includes(n as PresetName));
   const mainnet: Check[] = [];
   if (exp.clusterName === "mainnet-beta") {
     mainnet.push(...authorityChecks({ admin: exp.admin ?? "", treasuryOwner: exp.treasuryOwner ?? "", keeper: file.keeper }));

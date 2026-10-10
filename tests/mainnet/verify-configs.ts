@@ -1,5 +1,6 @@
 // Readback of a cluster's config set against the files it was built from. Fails unless the
-// state file names exactly the nine configs and the protocol, the RPC is the file's cluster, the
+// state file names the nine configs (plus, when recorded, the paired preset, whose quote is
+// quoteMints.cometail; paired-config.ts checked that against the burn program) and the protocol, the RPC is the file's cluster, the
 // program id matches, every config decodes and matches every parameter (readback.ts), the quote
 // mints are initialized mints of the recorded decimals, a Token-2022 quote has its DBC badge
 // (required on mainnet), and the protocol pins the file's admin, keeper, treasury and streams.
@@ -12,7 +13,7 @@ import { BorshAccountsCoder, Idl } from "@coral-xyz/anchor";
 import { expect } from "chai";
 import { VAULT_PROGRAM_ID } from "@cometail/client";
 import { configParams } from "../harness/dbc";
-import { CONFIG_NAMES, DBC_PROGRAM, WSOL, Check, configAuthorities, compareConfig, compareProtocol, fileChecks, readBadge, readMint } from "./readback";
+import { CONFIG_NAMES, OPTIONAL_NAMES, DBC_PROGRAM, WSOL, Check, configAuthorities, compareConfig, compareProtocol, fileChecks, readBadge, readMint } from "./readback";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const RPC = process.env.RPC ?? "https://api.devnet.solana.com";
@@ -38,10 +39,10 @@ async function main() {
   // the file and the cluster
   report("file", fileChecks(file, { clusterName: CLUSTER_NAME, genesis: await conn.getGenesisHash(), programId: VAULT_PROGRAM_ID.toBase58(), admin, treasuryOwner }));
   process.env.COMETAIL_QUOTE_USDC = file.quoteMints?.usdc ?? ""; process.env.COMETAIL_QUOTE_STOCK = file.quoteMints?.stock ?? "";
-  const quoteOf = (name: string) => (name === "stock-usdc" ? file.quoteMints?.usdc : name === "stock-xstock" ? file.quoteMints?.stock : WSOL) as string | undefined;
+  const quoteOf = (name: string) => (name === "stock-usdc" ? file.quoteMints?.usdc : name === "stock-xstock" ? file.quoteMints?.stock : name === "paired" ? file.quoteMints?.cometail : WSOL) as string | undefined;
   const recorded: Record<string, string> = { ...(file.configs ?? {}), ...(file.presets ?? {}) };
 
-  for (const name of CONFIG_NAMES) {
+  for (const name of [...CONFIG_NAMES, ...OPTIONAL_NAMES]) {
     const key = recorded[name];
     if (!key) continue;
     const info = await conn.getAccountInfo(new PublicKey(key));

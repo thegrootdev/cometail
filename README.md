@@ -176,7 +176,7 @@ Vault program deployed and protocol initialized on October 4, 2026; burn program
 | Vault program | [`5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg`](https://solscan.io/account/5xmZWYheruQjHQChg5YVtXjZUNmVKzvjJ6FYArtf4tmg) |
 | Protocol account | [`3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR`](https://solscan.io/account/3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR) |
 | Admin wallet (upgrade authority, protocol admin) | [`CXcbg8xiVmiUNCymi1EmUCq49g11NZbUb4JSE5z2KJU9`](https://solscan.io/account/CXcbg8xiVmiUNCymi1EmUCq49g11NZbUb4JSE5z2KJU9) |
-| Launch treasury (fee claimer of the six launch presets) | [`3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL`](https://solscan.io/account/3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL) |
+| Launch treasury (fee claimer of the seven launch presets) | [`3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL`](https://solscan.io/account/3zKVjACVhRYooppC3r7iyEcQTENao3kAnn5UZ656x8qL) |
 | Protocol treasury (admin's WSOL account) | [`3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD`](https://solscan.io/account/3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD) |
 | Keeper | [`Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7`](https://solscan.io/account/Hic1yuYP4jJvLnFeNDDcqsYtu3T4rJm99STgBqp4K2z7) |
 | Config: Standard (plain; coins before 2026-10-07) | [`GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr`](https://solscan.io/account/GQWJhBpSMdLfhLvGV8CyiPMfRceBmuddQGcoa3jsJrNr) |
@@ -185,6 +185,7 @@ Vault program deployed and protocol initialized on October 4, 2026; burn program
 | Config: Exponential (coins before 2026-10-07) | [`BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ`](https://solscan.io/account/BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ) |
 | Config: Dollar-paired (USDC) | [`9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33`](https://solscan.io/account/9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33) |
 | Config: Stock-paired (NVDAx) | [`9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf`](https://solscan.io/account/9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf) |
+| Config: Paired with $COMETAIL | [`H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2`](https://solscan.io/account/H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2) |
 | Config: fee sale, take 25% | [`3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk`](https://solscan.io/account/3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk) |
 | Config: fee sale, take 50% | [`6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L`](https://solscan.io/account/6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L) |
 | Config: fee sale, take 75% | [`D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na`](https://solscan.io/account/D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na) |

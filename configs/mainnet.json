@@ -7,7 +7,8 @@
   "quoteMints": {
     "wsol": "So11111111111111111111111111111111111111112",
     "usdc": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    "stock": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh"
+    "stock": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+    "cometail": "z4Zr7wNGDYbmqsgW9hYHxSgtUFWxKsbwjRThzrdUkit"
   },
   "configs": {
     "stream-25": "3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk",
@@ -20,7 +21,8 @@
     "flat": "25rrasLtmySk1G5Vju5h1N57N69NVyZ3oRMBYoTDwPB6",
     "exp": "BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ",
     "stock-usdc": "9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33",
-    "stock-xstock": "9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf"
+    "stock-xstock": "9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf",
+    "paired": "H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2"
   },
   "treasury": "3BVodzoL6GUMAmQT1pEGBGRcDKLZhXa3hKdEdY5aZUxD",
   "protocol": "3FrYZjy6uax82FqWVASL8GUQNM1DnRJ7UZU18cZbLHFR",
