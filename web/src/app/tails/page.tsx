@@ -34,9 +34,12 @@ export default function TailsPage() {
   useEffect(() => { void load(0); }, []);
   const more = async () => { if (paging) return; setPaging(true); try { await load(rows.length); } finally { setPaging(false); } };
   const now = Date.now() / 1000;
-  // a vault whose fee token is not launched has nothing to show yet: no token, no raise, no buybacks; our early
-  // vault is left out of the list (vaultInLists)
-  const launched = rows.filter((t) => t.status !== "open" && vaultInLists(t.vault));
+  // a vault whose fee token is not launched has nothing to show yet: no token, no raise, no buybacks (counted by its
+  // status alone); our early vault is launched but left out of the list and of the list's own count (vaultInLists)
+  const launchedAll = rows.filter((t) => t.status !== "open");
+  const notLaunched = rows.length - launchedAll.length;
+  const launched = launchedAll.filter((t) => vaultInLists(t.vault));
+  const unlisted = launchedAll.length - launched.length;
   // nothing to list: what a fee token is and where to make one, instead of an empty table
   const none = state === "ok" && launched.length === 0 && rows.length >= total;
   const statusLabel = (s: string) => (s === "live" ? copy.live : s === "launched" ? copy.launched : s === "unwound" ? copy.unwound : copy.open);
@@ -66,7 +69,7 @@ export default function TailsPage() {
               ))}
             </tbody>
           </table>
-          <p className="micro mt-3">{copy.of(launched.length, total - (rows.length - launched.length))}{rows.length > launched.length ? ` · ${copy.notLaunched(rows.length - launched.length)}` : ""}</p>
+          <p className="micro mt-3">{copy.of(launched.length, total - notLaunched - unlisted)}{notLaunched > 0 ? ` · ${copy.notLaunched(notLaunched)}` : ""}</p>
           {rows.length < total && <button type="button" className="button button-secondary mt-3" disabled={paging} onClick={() => void more()}>{copy.more}</button>}
         </div>
       )}
