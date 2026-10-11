@@ -8,7 +8,7 @@ import { SkyStream, api } from "@/lib/api";
 import { useLoad } from "@/lib/hooks";
 import { short, sol } from "@/lib/format";
 import { Money } from "./Money";
-import { quoteAsset } from "@/lib/quotes";
+import { quoteAsset, rowQuote } from "@/lib/quotes";
 import { formatAmount } from "@/lib/amounts";
 import { money, identity } from "@/content/cometail";
 import { Stat } from "./Shell";
@@ -133,7 +133,9 @@ export function StarAtlas({
 }) {
   const id = useId().replace(/:/g, "");
   const feeLabel = (stream: SkyStream) => {
-    const asset = quoteAsset(stream.quoteMint);
+    const asset = quoteAsset(stream.quoteMint, undefined, undefined, stream.quoteUsd?.sol);
+    // a coin paired with $COMETAIL reads in SOL at $COMETAIL's pool price, like its neighbours
+    if (asset.paired && asset.sol) return `≈ ${formatAmount(BigInt(Math.round((Number(stream.claimableLamports) / 1e6) * asset.sol * 1e9)), 9, { ticker: "SOL", maxFraction: 3 })}`;
     return asset.decimals === null ? "—" : formatAmount(BigInt(stream.claimableLamports), asset.decimals, { ticker: asset.symbol, maxFraction: 3 });
   };
   const previous = useRef(new Map<string, bigint>());
@@ -362,12 +364,12 @@ export function StarAtlas({
     </div>
   );
 }
-export function AtlasStats({ streams }: { streams: SkyStream[] }) {
+export function AtlasStats({ streams, priceAtMs = null }: { streams: SkyStream[]; priceAtMs?: number | null }) {
   const groups = [...new Set(streams.map(s => s.quoteMint))];
   const totals = (field: "claimableLamports" | "realized30dLamports") => <span className="quote-totals">{groups.map(mint => {
     const rows = streams.filter(s => s.quoteMint === mint);
     if (!rows.some(s => s[field] !== null)) return null;
-    return <Money key={mint} quote={quoteAsset(mint)} lamports={rows.reduce((n,s) => n + BigInt(s[field] ?? "0"), 0n)} />;
+    return <Money key={mint} {...rowQuote(mint, rows.find((s) => s.quoteUsd)?.quoteUsd, priceAtMs)} lamports={rows.reduce((n,s) => n + BigInt(s[field] ?? "0"), 0n)} />;
   })}</span>;
   return (
     <div className="atlas-stats">
@@ -402,7 +404,7 @@ export function HomeAtlas() {
         error={!!error}
         onRetry={reload}
       />
-      {data && <AtlasStats streams={listed} />}
+      {data && <AtlasStats streams={listed} priceAtMs={data.priceAtMs ?? null} />}
     </>
   );
 }

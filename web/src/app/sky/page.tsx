@@ -1,6 +1,6 @@
 "use client";
 import { CopyAddress } from "@/components/CopyAddress";
-import { quoteAsset } from "@/lib/quotes";
+import { rowQuote } from "@/lib/quotes";
 import { Money } from "@/components/Money";
 import { TokenHeading } from "@/components/TokenHeading";
 import { SocialLinks } from "@/components/SocialLinks";
@@ -61,7 +61,7 @@ export default function SkyPage() {
         error={!!error}
         onRetry={reload}
       />
-      {data && <AtlasStats streams={streams} />}
+      {data && <AtlasStats streams={streams} priceAtMs={data.priceAtMs ?? null} />}
       <div className="catalogue-header">
         <h2>{copy.list}</h2>
         <span className="micro">
@@ -115,11 +115,11 @@ export default function SkyPage() {
                       {wizard.stages[s.progress] ?? s.progress}
                     </Badge>
                   </td>
-                  <td className="money" data-label={copy.accrued}><Money quote={quoteAsset(s.quoteMint)} lamports={claimable} /></td>
+                  <td className="money" data-label={copy.accrued}><Money {...rowQuote(s.quoteMint, s.quoteUsd, data?.priceAtMs)} lamports={claimable} /></td>
                   {anyRealized && <td data-label={copy.harvested}>
                     {realized30d === null
                       ? "—"
-                      : <Money quote={quoteAsset(s.quoteMint)} lamports={realized30d} />}
+                      : <Money {...rowQuote(s.quoteMint, s.quoteUsd, data?.priceAtMs)} lamports={realized30d} />}
                   </td>}
                   <td data-label={copy.eligibility}>
                     <ul className="source-list">

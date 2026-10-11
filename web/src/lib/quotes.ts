@@ -22,6 +22,12 @@ export function quoteAsset(mint: string | null | undefined, decimals?: number | 
   const label = native ? "SOL" : usdc ? (CLUSTER === "devnet" && mint !== USDC ? "test USDC" : "USDC") : stock ? (CLUSTER === "devnet" ? "test stock" : "stock units") : mint ? `${mint.slice(0,4)}…${mint.slice(-4)}` : "quote tokens";
   return { mint: mint ?? null, decimals: validDecimals ? decimals : knownDecimals, symbol: symbol?.trim() || label };
 }
+/** A row's quote for Money: a coin paired with $COMETAIL carries $COMETAIL's own rate (dollars, and SOL at its pool
+ *  price), as on its token page; every other quote keeps Money's own rate. */
+export function rowQuote(quoteMint: string, rate: QuoteUsd | null | undefined, observedAt: number | null | undefined): { quote: QuoteAsset; quoteRate?: SolUsdRate } {
+  const quote = quoteAsset(quoteMint, undefined, undefined, rate?.sol);
+  return quote.paired ? { quote, quoteRate: quoteRate(rate, observedAt) } : { quote };
+}
 export function quoteRate(rate: QuoteUsd | null | undefined, observedAt: number | null | undefined): SolUsdRate {
   if (!rate || rate.status === "missing" || typeof rate.value !== "number" || !Number.isFinite(rate.value) || rate.value <= 0 || !observedAt || observedAt > Date.now() + 60_000) return missingRate;
   return { value: rate.value, source: rate.source, at: observedAt, status: rate.status === "fresh" && Date.now() - observedAt < PRICE_MAX_AGE_MS ? "fresh" : "stale" };

@@ -2,6 +2,7 @@
 // can from the chain when the API is down.
 import { API_URL } from "./addresses";
 import type { TokenIdentity } from "./token-display";
+import type { QuoteUsd } from "./quotes";
 
 export interface SkyStream {
   token?: TokenIdentity | null;
@@ -30,6 +31,8 @@ export interface SkyStream {
   owner?: string;
   lockedSharePct?: number;
   ownerRole?: "treasury" | "vault";
+  /** the quote's USD rate (and, for $COMETAIL, its SOL price), dated by the response's priceAtMs */
+  quoteUsd?: QuoteUsd | null;
 }
 export interface VaultRow {
   stToken?: TokenIdentity | null;
@@ -186,7 +189,7 @@ export const api = {
     const p = new URLSearchParams({ limit: String(q.limit ?? 25), offset: String(q.offset ?? 0) }); if (q.source) p.set("source", q.source);
     return get<{ total: number; offset: number; limit: number; tails: Tail[] }>(`/api/tails?${p}`);
   },
-  sky: () => get<{ streams: SkyStream[] }>("/api/sky?limit=500"),
+  sky: () => get<{ streams: SkyStream[]; priceAtMs?: number | null }>("/api/sky?limit=500"),
   vaults: () => get<{ vaults: VaultRow[] }>("/api/vaults"),
   vault: (key: string) =>
     get<

@@ -445,7 +445,14 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       }
       const limit = Math.min(1000, Number(requestedLimit ?? 200));
       if (url.pathname === "/api/health") return send(200, { ok: true, service: "cometail-indexer", time: Date.now() });
-      if (url.pathname === "/api/sky") { const tokens = await tokenIdentities(store); return send(200, { streams: (await store.listSky(limit)).map((r) => ({ ...r, token: tokens.byMint.get(r.baseMint) ?? null })) }); }
+      if (url.pathname === "/api/sky") {
+        const tokens = await tokenIdentities(store);
+        // each row's quote in dollars (and $COMETAIL in SOL at its pool price), as /api/tokens gives it, dated by the SOL reference
+        const reference = await solUsd();
+        const price = reference && Date.now() - reference.at < 10 * 60_000 ? reference : null;
+        const paired = await pairedRate(store, opts);
+        return send(200, { priceAtMs: price?.at ?? null, streams: (await store.listSky(limit)).map((r) => ({ ...r, token: tokens.byMint.get(r.baseMint) ?? null, quoteUsd: quoteUsdRate(r.quoteMint, price?.solUsd ?? null, paired) })) });
+      }
       if (url.pathname === "/api/vaults") { const tokens = await tokenIdentities(store); return send(200, { vaults: (await store.listVaults()).map((v) => ({ ...v, stToken: tokens.byMint.get(String(v.data?.stMint ?? "")) ?? null })) }); }
       const m = url.pathname.match(/^\/api\/vaults\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
       if (m) {
