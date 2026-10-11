@@ -92,8 +92,12 @@ export class Indexer {
   private mintOfPool = new Map<string, string>();
   constructor(readonly chain: Chain, readonly store: Store) {}
 
+  /** Set once the stored trades of program-signed swaps carry their fee payer (repairRoutedTraders). */
+  private routedRepaired = false;
+
   /** One pass; returns how many events were newly indexed. */
   async pass(): Promise<number> {
+    if (!this.routedRepaired) this.routedRepaired = await this.repairRoutedTraders();
     const added = await this.indexEvents();
     const vaults = await this.chain.vaults(); // throws on an RPC failure: nothing is pruned on a partial read
     await this.indexTrades(await this.tradePools(vaults));
@@ -101,6 +105,32 @@ export class Indexer {
     if (observed) await this.store.pruneFeed(observed - FEED_RETENTION_SLOTS);
     await this.snapshot(vaults);
     return added;
+  }
+
+  /** Trades stored before decodeTrades credited a program-signed swap to its fee payer still name the program's
+   *  address as their authority: each such row is read again from its transaction and given the fee payer, marked
+   *  as such. True once every readable row is repaired (a transaction the node does not return is left as it was and
+   *  logged); an RPC or store failure leaves the rest for the next pass. At most `perPass` transactions are read per
+   *  pass, so the repair never holds a pass for long. */
+  private async repairRoutedTraders(perPass = 100): Promise<boolean> {
+    try {
+      const routed = (await this.store.listAuthorityTraders()).filter((t) => { try { return !PublicKey.isOnCurve(new PublicKey(t).toBytes()); } catch { return false; } });
+      let fixed = 0, read = 0; const unreadable: string[] = [];
+      for (const trader of routed) {
+        for (const signature of await this.store.listTradeSignaturesOf(trader)) {
+          if (read++ >= perPass) { log("trades of program-signed swaps credited to their fee payers; more next pass", { trades: fixed, unreadable }); return false; }
+          const tx = await retry(`transaction ${signature}`, () => readTx(this.chain.connection, signature));
+          const payer = tx?.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined }).get(0)?.toBase58();
+          if (!payer) { unreadable.push(signature); continue; }
+          fixed += await this.store.reattributeTrades(signature, trader, payer);
+        }
+      }
+      if (routed.length) log("trades of program-signed swaps credited to their fee payers", { programs: routed.length, trades: fixed, unreadable });
+      return true;
+    } catch (e) {
+      log("routed trader repair failed; it resumes next pass", { error: String((e as Error).message ?? e) });
+      return false;
+    }
   }
 
   /** The pools to follow: every launch's DBC curve and, once graduated, its DAMM v2 pool (token rows),
@@ -370,7 +400,9 @@ export function binPriceSolPerSt(binId: number, binStep: number, stIsX: boolean,
  *  instruction of either Meteora program in the transaction before any pool filter, so it is
  *  stable across pools. DBC: swap / swap2 / swap2_with_transfer_hook with the pool at account 2 and
  *  the signer at 9, events EvtSwap (actual input) and EvtSwap2 (included-fee input). cp-amm: swap /
- *  swap2 with the pool at 1 and the signer at 8, EvtSwap2. Direction 1 is quote in, token out. */
+ *  swap2 with the pool at 1 and the signer at 8, EvtSwap2. Direction 1 is quote in, token out.
+ *  A swap whose signer is a program address (off the curve: a router or bot program signing for itself, never a
+ *  wallet) is credited to the fee payer, the wallet that signed the transaction, marked as such. */
 export function decodeTrades(chain: Chain, tx: IndexedTx, pool: PublicKey, meta: { signature: string; slot: number; blockTime: number | null; vault: string; venue: "curve" | "damm"; baseDecimals: number; quoteMint?: string; quoteDecimals?: number }): TradeRow[] {
   const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined });
   const feePayer = keys.get(0)?.toBase58() ?? "";
@@ -386,7 +418,7 @@ export function decodeTrades(chain: Chain, tx: IndexedTx, pool: PublicKey, meta:
   // execution; EvtSwap2 supplies the amounts when present (included-fee input), EvtSwap otherwise
   const rows: TradeRow[] = [];
   let ordinal = 0;
-  let execution: { signer: string | null; row: TradeRow | null; from2: boolean } | null = null;
+  let execution: { signer: string | null; routed: boolean; row: TradeRow | null; from2: boolean } | null = null;
   const close = () => { if (execution?.row) rows.push(execution.row); execution = null; };
   for (const f of flat) {
     const pid = keys.get(f.programIdIndex);
@@ -397,7 +429,7 @@ export function decodeTrades(chain: Chain, tx: IndexedTx, pool: PublicKey, meta:
     if (disc.equals(SWAP_DISCRIMINATOR) || disc.equals(SWAP2_DISCRIMINATOR) || disc.equals(SWAP2_HOOK_DISCRIMINATOR)) {
       const p = keys.get(f.accounts[poolIndex] ?? -1), signer = keys.get(f.accounts[signerIndex] ?? -1);
       close();
-      if (p && p.equals(pool)) execution = { signer: signer ? signer.toBase58() : null, row: null, from2: false };
+      if (p && p.equals(pool)) execution = { signer: signer ? signer.toBase58() : null, routed: !!signer && !PublicKey.isOnCurve(signer.toBytes()), row: null, from2: false };
       continue;
     }
     if (!disc.equals(EVENT_IX_DISCRIMINATOR) || f.data.length < 16) continue;
@@ -408,14 +440,14 @@ export function decodeTrades(chain: Chain, tx: IndexedTx, pool: PublicKey, meta:
     if (!d.pool || !new PublicKey(d.pool).equals(pool)) continue;
     const is2 = /2/.test(ev.name);
     // an event without a preceding swap instruction of this pool (a route we could not pair) is its own execution
-    if (!execution) execution = { signer: null, row: null, from2: false };
+    if (!execution) execution = { signer: null, routed: false, row: null, from2: false };
     if (execution.row && (execution.from2 || !is2)) continue; // a second event of the same execution adds nothing
     const buy = Number(d.tradeDirection) === 1;
     const result = d.swapResult ?? {};
     const input = BigInt(String(result.includedFeeInputAmount ?? result.actualInputAmount ?? d.amountIn ?? 0));
     const output = BigInt(String(result.outputAmount ?? 0));
     const quote = buy ? input : output, base = buy ? output : input;
-    execution.row = { signature: meta.signature, idx: execution.row?.idx ?? ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: execution.signer ?? feePayer, traderKind: execution.signer ? "authority" : "feePayer", buy, amountIn: input.toString(), amountOut: output.toString(), venue: meta.venue, baseAmountRaw: base.toString(), quoteAmountLamports: quote.toString(), executionPriceSol: (meta.quoteMint ?? WSOL_MINT) === WSOL_MINT ? executionPrice(quote, base, meta.baseDecimals) : null, executionPriceQuote: executionPrice(quote, base, meta.baseDecimals, meta.quoteDecimals ?? 9), quoteMint: meta.quoteMint ?? WSOL_MINT, quoteDecimals: meta.quoteDecimals ?? 9 };
+    execution.row = { signature: meta.signature, idx: execution.row?.idx ?? ordinal, slot: meta.slot, blockTime: meta.blockTime, pool: pool.toBase58(), vault: meta.vault, trader: execution.signer && !execution.routed ? execution.signer : feePayer, traderKind: execution.signer && !execution.routed ? "authority" : "feePayer", buy, amountIn: input.toString(), amountOut: output.toString(), venue: meta.venue, baseAmountRaw: base.toString(), quoteAmountLamports: quote.toString(), executionPriceSol: (meta.quoteMint ?? WSOL_MINT) === WSOL_MINT ? executionPrice(quote, base, meta.baseDecimals) : null, executionPriceQuote: executionPrice(quote, base, meta.baseDecimals, meta.quoteDecimals ?? 9), quoteMint: meta.quoteMint ?? WSOL_MINT, quoteDecimals: meta.quoteDecimals ?? 9 };
     execution.from2 = is2;
     if (!execution.signer) close(); // unpaired events never merge with each other
   }

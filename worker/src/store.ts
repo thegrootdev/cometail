@@ -81,6 +81,12 @@ export interface Store {
   listTradesSince(pools: string[], sinceUnix: number): Promise<TradeRow[]>;
   /** Trades of the given pools, newest first, before an optional (slot, idx) cursor. */
   listTradesByPools(pools: string[], limit: number, before?: { slot: number; idx: number; signature: string } | null): Promise<TradeRow[]>;
+  /** Distinct traders of rows credited to the swap's own signer. */
+  listAuthorityTraders(): Promise<string[]>;
+  /** Signatures of the rows credited to this trader as the swap's own signer. */
+  listTradeSignaturesOf(trader: string): Promise<string[]>;
+  /** Credits one transaction's rows of `from` (as the swap's signer) to the fee payer `to`; returns the rows changed. */
+  reattributeTrades(signature: string, from: string, to: string): Promise<number>;
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;
   upsertTokens(rows: TokenRow[]): Promise<void>;
@@ -251,6 +257,9 @@ class PgStore implements Store {
     const r = before ? await this.pool.query("select * from trades where pool = any($1) and (slot < $2 or (slot = $2 and idx < $3) or (slot = $2 and idx = $3 and signature < $4)) order by slot desc, idx desc, signature desc limit $5", [pools, before.slot, before.idx, before.signature, limit]) : await this.pool.query("select * from trades where pool = any($1) order by slot desc, idx desc, signature desc limit $2", [pools, limit]);
     return r.rows.map(pgTrade);
   }
+  async listAuthorityTraders() { const r = await this.pool.query("select distinct trader from trades where trader_kind = 'authority'"); return r.rows.map((x: any) => String(x.trader)); }
+  async listTradeSignaturesOf(trader: string) { const r = await this.pool.query("select distinct signature from trades where trader = $1 and trader_kind = 'authority'", [trader]); return r.rows.map((x: any) => String(x.signature)); }
+  async reattributeTrades(signature: string, from: string, to: string) { const r = await this.pool.query("update trades set trader = $3, trader_kind = 'feePayer' where signature = $1 and trader = $2 and trader_kind = 'authority'", [signature, from, to]); return r.rowCount ?? 0; }
   async getMeta(key: string) { const r = await this.pool.query("select value from meta where key = $1", [key]); return r.rows[0]?.value ?? null; }
   async setMeta(key: string, value: string) { await this.pool.query("insert into meta (key, value) values ($1, $2) on conflict (key) do update set value = $2", [key, value]); }
   async upsertTokens(rows: TokenRow[]) { await this.upsertTokensWith(this.pool, rows); }
@@ -422,6 +431,9 @@ class SqliteStore implements Store {
     const rows = before ? this.db.prepare(`select * from trades where pool in (${ph}) and (slot < ? or (slot = ? and idx < ?) or (slot = ? and idx = ? and signature < ?)) order by slot desc, idx desc, signature desc limit ?`).all(...pools, before.slot, before.slot, before.idx, before.slot, before.idx, before.signature, limit) : this.db.prepare(`select * from trades where pool in (${ph}) order by slot desc, idx desc, signature desc limit ?`).all(...pools, limit);
     return rows.map(sqTrade);
   }
+  async listAuthorityTraders() { return this.db.prepare("select distinct trader from trades where trader_kind = 'authority'").all().map((x: any) => String(x.trader)); }
+  async listTradeSignaturesOf(trader: string) { return this.db.prepare("select distinct signature from trades where trader = ? and trader_kind = 'authority'").all(trader).map((x: any) => String(x.signature)); }
+  async reattributeTrades(signature: string, from: string, to: string) { return Number(this.db.prepare("update trades set trader = ?, trader_kind = 'feePayer' where signature = ? and trader = ? and trader_kind = 'authority'").run(to, signature, from).changes ?? 0); }
   async getMeta(key: string) { const x = this.db.prepare("select value from meta where key = ?").get(key); return x ? x.value : null; }
   async setMeta(key: string, value: string) { this.db.prepare("insert into meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value").run(key, value); }
   async upsertTokens(rows: TokenRow[]) { this.upsertTokensSync(rows); }
