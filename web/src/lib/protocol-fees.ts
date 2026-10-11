@@ -10,7 +10,7 @@ import BN from "bn.js";
 import { ACCOUNT_SIZE, createAssociatedTokenAccountIdempotentInstruction, createBurnCheckedInstruction, createCloseAccountInstruction, createInitializeAccount3Instruction, createTransferCheckedInstruction, createTransferInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { BurnClient, type BurnState } from "@cometail/client";
 import { CpAmm, getUnClaimLpFee, getTokenProgram } from "@meteora-ag/cp-amm-sdk";
-import { ADDRESSES, LEGACY_CONFIGS } from "./addresses";
+import { ADDRESSES, LEGACY_CONFIGS, PAIRED_EARLIER } from "./addresses";
 import { dbcClient, mintDecimals, MigrationProgress } from "./dbc";
 import { isPairedQuote, PAIRED_DECIMALS } from "./paired";
 
@@ -74,6 +74,7 @@ const U64_MAX = new BN("18446744073709551615");
 export function ourConfigs(): { label: string; config: PublicKey }[] {
   const out: { label: string; config: PublicKey }[] = [{ label: "Standard", config: ADDRESSES.plainConfig }];
   for (const [label, key] of Object.entries(ADDRESSES.presets)) if (key) out.push({ label, config: key });
+  out.push(...PAIRED_EARLIER);
   ADDRESSES.streamConfigs.forEach((config, i) => out.push({ label: ["stream-25", "stream-50", "stream-75"][i], config }));
   out.push(...LEGACY_CONFIGS);
   const seen = new Set<string>();

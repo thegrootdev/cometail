@@ -52,7 +52,7 @@
     "cliffDurationFromMigrationTime": 0
   },
   "activationType": 0,
-  "initialMarketCap": 75000000,
+  "initialMarketCap": 200000000,
   "migrationMarketCap": 450000000,
   "curve": {
     "mode": "marketCap"

@@ -29,7 +29,7 @@ program's designated presets; DBC itself permits other creators to launch on tho
 | Exponential | WSOL | 16 segments, weights 1.3^-i (gentle first, steep late) | 20 SOL | 240 SOL | 30.675 SOL | `configs/exp.json` |
 | Stock, USDC | USDC (6 dp) | market caps, one segment | 2,000 USDC | 12,000 USDC | 3,478.78 USDC | `configs/stock-usdc.json` |
 | Stock, tokenized stock | NVIDIA xStock (NVDAx, `Xsc9qvGR…`, badged Token-2022, 8 dp) on mainnet; a stand-in mint on devnet | 16 segments, weights 1.2^i (more depth near graduation; sharper early price movement) | 2 units | 16 units | 5.667 units | `configs/stock-xstock.json` |
-| Paired with $COMETAIL | $COMETAIL (`z4Zr7w…`, classic SPL, 6 dp) on mainnet; the burn program's stand-in on devnet | market caps, one segment | 75,000,000 $COMETAIL | 450,000,000 $COMETAIL | 130,454,076.85 $COMETAIL | `configs/paired.json` |
+| Paired with $COMETAIL | $COMETAIL (`z4Zr7w…`, classic SPL, 6 dp) on mainnet; the burn program's stand-in on devnet | market caps, one segment | 200,000,000 $COMETAIL | 450,000,000 $COMETAIL | 180,000,000 $COMETAIL | `configs/paired.json` |
 
 What each means for a creator: Standard graduates at a 120 SOL market cap after a 34.8 SOL
 raise; Long stretches price discovery three and a half times further before graduating; Flat
@@ -102,11 +102,18 @@ the split: a claim that pays any other amount (a stale scan, a claim already mad
 whole, so nothing already in the treasury can be burned. A curve fee claim is built for the scanned amount; a
 graduated position's fees and a curve's surplus for what a simulation of the claim pays at that moment.
 
-Sizing: 75,000,000 to 450,000,000 $COMETAIL is about 10 to 61 SOL at the $COMETAIL price of 10 October
-2026 (1.36e-7 SOL). Prices and market caps are shown in SOL and dollars at $COMETAIL's current pool price,
-so a paired coin's SOL value also moves with $COMETAIL. $COMETAIL's pool held about 54 SOL that day: a
-graduation reached entirely through SOL buys would buy 130M $COMETAIL from it, about a third of its
-$COMETAIL side, and raise $COMETAIL's price roughly 2.2 times along the way.
+Sizing: 200,000,000 to 450,000,000 $COMETAIL is about 20 to 45 SOL at the $COMETAIL price of 11 October
+2026 (1.01e-7 SOL), so a paired coin starts where Standard does (20 SOL) and the same first buy gets the same
+share (1 SOL about 4.7% on either). Prices and market caps are shown in SOL and dollars at $COMETAIL's current
+pool price, so a paired coin's SOL value also moves with $COMETAIL. $COMETAIL's pool held about 43.6 SOL and 432M
+$COMETAIL that day: a graduation reached entirely through SOL buys would buy the 180M $COMETAIL raise from it,
+about 42% of its $COMETAIL side, for about 31.5 SOL (Standard: 34.8 SOL), raising $COMETAIL's price about 2.9
+times along the way, which puts the coin near 134 SOL at graduation (Standard: 120 SOL).
+
+The first paired config (`configs/paired-v1.json`, `H1Bj…abg2`) ran from 75,000,000 to 450,000,000 $COMETAIL, a
+raise of 130,454,076.85 $COMETAIL. At 10 October's $COMETAIL price it started near 7.4 SOL, so a 1 SOL first buy
+took 11.6% of the supply (the first paired coin, $BABY). It is no longer offered for new launches; its coins keep
+trading, graduating and paying their fees on it, and `/admin/fees` and the worker's lists keep it.
 
 ### Where paired coins show up (checked 10 October 2026)
 

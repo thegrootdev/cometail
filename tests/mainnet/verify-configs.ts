@@ -1,5 +1,5 @@
 // Readback of a cluster's config set against the files it was built from. Fails unless the
-// state file names the nine configs (plus, when recorded, the paired preset, whose quote is
+// state file names the nine configs (plus, when recorded, the paired presets paired and paired-v1, whose quote is
 // quoteMints.cometail; paired-config.ts checked that against the burn program) and the protocol, the RPC is the file's cluster, the
 // program id matches, every config decodes and matches every parameter (readback.ts), the quote
 // mints are initialized mints of the recorded decimals, a Token-2022 quote has its DBC badge
@@ -39,7 +39,7 @@ async function main() {
   // the file and the cluster
   report("file", fileChecks(file, { clusterName: CLUSTER_NAME, genesis: await conn.getGenesisHash(), programId: VAULT_PROGRAM_ID.toBase58(), admin, treasuryOwner }));
   process.env.COMETAIL_QUOTE_USDC = file.quoteMints?.usdc ?? ""; process.env.COMETAIL_QUOTE_STOCK = file.quoteMints?.stock ?? "";
-  const quoteOf = (name: string) => (name === "stock-usdc" ? file.quoteMints?.usdc : name === "stock-xstock" ? file.quoteMints?.stock : name === "paired" ? file.quoteMints?.cometail : WSOL) as string | undefined;
+  const quoteOf = (name: string) => (name === "stock-usdc" ? file.quoteMints?.usdc : name === "stock-xstock" ? file.quoteMints?.stock : name === "paired" || name === "paired-v1" ? file.quoteMints?.cometail : WSOL) as string | undefined;
   const recorded: Record<string, string> = { ...(file.configs ?? {}), ...(file.presets ?? {}) };
 
   for (const name of [...CONFIG_NAMES, ...OPTIONAL_NAMES]) {

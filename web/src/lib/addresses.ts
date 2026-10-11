@@ -43,6 +43,9 @@ export const ADDRESSES = {
     stock: presetKey(process.env.NEXT_PUBLIC_QUOTE_STOCK, "BN6zukGJEUGDCBgjYJxyDNs7KubMKeJVjS6RyfNBcXAN"),
   },
 };
+/** Paired configs no longer offered for new launches: the first one (75M to 450M $COMETAIL, configs/paired-v1.json) on
+ *  mainnet. Their coins keep trading on them, and their partner fees are still claimed on /admin/fees. */
+export const PAIRED_EARLIER: { label: string; config: PublicKey }[] = CLUSTER === "mainnet-beta" ? [{ label: "paired-v1", config: new PublicKey("H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2") }] : [];
 /** $COMETAIL's graduated DAMM v2 pool: the pool the burn program buys on (set at its setup; empty until known). */
 export const COMETAIL_POOL = presetKey(process.env.NEXT_PUBLIC_COMETAIL_POOL, "");
 /** Launch configs from before the burn program (their fees are claimed on /admin/fees with the 50% transfer). */

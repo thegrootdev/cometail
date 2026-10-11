@@ -11,7 +11,9 @@ export const PROTOCOL_SET: PresetName[] = ["stream-25", "stream-50", "stream-75"
 export const PUBLIC_SET: PresetName[] = ["long", "flat", "exp", "stock-usdc", "stock-xstock"];
 export const CONFIG_NAMES: PresetName[] = [...PROTOCOL_SET, ...PUBLIC_SET];
 // Created after the nine by their own script (paired-config.ts): read back when recorded, never required.
-export const OPTIONAL_NAMES: PresetName[] = ["paired"];
+// paired-v1 is the first paired config (75M to 450M $COMETAIL, configs/paired-v1.json): no longer offered for new
+// launches, kept so its coins' configs are still read back against their own file.
+export const OPTIONAL_NAMES: PresetName[] = ["paired", "paired-v1"];
 export const STREAM_SET: PresetName[] = ["stream-25", "stream-50", "stream-75"];
 /** Authority selection is independent of the manifest's configs/presets buckets. */
 export function configAuthorities(name: PresetName, admin: string, treasuryOwner: string): { feeClaimer: string; leftoverReceiver: string } {

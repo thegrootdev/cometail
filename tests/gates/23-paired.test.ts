@@ -79,9 +79,9 @@ describe("gate 23: coins paired with $COMETAIL", () => {
     expect(Number(c.migrationOption)).eq(1);
     expect(Number(c.migrationFeeOption)).eq(6);
     expect(Number(c.partnerPermanentLockedLiquidityPercentage) + Number(c.creatorPermanentLockedLiquidityPercentage)).eq(100);
-    // the raise in $COMETAIL (6 decimals): about 131M at 75M -> 450M market cap
+    // the raise in $COMETAIL (6 decimals): 180M at 200M -> 450M market cap
     const R = BigInt(c.migrationQuoteThreshold.toString());
-    expect(R > 120_000_000_000_000n && R < 140_000_000_000_000n, R.toString()).eq(true);
+    expect(R).eq(180_000_000_000_000n);
   });
 
   it("a launch with a first buy paid in SOL: $COMETAIL bought and the pool created with that buy, measured for one transaction", async () => {

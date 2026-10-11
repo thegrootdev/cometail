@@ -6,6 +6,8 @@
 //   cd tests && RPC=<keyed mainnet rpc> PAYER=<box payer pubkey> DRY_RUN=1 ./node_modules/.bin/ts-mocha --exit -p ./tsconfig.json -t 1200000 mainnet/paired-config.ts
 //   The real run adds PAYER_KEYPAIR=<its file> and drops DRY_RUN; it never runs without the owner's go.
 // State: configs/mainnet.json under presets.paired and quoteMints.cometail (public addresses only).
+// A new paired curve: move the recorded config to its own preset name and file first (paired-v1 holds the first
+// one, 75M to 450M), so presets.paired is empty and this script creates the config configs/paired.json now describes.
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction, sendAndConfirmTransaction } from "@solana/web3.js";
 import { NATIVE_MINT, TOKEN_PROGRAM_ID, unpackMint } from "@solana/spl-token";
 import { BorshAccountsCoder, Idl } from "@coral-xyz/anchor";
@@ -90,12 +92,18 @@ async function main() {
     return;
   }
   const sig = await sendAndConfirmTransaction(connection, tx, [payerKeypair!, config], { commitment: "confirmed" });
-  const info = (await connection.getAccountInfo(config.publicKey))!;
-  const problems = compareConfig(coder.decode(POOL_CONFIG, info.data), params, expect).filter((c) => !c.ok).map((c) => `${c.what} ${c.detail}`);
-  note("paired config", problems.length ? "FAIL" : "DONE", problems.length ? `${config.publicKey.toBase58()}: ${problems.join("; ")}` : `${config.publicKey.toBase58()} ${sig}; rent ${info.lamports / 1e9} SOL`);
+  // recorded before anything is read back: a read that fails after the send never loses the address (a rerun then
+  // checks the recorded config instead of creating another)
+  note("paired config", "SENT", `${config.publicKey.toBase58()} ${sig}`);
   state.presets.paired = config.publicKey.toBase58();
   state.quoteMints.cometail = mint.toBase58();
   fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  // a node behind the confirmation may not have the account yet: asked again for up to a minute
+  let info = null as Awaited<ReturnType<typeof connection.getAccountInfo>>;
+  for (let i = 0; i < 30 && !info; i++) { if (i) await new Promise((r) => setTimeout(r, 2000)); info = await connection.getAccountInfo(config.publicKey, "confirmed"); }
+  if (!info) throw new Error(`${config.publicKey.toBase58()} not readable yet; it is recorded, so a rerun checks it`);
+  const problems = compareConfig(coder.decode(POOL_CONFIG, info.data), params, expect).filter((c) => !c.ok).map((c) => `${c.what} ${c.detail}`);
+  note("paired config", problems.length ? "FAIL" : "DONE", problems.length ? `${config.publicKey.toBase58()}: ${problems.join("; ")}` : `${config.publicKey.toBase58()} ${sig}; rent ${info.lamports / 1e9} SOL`);
   if (problems.length) throw new Error("readback failed; stopping");
 }
 

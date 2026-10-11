@@ -185,7 +185,8 @@ Vault program deployed and protocol initialized on October 4, 2026; burn program
 | Config: Exponential (coins before 2026-10-07) | [`BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ`](https://solscan.io/account/BA5oWqu8REqRhrHtL1Y49inzH2rq6qijbt2qs38maYdQ) |
 | Config: Dollar-paired (USDC) | [`9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33`](https://solscan.io/account/9DJNdWVULyT2qdi98vCwQP4g6aXSSxgLYCwaqpQoro33) |
 | Config: Stock-paired (NVDAx) | [`9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf`](https://solscan.io/account/9L3jTPZUwMURUx4Y3dGNed7MuGKvwu3PAWy4rxx247Yf) |
-| Config: Paired with $COMETAIL | [`H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2`](https://solscan.io/account/H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2) |
+| Config: Paired with $COMETAIL | [`3VnA2ZAkYSz8eS8xePcJ1zLnV1TuYD5ewcLKWZxcWKkp`](https://solscan.io/account/3VnA2ZAkYSz8eS8xePcJ1zLnV1TuYD5ewcLKWZxcWKkp) |
+| Config: Paired with $COMETAIL, first curve (no longer offered) | [`H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2`](https://solscan.io/account/H1BjYQwNJqCLosqxFPLJFnh1YFVBwFHMB1ggGiMWabg2) |
 | Config: fee sale, take 25% | [`3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk`](https://solscan.io/account/3Q7S3itpN2rrmWWgiEmQgKmoopbCbMQZ6AZNv3dKjjTk) |
 | Config: fee sale, take 50% | [`6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L`](https://solscan.io/account/6THaSTuvF3o45DVLPW5DtvwcLjdtW6Nt3MFGR4kUdD3L) |
 | Config: fee sale, take 75% | [`D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na`](https://solscan.io/account/D1qr993WEU5aL7ZM4WXs9oKSBaUkzaxmHDTqTy4fr9na) |
@@ -207,7 +208,7 @@ Every preset is a Meteora DBC config owned by the protocol: its curve, fees and 
 | Exponential | SOL | 20 to 240 SOL, sixteen segments | 30.675 SOL | launch treasury |
 | Dollar-paired | USDC | 2,000 to 12,000 USDC | 3,478.78 USDC | launch treasury |
 | Stock-paired | NVDAx | 2 to 16 stock units, sixteen segments | 5.667 units | launch treasury |
-| Paired with $COMETAIL | $COMETAIL | 75M to 450M $COMETAIL (about 10 to 61 SOL on 10 Oct 2026), one segment | 130.45M $COMETAIL | launch treasury |
+| Paired with $COMETAIL | $COMETAIL | 200M to 450M $COMETAIL (about 20 to 45 SOL on 11 Oct 2026), one segment | 180M $COMETAIL | launch treasury |
 
 Common to the seven: a 1% trade fee with 60% to the creator on the curve, 0.01 SOL to launch, a fixed supply of 1,000,000,000, liquidity locked for good at completion.
 

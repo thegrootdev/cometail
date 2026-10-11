@@ -2,7 +2,8 @@
 
 The COMETAIL DBC configs (accounts owned by the Meteora DBC program): the four core configs below, five additional
 public presets and the "Paired with $COMETAIL" preset (`paired.json`, quote $COMETAIL; created by
-`tests/mainnet/paired-config.ts` with the launch treasury as fee claimer) in docs/presets.md, and the burn
+`tests/mainnet/paired-config.ts` with the launch treasury as fee claimer; `paired-v1.json` is its first curve,
+75M to 450M, kept for the coins launched on it) in docs/presets.md, and the burn
 program's four launch configs (docs/burn.md). Each fixes the raise target and curve.
 `tests/harness/dbc.ts` selects the SDK market-cap or liquidity-weight builder from
 `curve.mode`; `tests/devnet/setup.ts` creates the core devnet set. For mainnet, the owner
