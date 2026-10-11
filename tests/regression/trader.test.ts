@@ -84,4 +84,25 @@ describe("trades credited to the wallet that signed", () => {
     expect((await store.listTradesByPools([POOL.toBase58()], 10)).find((t) => t.signature === "missing")!.trader).eq(BOT_PROGRAM_ACCOUNT);
     await store.close();
   });
+  it("unreadable transactions never use up a later pass's budget: the readable ones behind them are reached", async () => {
+    const { Chain } = await import("../../worker/src/chain");
+    const { Indexer } = await import("../../worker/src/indexer");
+    const store = openStore("sqlite::memory:"); await store.init();
+    const row = (signature: string, idx: number): TradeRow => ({ signature, idx, slot: 1, blockTime: 1, pool: POOL.toBase58(), vault: "", trader: BOT_PROGRAM_ACCOUNT, traderKind: "authority", buy: true, amountIn: "1", amountOut: "1", venue: "curve", baseAmountRaw: "1", quoteAmountLamports: "1", executionPriceSol: null });
+    // as many unreadable transactions as a pass may read, in front of a readable one (the store lists them first)
+    await store.insertTrades([row("missing-a", 1), row("missing-b", 2), row(ROUTED, 3)]);
+    const listed = await store.listTradeSignaturesOf(BOT_PROGRAM_ACCOUNT);
+    const indexer: any = new Indexer(new Chain(fx.conn), store);
+    indexer.store = { ...store, listAuthorityTraders: () => store.listAuthorityTraders(), reattributeTrades: (...a: [string, string, string]) => store.reattributeTrades(...a), listTradeSignaturesOf: async () => ["missing-a", "missing-b", ...listed.filter((s) => s.startsWith("missing") === false)] };
+    expect(await indexer.repairRoutedTraders(2), "the budget goes on the two unreadable ones").eq(false);
+    expect(await indexer.repairRoutedTraders(2), "they are passed over; the readable one is repaired").eq(true);
+    const rows = await store.listTradesByPools([POOL.toBase58()], 10);
+    expect(rows.find((t) => t.signature === ROUTED)!.trader).eq(BOT_WALLET);
+    expect(rows.filter((t) => t.signature.startsWith("missing")).map((t) => t.trader)).deep.eq([BOT_PROGRAM_ACCOUNT, BOT_PROGRAM_ACCOUNT]);
+    expect(await indexer.repairRoutedTraders(2), "nothing left to read").eq(true);
+    // a new process reads them once more (the node may have them by then), within the same bound
+    const fresh: any = new Indexer(new Chain(fx.conn), store);
+    expect(await fresh.repairRoutedTraders(2)).eq(true);
+    await store.close();
+  });
 });

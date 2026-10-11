@@ -94,6 +94,9 @@ export class Indexer {
 
   /** Set once the stored trades of program-signed swaps carry their fee payer (repairRoutedTraders). */
   private routedRepaired = false;
+  /** Transactions the node did not return during the repair: left as they were, and passed over (not read again, not
+   *  counted against a pass's budget) for the rest of this process, so they never hold back the readable ones. */
+  private routedUnreadable = new Set<string>();
 
   /** One pass; returns how many events were newly indexed. */
   async pass(): Promise<number> {
@@ -109,19 +112,20 @@ export class Indexer {
 
   /** Trades stored before decodeTrades credited a program-signed swap to its fee payer still name the program's
    *  address as their authority: each such row is read again from its transaction and given the fee payer, marked
-   *  as such. True once every readable row is repaired (a transaction the node does not return is left as it was and
-   *  logged); an RPC or store failure leaves the rest for the next pass. At most `perPass` transactions are read per
-   *  pass, so the repair never holds a pass for long. */
+   *  as such. True once every readable row is repaired (a transaction the node does not return is left as it was,
+   *  logged, and passed over from then on); an RPC or store failure leaves the rest for the next pass. At most
+   *  `perPass` transactions are read per pass, so the repair never holds a pass for long. */
   private async repairRoutedTraders(perPass = 100): Promise<boolean> {
     try {
       const routed = (await this.store.listAuthorityTraders()).filter((t) => { try { return !PublicKey.isOnCurve(new PublicKey(t).toBytes()); } catch { return false; } });
       let fixed = 0, read = 0; const unreadable: string[] = [];
       for (const trader of routed) {
         for (const signature of await this.store.listTradeSignaturesOf(trader)) {
+          if (this.routedUnreadable.has(signature)) continue;
           if (read++ >= perPass) { log("trades of program-signed swaps credited to their fee payers; more next pass", { trades: fixed, unreadable }); return false; }
           const tx = await retry(`transaction ${signature}`, () => readTx(this.chain.connection, signature));
           const payer = tx?.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses ?? undefined }).get(0)?.toBase58();
-          if (!payer) { unreadable.push(signature); continue; }
+          if (!payer) { unreadable.push(signature); this.routedUnreadable.add(signature); continue; }
           fixed += await this.store.reattributeTrades(signature, trader, payer);
         }
       }
