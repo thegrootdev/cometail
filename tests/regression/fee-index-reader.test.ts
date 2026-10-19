@@ -10,6 +10,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as http from "http";
+import { EventEmitter } from "events";
 import { NATIVE_MINT } from "@solana/spl-token";
 import { FeeIndex } from "../../worker/src/feeindex";
 import { IndexReader, ReaderUnavailable } from "../../worker/src/feeindex-reader";
@@ -126,6 +127,38 @@ describe("fee index reader threads (spike 203)", () => {
     const s: any = await r.call("status");
     expect(s.pools).eq(POOLS);
     expect(logs).include("fee index reader stopped; starting it again");
+    await r.close();
+  });
+
+  it("a read past its limit retires its thread at once: new reads are refused unposted, waiting reads settle once, one replacement answers (review 203 S1)", async function () {
+    this.timeout(30_000);
+    class Fake extends EventEmitter { posted: any[] = []; terminated = 0; postMessage(m: unknown) { this.posted.push(m); } terminate() { this.terminated++; } }
+    const made: Fake[] = [];
+    const makeThread = () => { const f = new Fake(); made.push(f); setImmediate(() => f.emit("message", { ready: true })); return f as any; };
+    const logs: string[] = [];
+    const r = new IndexReader("unused", { ourConfigs: [], fullEveryHours: 24, deltaEveryMinutes: 5 }, "fake", { timeoutMs: 20, makeThread }, (msg) => logs.push(msg));
+    await r.start();
+    const settled: string[] = [];
+    const a = r.call("summarize").then(() => settled.push("a answered"), (e) => settled.push(`a ${e instanceof ReaderUnavailable} ${e.message}`));
+    const b = r.call("status").then(() => settled.push("b answered"), (e) => settled.push(`b ${e instanceof ReaderUnavailable} ${e.message}`));
+    await Promise.all([a, b]);
+    expect(settled).deep.eq(["a true fee index read summarize ran past 20 ms", "b true fee index reader fake retired after a read ran past 20 ms"]);
+    expect(made[0].posted.length).eq(2); expect(made[0].terminated).eq(1);
+    // the old thread has not exited yet: a new read is refused at once and never posted to it
+    let err: unknown = null;
+    try { await r.call("status"); } catch (e) { err = e; }
+    expect(err).instanceOf(ReaderUnavailable); expect(made[0].posted.length).eq(2);
+    // its late answer and its delayed exit change nothing: no second refusal, no second replacement
+    made[0].emit("message", { id: 2, ok: true, value: "late" });
+    made[0].emit("exit", 1);
+    await new Promise((res) => setTimeout(res, 1_300));
+    expect(made.length).eq(2); expect(made[0].terminated).eq(1);
+    expect(logs.filter((l) => l === "fee index reader stopped; starting it again").length).eq(1);
+    expect(settled.length).eq(2);
+    const p = r.call("status");
+    const m = made[1].posted[0];
+    made[1].emit("message", { id: m.id, ok: true, value: { pools: 5 } });
+    expect(await p).deep.eq({ pools: 5 });
     await r.close();
   });
 
