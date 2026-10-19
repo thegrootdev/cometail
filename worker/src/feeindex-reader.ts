@@ -29,10 +29,12 @@ export class IndexReader {
   private seq = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private closed = false;
-  private backoffMs = 1_000;
+  private backoffMs: number;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private file: string, private ctx: ReadContext, readonly name: string, private opts: { timeoutMs?: number; maxOldGenerationSizeMb?: number; makeThread?: MakeThread } = {}, private report: (msg: string, extra: Record<string, unknown>) => void = log) {}
+  constructor(private file: string, private ctx: ReadContext, readonly name: string, private opts: { timeoutMs?: number; maxOldGenerationSizeMb?: number; makeThread?: MakeThread; backoffMs?: number; maxBackoffMs?: number } = {}, private report: (msg: string, extra: Record<string, unknown>) => void = log) {
+    this.backoffMs = opts.backoffMs ?? 1_000;
+  }
 
   /** Starts a thread and resolves once its connection is open (rejects if it cannot open). */
   start(): Promise<void> {
@@ -44,7 +46,7 @@ export class IndexReader {
           if (settled) return;
           settled = true;
           if (this.closed) { void w.terminate(); reject(new ReaderUnavailable(`fee index reader ${this.name} closed`)); return; }
-          this.w = w; this.backoffMs = 1_000; resolve(); return;
+          this.w = w; this.backoffMs = this.opts.backoffMs ?? 1_000; resolve(); return;
         }
         if (this.w !== w) return; // a retired thread's late answer: its reads were already refused
         const p = this.pending.get(m.id);
@@ -69,18 +71,25 @@ export class IndexReader {
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new ReaderUnavailable(why)); }
     this.pending.clear();
     void w.terminate();
-    if (this.closed || this.restartTimer) return;
+    if (this.closed) return;
     this.report("fee index reader stopped; starting it again", { reader: this.name, why, inMs: this.backoffMs, ...extra });
+    this.scheduleStart();
+  }
+
+  /** The one way a replacement starts: after the current backoff (doubling to the cap), and again after every
+   *  start that fails, until one is in service or the reader is closed. Never two pending at once. */
+  private scheduleStart() {
+    if (this.closed || this.w || this.restartTimer) return;
+    const delay = this.backoffMs;
+    this.backoffMs = Math.min(this.opts.maxBackoffMs ?? 60_000, this.backoffMs * 2);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       if (this.closed) return;
       this.start().catch((e) => {
-        this.report("fee index reader could not start", { reader: this.name, error: String((e as Error).message ?? e) });
-        // the failed thread never went into service; try again later
-        if (!this.closed && !this.w && !this.restartTimer) this.restartTimer = setTimeout(() => { this.restartTimer = null; if (!this.closed) void this.start().catch(() => {}); }, this.backoffMs);
+        this.report("fee index reader could not start; trying again", { reader: this.name, inMs: this.backoffMs, error: String((e as Error).message ?? e) });
+        this.scheduleStart();
       });
-    }, this.backoffMs);
-    this.backoffMs = Math.min(60_000, this.backoffMs * 2);
+    }, delay);
   }
 
   /** One read in the thread. Refused at once while no thread is in service; a read past the time limit is refused

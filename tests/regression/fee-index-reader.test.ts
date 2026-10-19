@@ -162,6 +162,46 @@ describe("fee index reader threads (spike 203)", () => {
     await r.close();
   });
 
+  it("a replacement that fails to start is tried again with capped backoff until one starts; closing during the backoff stops it (review 203 S2)", async function () {
+    this.timeout(30_000);
+    class Fake extends EventEmitter { posted: any[] = []; terminated = 0; postMessage(m: unknown) { this.posted.push(m); } terminate() { this.terminated++; } }
+    const made: Fake[] = [];
+    let failNext = 0;
+    const makeThread = () => {
+      const f = new Fake(); made.push(f);
+      const fail = failNext > 0; if (fail) failNext--;
+      setImmediate(() => (fail ? f.emit("exit", 1) : f.emit("message", { ready: true })));
+      return f as any;
+    };
+    const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+    const logs: string[] = [];
+    const r = new IndexReader("unused", { ourConfigs: [], fullEveryHours: 24, deltaEveryMinutes: 5 }, "fake", { timeoutMs: 1_000, makeThread, backoffMs: 20, maxBackoffMs: 80 }, (msg) => logs.push(msg));
+    await r.start();
+    failNext = 3;
+    made[0].emit("exit", 1); // the live thread stops; its three replacements fail to start, the fourth starts
+    let refused = 0;
+    for (let i = 0; i < 100 && made.length < 5; i++) { try { await r.call("status"); } catch (e) { if (e instanceof ReaderUnavailable) refused++; } await sleep(10); }
+    await sleep(20);
+    expect(made.length).eq(5);
+    expect(refused).gt(0);
+    expect(logs.filter((l) => l === "fee index reader stopped; starting it again").length).eq(1);
+    expect(logs.filter((l) => l === "fee index reader could not start; trying again").length).eq(3);
+    const p = r.call("status");
+    made[4].emit("message", { id: made[4].posted[0].id, ok: true, value: "back" });
+    expect(await p).eq("back");
+    // the restored thread stops again and the first replacement fails: closing during the backoff ends it
+    failNext = 1;
+    made[4].emit("exit", 1);
+    await sleep(60);
+    const before = made.length;
+    await r.close();
+    await sleep(300);
+    expect(made.length).eq(before);
+    let err: unknown = null;
+    try { await r.call("status"); } catch (e) { err = e; }
+    expect(err).instanceOf(ReaderUnavailable);
+  });
+
   it("does not open a file that is not there", async () => {
     const r = new IndexReader(path.join(os.tmpdir(), "no-such-dir-203", "x.sqlite"), { ourConfigs: [], fullEveryHours: 24, deltaEveryMinutes: 5 }, "test", {}, () => {});
     let err: unknown = null;
