@@ -382,10 +382,17 @@ export async function tailsRollup(store: Store, fi: FeeIndex | null, q: { limit:
 async function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: number, send: (code: number, body: unknown, extra?: Record<string, string>) => void) {
   const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=30" };
   if (!fi) return send(503, { error: "fee index not enabled on this server" }, any);
-  const status = fi.status();
+  // every read below runs in the Fee Index's reader thread; one that is refused (thread down or too slow) is a 503
+  // for this route only, while the rest of the API keeps answering
+  try { return await feeRoutesRead(fi, cluster, url, limit, send, any); }
+  catch (e) { log("fee index read refused", { path: url.pathname, error: String((e as Error).message ?? e) }); return send(503, { error: "the fee index is busy; try again shortly" }, { ...any, "retry-after": "5" }); }
+}
+
+async function feeRoutesRead(fi: FeeIndex, cluster: string, url: URL, limit: number, send: (code: number, body: unknown, extra?: Record<string, string>) => void, any: Record<string, string>) {
+  const status = await fi.readStatus();
   const head = { schemaVersion: 1, cluster, generatedAtMs: Date.now(), coverage: status };
   if (url.pathname === "/api/fees/status") return send(200, head, any);
-  if (url.pathname === "/api/fees/launchpads") { const s = fi.db.meta("summary"); return send(200, { ...head, ...(s ? JSON.parse(s) : { launchpads: [], ourConfigs: [] }) }, any); }
+  if (url.pathname === "/api/fees/launchpads") { const s = await fi.readSummary(); return send(200, { ...head, ...(s ?? { launchpads: [], ourConfigs: [] }) }, any); }
   if (url.pathname === "/api/fees/coins") {
     const sort = url.searchParams.get("sort") ?? "day";
     if (!["day", "claimable", "lifetime", "avg"].includes(sort)) return send(400, { error: "sort must be day, claimable, lifetime or avg" }, any);
@@ -397,16 +404,16 @@ async function feeRoutes(fi: FeeIndex | null, cluster: string, url: URL, limit: 
     const search = (url.searchParams.get("q") ?? "").trim().slice(0, 64) || null;
     const n = Math.min(200, limit);
     const q = { sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset };
-    let coins = fi.coins(q);
+    let coins = await fi.readCoins(q);
     // names and logos the index has not read yet are read now (bounded); the page shows whatever arrived
     const lacking = coins.filter((c: { name: string | null; imageUrl: string | null }) => !c.name || !c.imageUrl).map((c: { mint: string }) => c.mint);
-    if (lacking.length) { await fi.ensureIdentity(lacking, 2_500); coins = fi.coins(q); }
+    if (lacking.length) { await fi.ensureIdentity(lacking, 2_500); coins = await fi.readCoins(q); }
     return send(200, { ...head, basis: ESTIMATE_BASIS, coins, offset, limit: n }, any);
   }
   const m = url.pathname.match(/^\/api\/fees\/coins\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
   if (m) {
-    let c = fi.coin(m[1]);
-    if (c && (!c.name || !c.imageUrl)) { await fi.ensureIdentity([c.mint], 5_000); c = fi.coin(m[1]); }
+    let c = await fi.readCoin(m[1]);
+    if (c && (!c.name || !c.imageUrl)) { await fi.ensureIdentity([c.mint], 5_000); c = await fi.readCoin(m[1]); }
     return c ? send(200, { ...head, basis: ESTIMATE_BASIS, coin: c }, any) : send(404, { ...head, error: "not in the fee index (not SOL-paired, or no creator fee yet)" }, any);
   }
   return send(404, { error: "not found" }, any);

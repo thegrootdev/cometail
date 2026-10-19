@@ -50,7 +50,9 @@ import type { Store, FeedRow } from "./store";
 import { parseMetaplexMetadata } from "./tokens";
 import { fetchMetadataJsonAny, ipfsPath, liveImage } from "./metadata";
 import { log } from "./tx";
-import { ESTIMATE_BASIS } from "./fee-basis";
+import * as R from "./feeindex-read";
+import { HOUR, creatorShare } from "./feeindex-read";
+import { IndexReader } from "./feeindex-reader";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 const METADATA_PROGRAM = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
@@ -106,14 +108,7 @@ export function decodeConfigSlice(config: string, d: Buffer): IndexConfig {
   return { config, quoteMint, feeClaimer: b58(d.subarray(at(CONFIG.feeClaimer), at(CONFIG.feeClaimer) + 32)), creatorPct: byte(CONFIG.creatorTradingFeePercentage), activationType: byte(CONFIG.activationType), partnerLocked: byte(CONFIG.partnerLocked), creatorLocked: byte(CONFIG.creatorLocked), threshold: d.readBigUInt64LE(at(CONFIG.migrationQuoteThreshold)), reasons };
 }
 
-export const stageOf = (progress: number) => (progress === 3 ? "graduated" : progress === 0 ? "bonding" : "migrating");
-export const creatorShare = (ttq: bigint, pct: number) => (ttq * BigInt(pct)) / 100n;
-/** What the counters prove about the creator's past claims. The lifetime estimate is an upper bound of the true
- *  total T (per-swap flooring; exact at a 0% or 100% share) and claimable = T - claimed, so claimed is at most
- *  estimate - claimable (exactly that at 100%), and it is zero for certain only when the two are equal. */
-export function creatorClaims(estimate: bigint, claimable: bigint, pct: number): { claimedAtMost: bigint; lifetimeExact: boolean; noneClaimed: boolean } {
-  return { claimedAtMost: estimate > claimable ? estimate - claimable : 0n, lifetimeExact: pct === 0 || pct === 100, noneClaimed: estimate === claimable };
-}
+export { stageOf, creatorShare, creatorClaims } from "./feeindex-read";
 /** Name, symbol and uri from a Token-2022 mint's own metadata extension (null for a classic mint or none). */
 export function token2022Metadata(mint: PublicKey, info: { owner: PublicKey; data: Buffer; lamports: number; executable: boolean }): { name: string; symbol: string; uri: string } | null {
   if (!info.owner.equals(TOKEN_2022_PROGRAM_ID)) return null;
@@ -128,11 +123,11 @@ export function token2022Metadata(mint: PublicKey, info: { owner: PublicKey; dat
 /** At most this many metadata files fetched at once, process-wide (the background fill and every request share it). */
 const IMAGE_FETCHES = 8;
 const IMAGE_QUEUE_MAX = 400;
-const IMAGE_RETRY_MS = 6 * 3_600_000;
 
-export interface FeeIndexOptions { fullEveryHours: number; deltaEveryMinutes: number; pageDelayMs: number; claimLookupsPerPass: number; namesPerPass: number; ourConfigs: string[]; imagesPerPass?: number; imagePassMs?: number }
+/** readerThreads: the slow reads (feeindex-read.ts) run in two reader threads, one for the API's answers and one
+ *  for the pass, never on the indexer's thread (which serves the API); off, they run in-process (tests). */
+export interface FeeIndexOptions { fullEveryHours: number; deltaEveryMinutes: number; pageDelayMs: number; claimLookupsPerPass: number; namesPerPass: number; ourConfigs: string[]; imagesPerPass?: number; imagePassMs?: number; readerThreads?: boolean }
 
-const HOUR = 3_600_000, DAY = 86_400_000;
 /** Below this shortfall, a claimable fee that grew less than its share of the counter is rounding, not a claim.
  *  Without trading in between (expected 0) there is no rounding, so any fall is a claim. */
 export const claimTolerance = (expected: bigint) => (expected === 0n ? 0n : 1_000n + expected / 200n);
@@ -210,13 +205,15 @@ export class FeeIndex {
   private imageWaiting: (() => void)[] = [];
   private imageInFlight = new Map<string, Promise<void>>();
   private namesBusy = 0;
+  private apiReader: IndexReader | null = null;
+  private passReader: IndexReader | null = null;
   /** Injected for tests: metadata JSON by uri. */
   fetchJson: (uri: string) => Promise<unknown> = fetchMetadataJsonAny;
   /** Injected for tests: a logo address a browser can load (IPFS through a live gateway), or null. */
   resolveImage: (image: string) => Promise<string | null> = (image) => liveImage(image);
   /** Injected for tests: the chain's current slot. */
   slotNow: () => Promise<number>;
-  constructor(private chain: Chain, private store: Store, file: string, private opts: FeeIndexOptions) {
+  constructor(private chain: Chain, private store: Store, private file: string, private opts: FeeIndexOptions) {
     this.db = new IndexDb(file);
     this.slotNow = () => this.conn.getSlot("confirmed");
   }
@@ -226,7 +223,20 @@ export class FeeIndex {
     await this.db.open();
     for (const r of this.db.db.prepare("select * from fi_configs").all()) this.configs.set(String(r.config), this.configRow(r));
     this.recoverLifetimes();
+    if (this.opts.readerThreads) {
+      this.apiReader = new IndexReader(this.file, this.readContext(), "api", { timeoutMs: 15_000 });
+      this.passReader = new IndexReader(this.file, this.readContext(), "pass", { timeoutMs: 60_000 });
+      try { await Promise.all([this.apiReader.start(), this.passReader.start()]); } catch (e) { await this.closeReaders(); throw e; }
+    }
   }
+  private readContext(): R.ReadContext { return { ourConfigs: this.opts.ourConfigs, fullEveryHours: this.opts.fullEveryHours, deltaEveryMinutes: this.opts.deltaEveryMinutes }; }
+  /** A slow read: in its reader thread when there is one (refused, never run here, if that thread is down or slow). */
+  private read<T>(lane: "api" | "pass", op: R.ReadName, ...args: unknown[]): Promise<T> {
+    const reader = lane === "api" ? this.apiReader : this.passReader;
+    if (reader) return reader.call<T>(op, ...args);
+    try { return Promise.resolve((R.READS[op] as (...a: unknown[]) => T)(this.db.db, this.readContext(), ...args)); } catch (e) { return Promise.reject(e); }
+  }
+  private async closeReaders() { await Promise.all([this.apiReader?.close(), this.passReader?.close()]); this.apiReader = this.passReader = null; }
   /** A build that clamped lifetime to claimable stored it that way (only rows where the two are equal can be
    *  affected): once, the raw estimate is recomputed from the counter for those rows. */
   private recoverLifetimes() {
@@ -240,7 +250,7 @@ export class FeeIndex {
       this.db.db.exec("commit");
     } catch (e) { this.db.db.exec("rollback"); throw e; }
   }
-  close() { this.db.close(); }
+  async close() { await this.closeReaders(); this.db.close(); }
   private configRow(r: any): IndexConfig { return { config: String(r.config), quoteMint: WSOL, feeClaimer: String(r.fee_claimer), creatorPct: Number(r.creator_pct), activationType: Number(r.activation_type), partnerLocked: Number(r.partner_locked), creatorLocked: Number(r.creator_locked), threshold: BigInt(String(r.threshold)), reasons: JSON.parse(String(r.reasons)) }; }
   /** For tests: a config the index knows. */
   rememberConfig(c: IndexConfig) { this.configs.set(c.config, c); this.saveConfig(c); }
@@ -362,10 +372,7 @@ export class FeeIndex {
   }
 
   /** When the index's history began, and whether a full day of it exists yet. */
-  history(nowMs = Date.now()) {
-    const first = Number(this.db.meta("first_full_at") ?? 0);
-    return { historySinceMs: first, fullDay: first > 0 && nowMs - first >= DAY };
-  }
+  history(nowMs = Date.now()) { return R.history(this.db.db, nowMs); }
 
   /** A full walk: every SOL config, then every pool. */
   async full(): Promise<void> {
@@ -421,7 +428,7 @@ export class FeeIndex {
       await this.resolveClaims();
       await this.fillNames();
       await this.fillImages(this.opts.imagesPerPass ?? 0, this.opts.imagePassMs ?? 60_000);
-      this.db.setMeta("summary", JSON.stringify(this.summarize()));
+      this.db.setMeta("summary", JSON.stringify(await this.read("pass", "summarize")));
     } finally { this.running = false; }
   }
 
@@ -478,9 +485,7 @@ export class FeeIndex {
 
   /** Names for the coins people look at first: ours, then the top earners without a name yet, Metaplex metadata read 100 at a time. */
   async fillNames(): Promise<void> {
-    const ours = this.opts.ourConfigs.map(() => "?").join(",") || "''";
-    const rows = this.db.db.prepare(`select p.mint from fi_pools p left join fi_names n on n.mint = p.mint where (n.mint is null or n.checked_at = 0) order by (p.config in (${ours})) desc, p.day_income desc, p.creator_life desc limit ?`).all(...this.opts.ourConfigs, this.opts.namesPerPass);
-    await this.readNames(rows.map((r: any) => String(r.mint)));
+    await this.readNames(await this.read<string[]>("pass", "namesDue", this.opts.namesPerPass));
   }
 
   /** Name, symbol and metadata uri from each mint's Metaplex account, 100 per read. */
@@ -506,16 +511,8 @@ export class FeeIndex {
     }
   }
 
-  /** Mints among these whose image is not known yet (or whose host was unreachable more than six hours ago). */
-  private imagesDue(mints: string[] | null, limit: number, nowMs = Date.now()): { mint: string; uri: string }[] {
-    const due = "n.uri is not null and (n.image_checked_at is null or (n.image_status = 'unreachable' and n.image_checked_at < ?))";
-    if (mints) {
-      if (!mints.length) return [];
-      return this.db.db.prepare(`select n.mint, n.uri from fi_names n where n.mint in (${mints.map(() => "?").join(",")}) and ${due} limit ?`).all(...mints, nowMs - IMAGE_RETRY_MS, limit).map((r: any) => ({ mint: String(r.mint), uri: String(r.uri) }));
-    }
-    const ours = this.opts.ourConfigs.map(() => "?").join(",") || "''";
-    return this.db.db.prepare(`select n.mint, n.uri from fi_names n join fi_pools p on p.mint = n.mint where ${due} order by (p.config in (${ours})) desc, p.day_income desc, p.creator_life desc limit ?`).all(nowMs - IMAGE_RETRY_MS, ...this.opts.ourConfigs, limit).map((r: any) => ({ mint: String(r.mint), uri: String(r.uri) }));
-  }
+  /** Mints among these (at most 200, by key: quick on this thread) whose image is not known yet. */
+  private imagesDue(mints: string[], limit: number): { mint: string; uri: string }[] { return R.imagesDue(this.db.db, this.readContext(), mints, limit); }
 
   /** One metadata file read under the process-wide cap; concurrent asks for one mint share the read. */
   private readImage(mint: string, uri: string): Promise<void> {
@@ -546,7 +543,7 @@ export class FeeIndex {
   /** The background image fill: the most-earning coins first, bounded in count and time. */
   async fillImages(limit: number, budgetMs: number): Promise<void> {
     if (limit <= 0) return;
-    const due = this.imagesDue(null, limit);
+    const due = await this.read<{ mint: string; uri: string }[]>("pass", "imagesDue", null, limit);
     await Promise.race([Promise.allSettled(due.map((d) => this.readImage(d.mint, d.uri))), new Promise((r) => setTimeout(r, budgetMs).unref?.())]);
   }
 
@@ -567,95 +564,21 @@ export class FeeIndex {
     clearTimeout(timer);
   }
 
-  // ---- reads for the API ----
-  status() {
-    const n = this.db.db.prepare("select count(*) as pools, count(distinct config) as configs from fi_pools").get();
-    const claims = this.db.db.prepare("select status, count(*) as n from fi_claims group by status").all();
-    const h = this.history();
-    return { mode: "all-dbc", pools: Number(n.pools), configs: Number(n.configs), fullSlot: Number(this.db.meta("full_slot") ?? 0), deltaSlot: Number(this.db.meta("delta_slot") ?? 0), fullAtMs: Number(this.db.meta("full_at") ?? 0), deltaAtMs: Number(this.db.meta("delta_at") ?? 0), fullEveryHours: this.opts.fullEveryHours, deltaEveryMinutes: this.opts.deltaEveryMinutes,
-      historySinceMs: h.historySinceMs, fullDayOfHistory: h.fullDay, claims: Object.fromEntries(claims.map((r: any) => [String(r.status), Number(r.n)])) };
-  }
-
-  private coinView(r: any, nowMs: number) {
-    const cfg = this.configs.get(String(r.config));
-    const reasons: string[] = [...(cfg?.reasons ?? [])];
-    const progress = Number(r.progress);
-    if (progress === 1 || progress === 2) reasons.push("waiting for migration");
-    const launchedAtMs = Number(r.launched_at);
-    const life = BigInt(r.creator_life);
-    const claims = creatorClaims(life, BigInt(r.creator_fee), cfg?.creatorPct ?? -1);
-    const span = BigInt(Math.max(DAY, nowMs - launchedAtMs));
-    return {
-      mint: String(r.mint), pool: String(r.pool), config: String(r.config), creator: String(r.creator), launchpad: cfg?.feeClaimer ?? null, ours: this.opts.ourConfigs.includes(String(r.config)),
-      name: r.name ?? null, symbol: r.symbol ?? null, imageUrl: r.image ?? null, stage: stageOf(progress), creatorFeePct: cfg?.creatorPct ?? null,
-      creatorLifetimeEstimateLamports: life.toString(), lifetimeExact: claims.lifetimeExact, creatorClaimedAtMostLamports: claims.claimedAtMost.toString(), noneClaimed: claims.noneClaimed, creatorLast24hEstimateLamports: String(r.day_income), last24hWindowHours: Number(r.day_hours),
-      creatorAvgPerDayEstimateLamports: ((life * BigInt(DAY)) / span).toString(),
-      claimableLamports: String(r.creator_fee), launchedAtMs, configAllowsTail: reasons.length === 0, reasons, changedAtMs: Number(r.changed_at),
-    };
-  }
-
-  coins(q: { sort: "day" | "claimable" | "lifetime" | "avg"; stage: string; eligible: boolean; creator: string | null; search: string | null; limit: number; offset: number }, nowMs = Date.now()) {
-    const where: string[] = [], args: any[] = [];
-    if (q.stage === "bonding") where.push("p.progress = 0"); else if (q.stage === "graduated") where.push("p.progress = 3");
-    if (q.eligible) { where.push("c.reasons = '[]'"); where.push("p.progress in (0, 3)"); }
-    if (q.creator) { where.push("p.creator = ?"); args.push(q.creator); }
-    if (q.search) { where.push("(p.mint = ? or p.pool = ? or lower(n.name) like ? or lower(n.symbol) like ?)"); const s = q.search.toLowerCase(); args.push(q.search, q.search, `%${s}%`, `%${s}%`); }
-    // every order is global (before LIMIT/OFFSET) with the pool as the stable tiebreaker
-    const order = q.sort === "claimable" ? "p.creator_fee desc, p.pool"
-      : q.sort === "lifetime" ? "p.creator_life desc, p.pool"
-      : q.sort === "avg" ? `(p.creator_life * ${DAY}.0) / max(${DAY}, ? - p.launched_at) desc, p.pool`
-      : "p.day_income desc, p.creator_life desc, p.pool";
-    const orderArgs = q.sort === "avg" ? [nowMs] : [];
-    const sql = `select p.*, n.name, n.symbol, n.image from fi_pools p join fi_configs c on c.config = p.config left join fi_names n on n.mint = p.mint ${where.length ? "where " + where.join(" and ") : ""} order by ${order} limit ? offset ?`;
-    return this.db.db.prepare(sql).all(...args, ...orderArgs, q.limit, q.offset).map((r: any) => this.coinView(r, nowMs));
-  }
-
-  coin(mint: string) {
-    const r = this.db.db.prepare("select p.*, n.name, n.symbol, n.image from fi_pools p left join fi_names n on n.mint = p.mint where p.mint = ?").get(mint);
-    return r ? this.coinView(r, Date.now()) : null;
-  }
-
-  /** Names and pools by mint or pool, for other readers (the Tails rollup). */
+  // ---- reads for the API: the API calls the read* forms (in the API's reader thread); the plain forms run
+  // on the caller's thread, for tests and scripts ----
+  readStatus() { return this.read<ReturnType<typeof R.status>>("api", "status"); }
+  readCoins(q: R.CoinQuery, nowMs = Date.now()) { return this.read<ReturnType<typeof R.coins>>("api", "coins", q, nowMs); }
+  readCoin(mint: string, nowMs = Date.now()) { return this.read<ReturnType<typeof R.coin>>("api", "coin", mint, nowMs); }
+  readSummary() { return this.read<any>("api", "summary"); }
+  status() { return R.status(this.db.db, this.readContext()); }
+  coins(q: R.CoinQuery, nowMs = Date.now()) { return R.coins(this.db.db, this.readContext(), q, nowMs); }
+  coin(mint: string, nowMs = Date.now()) { return R.coin(this.db.db, this.readContext(), mint, nowMs); }
+  /** Names and pools by mint or pool, for other readers (the Tails rollup); a lookup by key, quick on any thread. */
   lookup(key: string): { mint: string; pool: string; name: string | null; symbol: string | null; imageUrl: string | null } | null {
     const r = this.db.db.prepare("select p.mint, p.pool, n.name, n.symbol, n.image from fi_pools p left join fi_names n on n.mint = p.mint where p.pool = ? or p.mint = ? limit 1").get(key, key);
     return r ? { mint: String(r.mint), pool: String(r.pool), name: r.name ?? null, symbol: r.symbol ?? null, imageUrl: r.image ?? null } : null;
   }
-
-  /** Launchpads (fee claimers) ranked by what their creators earn, ours flagged; precomputed after each walk.
-   *  Until the index holds a full day of history the 24-hour figures are not comparable, so the ranking is by lifetime. */
-  summarize(nowMs = Date.now()) {
-    const { fullDay, historySinceMs } = this.history(nowMs);
-    const rankedBy = fullDay ? "last24h" : "lifetime";
-    const orderBy = fullDay ? "day desc, lifetime desc, launchpad" : "lifetime desc, launchpad";
-    const agg = `select c.fee_claimer as launchpad, count(*) as coins, sum(case when p.progress = 3 then 1 else 0 end) as graduated, sum(case when c.reasons = '[]' and p.progress in (0, 3) then 1 else 0 end) as eligible,
-      sum(p.creator_life) as lifetime, sum(p.day_income) as day, sum(p.creator_fee) as claimable, count(distinct p.config) as configs, max(c.creator_pct) as creator_pct_max, min(c.creator_pct) as creator_pct_min,
-      sum(case when p.day_hours < 24 then 1 else 0 end) as partial
-      from fi_pools p join fi_configs c on c.config = p.config`;
-    const rows: any[] = this.db.db.prepare(`${agg} group by c.fee_claimer order by ${orderBy} limit 200`).all();
-    rows.forEach((r, i) => { r.rank = i + 1; });
-    const ourClaimers = new Set(this.opts.ourConfigs.map((k) => this.configs.get(k)?.feeClaimer).filter(Boolean) as string[]);
-    const listed = new Set(rows.map((r) => String(r.launchpad)));
-    const missing = [...ourClaimers].filter((k) => !listed.has(k));
-    if (missing.length) {
-      const extra: any[] = this.db.db.prepare(`${agg} where c.fee_claimer in (${missing.map(() => "?").join(",")}) group by c.fee_claimer`).all(...missing);
-      const rank = this.db.db.prepare(fullDay
-        ? `select count(*) + 1 as rank from (select c.fee_claimer as k, sum(p.day_income) as d, sum(p.creator_life) as l from fi_pools p join fi_configs c on c.config = p.config group by c.fee_claimer) where d > ? or (d = ? and (l > ? or (l = ? and k < ?)))`
-        : `select count(*) + 1 as rank from (select c.fee_claimer as k, sum(p.creator_life) as l from fi_pools p join fi_configs c on c.config = p.config group by c.fee_claimer) where l > ? or (l = ? and k < ?)`);
-      for (const e of extra) { e.rank = Number((fullDay ? rank.get(e.day, e.day, e.lifetime, e.lifetime, e.launchpad) : rank.get(e.lifetime, e.lifetime, e.launchpad)).rank); rows.push(e); }
-    }
-    const ourConfigs = this.opts.ourConfigs.map((k) => {
-      const c = this.configs.get(k);
-      if (!c) return { config: k, covered: false, note: "not SOL-quoted: outside the Fee Index and outside what the vault accepts" };
-      const s = this.db.db.prepare("select count(*) as coins, sum(creator_life) as lifetime, sum(day_income) as day, sum(creator_fee) as claimable, sum(case when progress = 3 then 1 else 0 end) as graduated from fi_pools where config = ?").get(k);
-      return { config: k, covered: true, launchpad: c.feeClaimer, creatorFeePct: c.creatorPct, tailEligibleConfig: c.reasons.length === 0, coins: Number(s?.coins ?? 0), graduated: Number(s?.graduated ?? 0), creatorLifetimeEstimateLamports: String(s?.lifetime ?? 0), creatorLast24hEstimateLamports: String(s?.day ?? 0), claimableLamports: String(s?.claimable ?? 0) };
-    });
-    return {
-      generatedAtMs: nowMs, rankedBy, historySinceMs, basis: ESTIMATE_BASIS,
-      launchpads: rows.map((r: any) => ({ rank: Number(r.rank), launchpad: String(r.launchpad), ours: ourClaimers.has(String(r.launchpad)), coins: Number(r.coins), configs: Number(r.configs), graduated: Number(r.graduated), tailEligibleCoins: Number(r.eligible),
-        creatorLifetimeEstimateLamports: String(r.lifetime ?? 0), creatorLast24hEstimateLamports: String(r.day ?? 0), coinsWithShorterWindow: Number(r.partial ?? 0), claimableLamports: String(r.claimable ?? 0), creatorFeePct: Number(r.creator_pct_min) === Number(r.creator_pct_max) ? Number(r.creator_pct_max) : null })),
-      ourConfigs,
-    };
-  }
+  summarize(nowMs = Date.now()) { return R.summarize(this.db.db, this.readContext(), nowMs); }
 }
 
 /** DBC events emitted through the event-authority self-CPI in a transaction, with their ordinal. */

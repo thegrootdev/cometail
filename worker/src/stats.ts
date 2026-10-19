@@ -227,7 +227,9 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
     let tails: any[] | null = null;
     try { tails = opts.tailView ? ((await opts.tailView(null)).tails as any[]) : []; } catch { tails = null; }
 
-    const fi = opts.feeIndex ? opts.feeIndex.status() as any : null;
+    // in the Fee Index's reader thread; unavailable there (thread down or slow) reads as no Fee Index figures
+    let fi: any = null;
+    try { fi = opts.feeIndex ? await opts.feeIndex.readStatus() : null; } catch { fi = null; }
 
     const vaultRows = vaults.map((v) => {
       const a = v.data?.accounting ?? {};

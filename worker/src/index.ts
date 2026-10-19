@@ -21,6 +21,7 @@ import { LookupTables } from "./lut";
 import { log } from "./tx";
 import { chainWalkDeps, refreshSources, reserveAddress, tailIndexPass, tailView } from "./tails";
 import { statsViewer } from "./stats";
+import { monitorEventLoopDelay } from "perf_hooks";
 
 export const WORKER_VERSION = "0.1.0";
 
@@ -38,10 +39,15 @@ async function main() {
     if (!cfg.databaseUrl) throw new Error("DATABASE_URL is required in indexer mode");
     const store = openStore(cfg.databaseUrl);
     await store.init();
+    // this thread also serves the API: a minute in which something held it for over a second is logged with how
+    // long, so a stall shows up in the journal instead of only in a visitor's browser
+    const loop = monitorEventLoopDelay({ resolution: 20 });
+    loop.enable();
+    setInterval(() => { const maxMs = loop.max / 1e6; if (maxMs > 1_000) log("event loop held", { maxMs: Math.round(maxMs), p99Ms: Math.round(loop.percentile(99) / 1e6) }); loop.reset(); }, 60_000).unref();
     const indexer = new Indexer(chain, store);
     // the Fee Index runs on its own clock beside the indexer: a full walk can take minutes and must never hold up the trade index
     let feeIndex: FeeIndex | null = null;
-    if (cfg.feeIndexDb) feeIndex = await openFeeIndexSoft(chain, store, cfg.feeIndexDb, { fullEveryHours: cfg.feeIndexFullHours, deltaEveryMinutes: cfg.feeIndexDeltaMinutes, pageDelayMs: 50, claimLookupsPerPass: 20, namesPerPass: 3000, imagesPerPass: 400, imagePassMs: 60_000, ourConfigs: cfg.skyConfigs.map((k) => k.toBase58()) });
+    if (cfg.feeIndexDb) feeIndex = await openFeeIndexSoft(chain, store, cfg.feeIndexDb, { fullEveryHours: cfg.feeIndexFullHours, deltaEveryMinutes: cfg.feeIndexDeltaMinutes, pageDelayMs: 50, claimLookupsPerPass: 20, namesPerPass: 3000, imagesPerPass: 400, imagePassMs: 60_000, ourConfigs: cfg.skyConfigs.map((k) => k.toBase58()), readerThreads: true });
     if (feeIndex) {
       void (async () => {
         while (!stopping) {
@@ -108,7 +114,7 @@ async function main() {
       await sleep(cfg.pollMs);
     }
     api?.close();
-    feeIndex?.close();
+    await feeIndex?.close();
     await store.close();
     return;
   }
