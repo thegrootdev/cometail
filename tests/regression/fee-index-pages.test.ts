@@ -202,6 +202,62 @@ describe("fee index pages through the page indexes (spike 205)", () => {
     } finally { R.PAGE_TUNING.searchCandidatesMax = was; ro.close(); await fi.close(); }
   });
 
+  it("a read inside a transaction that rolls back keeps none of what it saw (review 205 K1)", async function () {
+    this.timeout(120_000);
+    const fi = new FeeIndex({ connection: {} } as any, store, file, opts(false));
+    await fi.open();
+    const db = fi.db.db;
+    const tailsOnly = q({ sort: "lifetime", eligible: true, search: "MK1", limit: 5 });
+    try {
+      R.coins(db, ctx, tailsOnly, now); // knowledge kept, outside any transaction
+      const putPool = (cfg: string) => db.prepare("insert into fi_pools (pool, config, creator, mint, progress, ttq, creator_fee, partner_fee, quote_reserve, activation, launched_at, finish_ts, creator_life, day_income, day_hours, changed_at, updated_at) values ('PK1', ?, 'C1', 'MK1', 0, 2000, 10, 0, 0, 0, ?, 0, 1000, 0, 24, ?, ?)").run(cfg, now, now, now);
+      db.exec("begin");
+      fi.rememberConfig(config("CFGK1", true)); putPool("CFGK1");
+      expect(R.coins(db, ctx, tailsOnly, now).map((c: any) => c.pool)).deep.eq(["PK1"]); // seen inside the transaction
+      expect(R.warmPages(db)).gt(0);
+      db.exec("rollback");
+      // the same rows again, now not allowing Tails: the same rowids and counts as the rolled-back ones
+      db.prepare("insert into fi_configs (config, fee_claimer, creator_pct, activation_type, partner_locked, creator_locked, threshold, reasons) values ('CFGK1', 'L1', 50, 1, 0, 100, '1000000000000', ?)").run(JSON.stringify(["creator liquidity vests"]));
+      putPool("CFGK1");
+      expect(released(db, ctx, tailsOnly, now)).deep.eq([]);
+      expect(R.coins(db, ctx, tailsOnly, now)).deep.eq([]);
+      const ro = readOnly();
+      try { expect(R.coins(ro, ctx, tailsOnly, now)).deep.eq([]); } finally { ro.close(); }
+      compare(db, db, grid().filter((_, i) => i % 11 === 0));
+    } finally { await fi.close(); }
+  });
+
+  it("the site stops paging a search at the depth the API reports, and pages on without a search (review 205 U1)", async function () {
+    // the page's own load/loadMore, run against an API stand-in that answers as the API does (400 -> null past the depth)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ts = require("typescript"); const vm = require("vm");
+    const src = fs.readFileSync(path.join(__dirname, "../../web/src/app/fees/page.tsx"), "utf8");
+    const chunk = src.slice(src.indexOf("  const load = async"), src.indexOf('  useEffect(() => { setState("loading")'));
+    expect(chunk).match(/setSearchEnd/);
+    const run = async (search: string) => {
+      const asked: number[] = [];
+      const ui: any = { rows: [], more: false, searchEnd: false, state: "loading", paging: false };
+      const box: any = {
+        PAGE: 50, sort: "day", stage: "all", eligible: false, mine: false, me: null, search, generation: { current: 0 },
+        get rows() { return ui.rows; }, get paging() { return ui.paging; },
+        setRows: (f: any) => { ui.rows = typeof f === "function" ? f(ui.rows) : f; }, setMore: (v: boolean) => { ui.more = v; }, setSearchEnd: (v: boolean) => { ui.searchEnd = v; },
+        setState: (v: string) => { ui.state = v; }, setCoverage: () => undefined, setPaging: (v: boolean) => { ui.paging = v; },
+        api: { feeCoins: async (x: any) => { asked.push(x.offset); if (x.q && x.offset > R.SEARCH_OFFSET_MAX) return null; return { coverage: {}, coins: Array.from({ length: x.limit }, (_, i) => ({ pool: `P${x.offset + i}` })), offset: x.offset, limit: x.limit, searchOffsetMax: x.q ? R.SEARCH_OFFSET_MAX : null }; } },
+      };
+      vm.createContext(box);
+      vm.runInContext(ts.transpileModule(chunk + "\nthis.load = load; this.loadMore = loadMore;", { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.Preserve } }).outputText, box);
+      await box.load(0);
+      for (let i = 0; i < 40 && ui.more; i++) await box.loadMore();
+      return { ui, asked };
+    };
+    const searched = await run("coin");
+    expect(searched.ui.more).eq(false); expect(searched.ui.searchEnd).eq(true); expect(searched.ui.state).eq("ok");
+    expect(Math.max(...searched.asked)).eq(R.SEARCH_OFFSET_MAX); // never asked past the depth
+    expect(searched.ui.rows.length).eq(R.SEARCH_OFFSET_MAX + 50);
+    const browsing = await run("");
+    expect(browsing.ui.more).eq(true); expect(browsing.ui.searchEnd).eq(false); expect(browsing.asked.length).eq(41); // still paging past it
+  });
+
   it("the API refuses a search page past the search depth, and refreshes only names and logos after reading them", async function () {
     this.timeout(120_000);
     const fi = new FeeIndex({ connection: {} } as any, store, file, opts(true));
@@ -220,7 +276,10 @@ describe("fee index pages through the page indexes (spike 205)", () => {
       const deep = await get(`/api/fees/coins?q=coin&offset=${R.SEARCH_OFFSET_MAX + 1}`);
       expect(deep.code).eq(400); expect(deep.body.error).match(/at most 1000 results deep/);
       expect((await get(`/api/fees/coins?q=coin&offset=${R.SEARCH_OFFSET_MAX}`)).code).eq(200);
-      expect((await get("/api/fees/coins?offset=30000")).code).eq(200); // only a search is capped
+      const plain = await get("/api/fees/coins?offset=30000");
+      expect(plain.code).eq(200); expect(plain.body.searchOffsetMax).eq(null); // only a search is capped
+      expect((await get("/api/fees/coins?q=coin")).body.searchOffsetMax).eq(R.SEARCH_OFFSET_MAX);
+      expect(deep.body.searchOffsetMax).eq(R.SEARCH_OFFSET_MAX);
       const nowMs = Date.now();
       const before = await fi.readCoins(q({ sort: "lifetime", offset: 3 }), nowMs);
       const lacking = before.filter((c: any) => !c.name || !c.imageUrl).map((c: any) => c.mint);

@@ -88,12 +88,16 @@ export const SEARCH_OFFSET_MAX = 1_000;
 /** What the pages know of the configs, kept per connection and brought up to date at every page read:
  *  the configs that allow Tails (whose reasons are none) and the configs that pools name but that have no row
  *  (none on mainnet; such pools never appear on a page, as the inner join with the configs always left them out).
- *  Both tables only ever grow (fi_configs rows are inserted once and never changed; a pool's config never
- *  changes; neither table is deleted from), so the rows past the highest rowid seen are all that is new. If
- *  either table's highest rowid ever goes down, or its row count disagrees with what was read, it is read again
- *  from the start. */
+ *  The index's writer only adds to both tables (fi_configs rows are inserted once and never changed; a pool's
+ *  config never changes; neither table is deleted from), so the rows past the highest rowid seen are all that is
+ *  new. A limited consistency check, not a proof against other edits: if either table's highest rowid goes down, or
+ *  its row count is not what was read, everything is read again from the start. Only committed rows are kept: a
+ *  read inside a transaction its caller opened (which may still roll back) reads its knowledge from the start
+ *  and keeps none of it (in-process reads only; the reader threads' connections never hold one). */
 interface PageKnowledge { configRowid: bigint; configRows: bigint; poolRowid: bigint; poolRows: bigint; allowTails: Set<string>; missing: Set<string> }
 const KNOWN = new WeakMap<object, PageKnowledge>();
+/** The knowledge the current statement's fi_page_keep reads (the kept one, or one read for a caller's transaction). */
+const CURRENT = new WeakMap<object, PageKnowledge>();
 const FUNCTIONS = new WeakSet<object>();
 const one = (db: any, sql: string, ...a: unknown[]) => db.prepare(sql).get(...a);
 /** Below every rowid: the first read takes every row. */
@@ -104,15 +108,15 @@ const FIRST = -(2n ** 63n);
 const keeps = (k: PageKnowledge, config: string, needAllow: boolean) => !k.missing.has(config) && (!needAllow || k.allowTails.has(config));
 
 /** Brings the page knowledge of this connection up to date (inside the caller's read snapshot) and returns it. */
-export function pageKnowledge(db: any, fromStart = false): PageKnowledge {
-  let k = fromStart ? undefined : KNOWN.get(db);
+export function pageKnowledge(db: any, fromStart = false, keep = true): PageKnowledge {
+  let k = fromStart || !keep ? undefined : KNOWN.get(db);
   const c = one(db, "select max(rowid) as top from fi_configs"), p = one(db, "select max(rowid) as top from fi_pools");
   const cTop = BigInt(c.top ?? FIRST), pTop = BigInt(p.top ?? FIRST);
   if (!k || cTop < k.configRowid || pTop < k.poolRowid) {
-    if (!FUNCTIONS.has(db)) db.function("fi_page_keep", (config: string, needAllow: number | bigint) => (keeps(KNOWN.get(db)!, config, Number(needAllow) === 1) ? 1 : 0));
+    if (!FUNCTIONS.has(db)) db.function("fi_page_keep", (config: string, needAllow: number | bigint) => (keeps(CURRENT.get(db)!, config, Number(needAllow) === 1) ? 1 : 0));
     FUNCTIONS.add(db);
     k = { configRowid: FIRST, configRows: 0n, poolRowid: FIRST, poolRows: 0n, allowTails: new Set(), missing: new Set() };
-    KNOWN.set(db, k);
+    if (keep) KNOWN.set(db, k); else KNOWN.delete(db); // knowledge kept from before is not trusted after a caller's transaction either
   }
   if (cTop > k.configRowid) {
     for (const r of db.prepare("select config from fi_configs where rowid > ? and reasons = '[]'").iterate(k.configRowid)) k.allowTails.add(String(r.config));
@@ -127,16 +131,17 @@ export function pageKnowledge(db: any, fromStart = false): PageKnowledge {
   }
   // the growth-only assumption, checked: a row count that is not what was read means a delete happened
   if (BigInt(one(db, "select count(*) as n from fi_configs").n) !== k.configRows || BigInt(one(db, "select count(*) as n from fi_pools").n) !== k.poolRows) {
-    if (fromStart) throw new Error("fee index page knowledge does not match the tables read from the start");
+    if (fromStart || !keep) throw new Error("fee index page knowledge does not match the tables read from the start");
     return pageKnowledge(db, true);
   }
+  CURRENT.set(db, k);
   return k;
 }
 
 /** The pools of a page, in order (step one). The same filters and order as the single query before, over the
  *  page indexes; the config join of that query becomes fi_page_keep on the config the index carries. */
-function pagePools(db: any, q: CoinQuery, nowMs: number): string[] {
-  const k = pageKnowledge(db);
+function pagePools(db: any, q: CoinQuery, nowMs: number, keep: boolean): string[] {
+  const k = pageKnowledge(db, false, keep);
   const where: string[] = [], args: unknown[] = [];
   if (q.stage === "bonding") where.push("p.progress = 0"); else if (q.stage === "graduated") where.push("p.progress = 3");
   if (q.eligible) { where.push("p.progress in (0, 3)"); where.push("fi_page_keep(p.config, 1)"); }
@@ -197,9 +202,10 @@ function avgBroadSearch(db: any, where: string[], q: CoinQuery, nowMs: number, p
 
 export function coins(db: any, ctx: ReadContext, q: CoinQuery, nowMs = Date.now()) {
   // one read snapshot for both steps (a savepoint opens a read transaction, or nests inside the caller's)
+  const callers = db.isTransaction === true;
   db.exec("savepoint fi_page");
   try {
-    const pools = pagePools(db, q, nowMs);
+    const pools = pagePools(db, q, nowMs, !callers);
     if (!pools.length) return [];
     const rows = db.prepare(`select p.*, n.name, n.symbol, n.image, ${CONFIG_COLS} from fi_pools p join fi_configs c on c.config = p.config left join fi_names n on n.mint = p.mint where p.pool in (select value from json_each(?))`).all(JSON.stringify(pools));
     const byPool = new Map(rows.map((r: any) => [String(r.pool), r]));
@@ -214,7 +220,7 @@ export function identities(db: any, _ctx: ReadContext, mints: string[]): { mint:
 }
 
 /** Brings the page knowledge up to date ahead of the first page (the reader thread runs it once it starts). */
-export function warmPages(db: any): number { db.exec("savepoint fi_page"); try { return pageKnowledge(db).allowTails.size; } finally { db.exec("release fi_page"); } }
+export function warmPages(db: any): number { const callers = db.isTransaction === true; db.exec("savepoint fi_page"); try { return pageKnowledge(db, false, !callers).allowTails.size; } finally { db.exec("release fi_page"); } }
 
 export function coin(db: any, ctx: ReadContext, mint: string, nowMs = Date.now()) {
   const r = db.prepare(`select p.*, n.name, n.symbol, n.image, ${CONFIG_COLS} from fi_pools p left join fi_names n on n.mint = p.mint left join fi_configs c on c.config = p.config where p.mint = ?`).get(mint);

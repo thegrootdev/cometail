@@ -63,6 +63,8 @@ function Coins() {
   const [coverage, setCoverage] = useState<FeeCoverage | null>(null);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [more, setMore] = useState(false);
+  // a search pages only so deep (the server says how deep): past it, the list ends with a hint to narrow the search
+  const [searchEnd, setSearchEnd] = useState(false);
   const [paging, setPaging] = useState(false);
   const me = publicKey?.toBase58() ?? null;
   // every response is tied to the query that asked for it: a newer query makes older answers void
@@ -73,10 +75,11 @@ function Coins() {
     const r = await api.feeCoins({ sort, stage, eligible, creator: mine ? me : null, q: search || undefined, offset, limit: PAGE });
     if (g !== generation.current) return;
     if (!r) { if (offset === 0) setState("error"); return; }
-    setCoverage(r.coverage); setRows((old) => (offset ? [...old, ...r.coins] : r.coins)); setMore(r.coins.length === PAGE); setState("ok");
+    const full = r.coins.length === PAGE, beyond = typeof r.searchOffsetMax === "number" && offset + r.coins.length > r.searchOffsetMax;
+    setCoverage(r.coverage); setRows((old) => (offset ? [...old, ...r.coins] : r.coins)); setMore(full && !beyond); setSearchEnd(full && beyond); setState("ok");
   };
   const loadMore = async () => { if (paging) return; setPaging(true); try { await load(rows.length); } finally { setPaging(false); } };
-  useEffect(() => { setState("loading"); setRows([]); void load(0); }, [sort, stage, eligible, mine, me, search]);
+  useEffect(() => { setState("loading"); setRows([]); setSearchEnd(false); void load(0); }, [sort, stage, eligible, mine, me, search]);
   return (
     <>
       <Coverage c={coverage} />
@@ -131,6 +134,7 @@ function Coins() {
             })}
           </ul>
           {more && <button type="button" className="button button-secondary mt-4" disabled={paging} onClick={() => void loadMore()}>{copy.more}</button>}
+          {searchEnd && <p className="micro mt-4">{copy.searchEnd}</p>}
           <details className="glass-details">
             <summary>{copy.details}</summary>
             <p>{copy.estimateNote} {copy.tailNote}</p>

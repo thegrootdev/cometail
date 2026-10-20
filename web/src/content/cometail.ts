@@ -101,6 +101,7 @@ export const feeIndex = {
   shorter: (n: number) => `${n} with less than 24 h of history`, notCovered: "Not SOL-quoted: outside the Fee Index, and the vault takes SOL-quoted fees only.",
   sell: "Sell these fees", empty: "No coins match.", emptyBody: "Clear the filters, or come back after the next update.",
   unavailable: "The Fee Index is not available on this server yet.", more: "Show more",
+  searchEnd: "That’s as far as a search goes. Type more of the name to narrow it.",
   searching: "Searching…", searchingBody: "Searching every coin can take up to half a minute.",
   searchFailed: "The search could not be completed.", searchFailedBody: "Try again in a moment.",
   lpTitle: "Launchpads ranked by what their creators earn",

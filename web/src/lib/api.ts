@@ -172,7 +172,7 @@ export const api = {
   feeCoins: (q: { sort: string; stage: string; eligible: boolean; creator?: string | null; q?: string; offset?: number; limit?: number }) => {
     const p = new URLSearchParams({ sort: q.sort, stage: q.stage, limit: String(q.limit ?? 50), offset: String(q.offset ?? 0) });
     if (q.eligible) p.set("eligible", "1"); if (q.creator) p.set("creator", q.creator); if (q.q) p.set("q", q.q);
-    return get<{ coverage: FeeCoverage; coins: FeeCoin[]; offset: number; limit: number }>(`/api/fees/coins?${p}`, q.q ? FEE_SEARCH_TIMEOUT_MS : undefined);
+    return get<{ coverage: FeeCoverage; coins: FeeCoin[]; offset: number; limit: number; searchOffsetMax?: number | null }>(`/api/fees/coins?${p}`, q.q ? FEE_SEARCH_TIMEOUT_MS : undefined);
   },
   /** One coin from the Fee Index; "missing" only for a real 404, "error" for an outage or a network failure. */
   feeCoin: async (mint: string): Promise<{ state: "ok"; coin: FeeCoin } | { state: "missing" } | { state: "error" }> => {
