@@ -538,8 +538,10 @@ export class FeeIndex {
     const line = asked ? this.imageAsked : this.imageWaiting;
     if (line.length >= IMAGE_QUEUE_MAX) return Promise.resolve();
     const job = (async () => {
+      // a full cap: wait in line; a finishing fetch hands its slot over (the count stays), so no newcomer can take
+      // it between the wake-up and the resume
       if (this.imageActive >= IMAGE_FETCHES) { await new Promise<void>((r) => { line.push(r); this.imageQueued.set(mint, r); }); this.imageQueued.delete(mint); }
-      this.imageActive++;
+      else this.imageActive++;
       let image: string | null = null, status: "ok" | "missing" | "unreachable";
       try {
         if (!/^https?:\/\//.test(uri) && !uri.startsWith("ipfs://")) status = "missing";
@@ -551,7 +553,7 @@ export class FeeIndex {
           status = image ? "ok" : named && ipfsPath(named) ? "unreachable" : "missing";
         }
       } catch { status = "unreachable"; }
-      finally { this.imageActive--; (this.imageAsked.shift() ?? this.imageWaiting.shift())?.(); }
+      finally { const next = this.imageAsked.shift() ?? this.imageWaiting.shift(); if (next) next(); else this.imageActive--; }
       this.db.db.prepare("update fi_names set image = ?, image_status = ?, image_checked_at = ? where mint = ? and uri = ?").run(image, status, Date.now(), mint, uri);
     })().finally(() => this.imageInFlight.delete(mint));
     this.imageInFlight.set(mint, job);
@@ -568,7 +570,7 @@ export class FeeIndex {
   /** Names and images for the coins an answer is about to show: whatever arrives within the budget is in
    *  the answer, the rest keeps loading into the index for the next one. Names come from at most two
    *  RPC reads in flight process-wide; images go through the shared fetch cap, ahead of the background fill.
-   *  Without waitImages the answer waits for the names only and its logos load for the next one. */
+   *  Without waitImages the answer waits for the names only and its logos load for a later request. */
   async ensureIdentity(mints: string[], budgetMs: number, waitImages = true): Promise<void> {
     const unique = [...new Set(mints)].slice(0, 200);
     if (!unique.length) return;

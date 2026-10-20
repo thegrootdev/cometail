@@ -408,7 +408,8 @@ async function feeRoutesRead(fi: FeeIndex, cluster: string, url: URL, limit: num
     const q = { sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset };
     let coins = await fi.readCoins(q);
     // names the index has not read yet are read now (bounded) and the page shows whatever arrived; missing logos
-    // are asked for without waiting (most are IPFS files behind slow gateways) and show from the next answer on
+    // are asked for without waiting (most are IPFS files behind slow gateways) and show in a later answer about
+    // those coins (a "Show more" appends rows and does not refresh the ones already shown)
     const lacking = coins.filter((c: { name: string | null; imageUrl: string | null }) => !c.name || !c.imageUrl).map((c: { mint: string }) => c.mint);
     const unnamed = coins.filter((c: { name: string | null }) => !c.name).map((c: { mint: string }) => c.mint);
     if (lacking.length) await fi.ensureIdentity(lacking, 2_500, false);

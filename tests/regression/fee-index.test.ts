@@ -432,6 +432,26 @@ describe("fee index: names and logos for the rows an answer shows", () => {
     expect(started.length).eq(11);
     expect(fi.coin(mints[11])!.imageUrl).eq("https://img.example/x.png");
   });
+  it("a finishing fetch hands its slot to the next in line: a newcomer arriving meanwhile never makes a ninth fetch", async () => {
+    const { fi } = await index({}, 70);
+    let active = 0, most = 0;
+    const gates = new Map<string, () => void>();
+    fi.fetchJson = (u: string) => { active++; most = Math.max(most, active); return new Promise((r) => gates.set(u, () => { active--; r({}); })); };
+    const read = (i: number, asked: boolean) => (fi as any).readImage(`M${i}`, `https://meta.example/${i}.json`, asked) as Promise<void>;
+    const jobs = Array.from({ length: 9 }, (_v, i) => read(i, false)); // eight run, one waits
+    await new Promise((r) => setTimeout(r, 10));
+    expect([active, gates.size]).deep.eq([8, 8]);
+    gates.get("https://meta.example/0.json")!(); gates.delete("https://meta.example/0.json");
+    // newcomers at every microtask between the finished fetch and its waiter's resume
+    for (let i = 100; i < 140; i++) { jobs.push(read(i, true)); await Promise.resolve(); }
+    await new Promise((r) => setTimeout(r, 10));
+    expect(most).eq(8);
+    expect(active).eq(8);
+    for (let k = 0; k < 10; k++) { [...gates.values()].forEach((g) => g()); gates.clear(); await new Promise((r) => setTimeout(r, 10)); }
+    await Promise.all(jobs);
+    expect(most).eq(8); expect(active).eq(0);
+    expect((fi as any).imageActive).eq(0);
+  });
   it("the background fill reads the most-earning coins first, and a changed uri clears the old logo", async () => {
     const { fi } = await withMetadata(async (uri) => ({ image: `https://img.example/${uri.slice(-6, -5)}.png` }));
     (fi as any).opts.namesPerPass = 10;
