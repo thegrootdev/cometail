@@ -32,7 +32,7 @@ export class IndexReader {
   private backoffMs: number;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private file: string, private ctx: ReadContext, readonly name: string, private opts: { timeoutMs?: number; maxOldGenerationSizeMb?: number; makeThread?: MakeThread; backoffMs?: number; maxBackoffMs?: number } = {}, private report: (msg: string, extra: Record<string, unknown>) => void = log) {
+  constructor(private file: string, private ctx: ReadContext, readonly name: string, private opts: { timeoutMs?: number; maxOldGenerationSizeMb?: number; makeThread?: MakeThread; backoffMs?: number; maxBackoffMs?: number; warm?: ReadName } = {}, private report: (msg: string, extra: Record<string, unknown>) => void = log) {
     this.backoffMs = opts.backoffMs ?? 1_000;
   }
 
@@ -46,7 +46,10 @@ export class IndexReader {
           if (settled) return;
           settled = true;
           if (this.closed) { void w.terminate(); reject(new ReaderUnavailable(`fee index reader ${this.name} closed`)); return; }
-          this.w = w; this.backoffMs = this.opts.backoffMs ?? 1_000; resolve(); return;
+          this.w = w; this.backoffMs = this.opts.backoffMs ?? 1_000;
+          // a read that readies what later reads use (the page knowledge): queued ahead of them, its answer unused
+          if (this.opts.warm) this.call(this.opts.warm).catch(() => undefined);
+          resolve(); return;
         }
         if (this.w !== w) return; // a retired thread's late answer: its reads were already refused
         const p = this.pending.get(m.id);

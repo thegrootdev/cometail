@@ -43,7 +43,7 @@ export function status(db: any, ctx: ReadContext) {
 /** The config's columns a coin row carries (c_claimer, c_pct, c_reasons; null when the config is not in the index). */
 const CONFIG_COLS = "c.fee_claimer as c_claimer, c.creator_pct as c_pct, c.reasons as c_reasons";
 
-function coinView(r: any, ctx: ReadContext, nowMs: number) {
+export function coinView(r: any, ctx: ReadContext, nowMs: number) {
   const known = r.c_claimer !== null && r.c_claimer !== undefined;
   const creatorPct = known ? Number(r.c_pct) : null;
   const reasons: string[] = known ? [...JSON.parse(String(r.c_reasons))] : [];
@@ -62,21 +62,159 @@ function coinView(r: any, ctx: ReadContext, nowMs: number) {
   };
 }
 
-export function coins(db: any, ctx: ReadContext, q: CoinQuery, nowMs = Date.now()) {
-  const where: string[] = [], args: any[] = [];
+// ---- the coin pages ----
+// A page is chosen in two steps inside one read snapshot: the pools of the page, in order, from one of the page
+// indexes below (the sort keys, pool, progress and config in the index itself, so skipping deep rows reads no table
+// row and no config), then those pools' full rows. Every filter and order is the same expression the page always
+// used, so the coins and their order are the same; only the way to them changed (on the mainnet index of
+// 2026-10-20: deep pages, the per-day order and rare searches took 1 to 8 s each, the slowest now about 0.5 s).
+
+/** The page indexes (created when the index opens; the code before them ignores them, and dropping them is safe). */
+export const PAGE_INDEXES: Record<"day" | "claimable" | "lifetime", { name: string; columns: string }> = {
+  day: { name: "fi_pools_day_order", columns: "day_income desc, creator_life desc, pool, progress, config" },
+  claimable: { name: "fi_pools_claimable_order", columns: "creator_fee desc, pool, progress, config" },
+  // also carries launched_at and mint: the per-day order (and a broad search's matches) read all they need from this
+  // index, without the table
+  lifetime: { name: "fi_pools_life_order", columns: "creator_life desc, pool, launched_at, progress, config, mint" },
+};
+/** A search matching at most this many names is answered from its matches; a broader one walks the page index
+ *  (an object so tests can lower it, to reach the broad paths on a small index). */
+export const PAGE_TUNING = { searchCandidatesMax: 20_000 };
+/** How deep a search pages (the API refuses a search page that starts further): a broad search in the per-day order
+ *  reads ranked pools until offset + limit of them match, so its cost grows with the depth (on mainnet about 0.55 s
+ *  at 1,000 with 200 a page, 0.85 s at 2,000). */
+export const SEARCH_OFFSET_MAX = 1_000;
+
+/** What the pages know of the configs, kept per connection and brought up to date at every page read:
+ *  the configs that allow Tails (whose reasons are none) and the configs that pools name but that have no row
+ *  (none on mainnet; such pools never appear on a page, as the inner join with the configs always left them out).
+ *  Both tables only ever grow (fi_configs rows are inserted once and never changed; a pool's config never
+ *  changes; neither table is deleted from), so the rows past the highest rowid seen are all that is new. If
+ *  either table's highest rowid ever goes down, or its row count disagrees with what was read, it is read again
+ *  from the start. */
+interface PageKnowledge { configRowid: bigint; configRows: bigint; poolRowid: bigint; poolRows: bigint; allowTails: Set<string>; missing: Set<string> }
+const KNOWN = new WeakMap<object, PageKnowledge>();
+const FUNCTIONS = new WeakSet<object>();
+const one = (db: any, sql: string, ...a: unknown[]) => db.prepare(sql).get(...a);
+/** Below every rowid: the first read takes every row. */
+const FIRST = -(2n ** 63n);
+
+/** Whether a pool on this config can be on a page: its config has a row (the released inner join) and, for the
+ *  Tails filter, allows Tails (the released `c.reasons = '[]'`). */
+const keeps = (k: PageKnowledge, config: string, needAllow: boolean) => !k.missing.has(config) && (!needAllow || k.allowTails.has(config));
+
+/** Brings the page knowledge of this connection up to date (inside the caller's read snapshot) and returns it. */
+export function pageKnowledge(db: any, fromStart = false): PageKnowledge {
+  let k = fromStart ? undefined : KNOWN.get(db);
+  const c = one(db, "select max(rowid) as top from fi_configs"), p = one(db, "select max(rowid) as top from fi_pools");
+  const cTop = BigInt(c.top ?? FIRST), pTop = BigInt(p.top ?? FIRST);
+  if (!k || cTop < k.configRowid || pTop < k.poolRowid) {
+    if (!FUNCTIONS.has(db)) db.function("fi_page_keep", (config: string, needAllow: number | bigint) => (keeps(KNOWN.get(db)!, config, Number(needAllow) === 1) ? 1 : 0));
+    FUNCTIONS.add(db);
+    k = { configRowid: FIRST, configRows: 0n, poolRowid: FIRST, poolRows: 0n, allowTails: new Set(), missing: new Set() };
+    KNOWN.set(db, k);
+  }
+  if (cTop > k.configRowid) {
+    for (const r of db.prepare("select config from fi_configs where rowid > ? and reasons = '[]'").iterate(k.configRowid)) k.allowTails.add(String(r.config));
+    k.configRows += BigInt(one(db, "select count(*) as n from fi_configs where rowid > ?", k.configRowid).n);
+    k.configRowid = cTop;
+    for (const m of [...k.missing]) if (one(db, "select 1 as y from fi_configs where config = ?", m)) k.missing.delete(m);
+  }
+  if (pTop > k.poolRowid) {
+    for (const r of db.prepare("select distinct p.config from fi_pools p where p.rowid > ? and not exists (select 1 from fi_configs c where c.config = p.config)").iterate(k.poolRowid)) k.missing.add(String(r.config));
+    k.poolRows += BigInt(one(db, "select count(*) as n from fi_pools where rowid > ?", k.poolRowid).n);
+    k.poolRowid = pTop;
+  }
+  // the growth-only assumption, checked: a row count that is not what was read means a delete happened
+  if (BigInt(one(db, "select count(*) as n from fi_configs").n) !== k.configRows || BigInt(one(db, "select count(*) as n from fi_pools").n) !== k.poolRows) {
+    if (fromStart) throw new Error("fee index page knowledge does not match the tables read from the start");
+    return pageKnowledge(db, true);
+  }
+  return k;
+}
+
+/** The pools of a page, in order (step one). The same filters and order as the single query before, over the
+ *  page indexes; the config join of that query becomes fi_page_keep on the config the index carries. */
+function pagePools(db: any, q: CoinQuery, nowMs: number): string[] {
+  const k = pageKnowledge(db);
+  const where: string[] = [], args: unknown[] = [];
   if (q.stage === "bonding") where.push("p.progress = 0"); else if (q.stage === "graduated") where.push("p.progress = 3");
-  if (q.eligible) { where.push("c.reasons = '[]'"); where.push("p.progress in (0, 3)"); }
+  if (q.eligible) { where.push("p.progress in (0, 3)"); where.push("fi_page_keep(p.config, 1)"); }
+  else if (k.missing.size) where.push("fi_page_keep(p.config, 0)");
   if (q.creator) { where.push("p.creator = ?"); args.push(q.creator); }
-  if (q.search) { where.push("(p.mint = ? or p.pool = ? or lower(n.name) like ? or lower(n.symbol) like ?)"); const s = q.search.toLowerCase(); args.push(q.search, q.search, `%${s}%`, `%${s}%`); }
-  // every order is global (before LIMIT/OFFSET) with the pool as the stable tiebreaker
+  let from = "fi_pools p", index = q.sort === "avg" ? PAGE_INDEXES.lifetime.name : PAGE_INDEXES[q.sort].name;
+  if (q.search) {
+    const s = q.search.toLowerCase();
+    from += " left join fi_names n on n.mint = p.mint";
+    where.push("(p.mint = ? or p.pool = ? or lower(n.name) like ? or lower(n.symbol) like ?)"); args.push(q.search, q.search, `%${s}%`, `%${s}%`);
+    // a narrow search: only its matches are ordered (the names that match, and a mint or pool given whole)
+    const named = q.creator ? null : db.prepare("select mint from fi_names where lower(name) like ? or lower(symbol) like ? limit ?").all(`%${s}%`, `%${s}%`, PAGE_TUNING.searchCandidatesMax + 1).map((r: any) => String(r.mint));
+    if (named && named.length <= PAGE_TUNING.searchCandidatesMax) {
+      where.push("p.pool in (select pool from fi_pools where mint in (select value from json_each(?)) union select pool from fi_pools where mint = ? union select pool from fi_pools where pool = ?)");
+      args.push(JSON.stringify(named), q.search, q.search);
+      index = "";
+    }
+  }
+  if (q.creator) index = "fi_pools_creator";
   const order = q.sort === "claimable" ? "p.creator_fee desc, p.pool"
     : q.sort === "lifetime" ? "p.creator_life desc, p.pool"
     : q.sort === "avg" ? `(p.creator_life * ${DAY}.0) / max(${DAY}, ? - p.launched_at) desc, p.pool`
     : "p.day_income desc, p.creator_life desc, p.pool";
   const orderArgs = q.sort === "avg" ? [nowMs] : [];
-  const sql = `select p.*, n.name, n.symbol, n.image, ${CONFIG_COLS} from fi_pools p join fi_configs c on c.config = p.config left join fi_names n on n.mint = p.mint ${where.length ? "where " + where.join(" and ") : ""} order by ${order} limit ? offset ?`;
-  return db.prepare(sql).all(...args, ...orderArgs, q.limit, q.offset).map((r: any) => coinView(r, ctx, nowMs));
+  if (q.sort === "avg" && q.search && index === PAGE_INDEXES.lifetime.name && !q.creator) { const page = avgBroadSearch(db, where, q, nowMs, k.poolRows); if (page) return page; }
+  const sql = `select p.pool from ${from.replace("fi_pools p", index ? `fi_pools p indexed by ${index}` : "fi_pools p")} ${where.length ? "where " + where.join(" and ") : ""} order by ${order} limit ? offset ?`;
+  return db.prepare(sql).all(...args, ...orderArgs, q.limit, q.offset).map((r: any) => String(r.pool));
 }
+
+/** The per-day order of a broad search, without reading the name of every pool. Pools are read best first by the
+ *  order alone (the same expression and pool tiebreak, in SQL, with the page's stage and Tails terms, from the
+ *  lifetime index, which carries the mint, without the table), `take` at a time, and the search is checked on them
+ *  2,000 at a time (the same LIKE terms, in SQL, on their names; the exact mint or pool compared as SQL compares
+ *  text). Once offset + limit pools pass, no later pool can be on the page; if fewer than `take` pools were read,
+ *  every pool was seen. `take` starts at twice what the share of names the search matches needs (from a sample; a
+ *  broad search matches more than PAGE_TUNING.searchCandidatesMax names); if the pools taken hold too few matches it grows
+ *  once, then the page is ordered the released way (null). */
+function avgBroadSearch(db: any, where: string[], q: CoinQuery, nowMs: number, pools: bigint): string[] | null {
+  const keep = q.offset + q.limit, search = q.search as string, s = `%${search.toLowerCase()}%`;
+  const plain = where.filter((w) => !w.includes("n.")); // stage and Tails terms: no arguments
+  const rank = db.prepare(`select p.pool, p.mint from fi_pools p indexed by ${PAGE_INDEXES.lifetime.name} ${plain.length ? "where " + plain.join(" and ") : ""} order by (p.creator_life * ${DAY}.0) / max(${DAY}, ? - p.launched_at) desc, p.pool limit ?`);
+  const named = db.prepare("select mint from fi_names where mint in (select value from json_each(?)) and (lower(name) like ? or lower(symbol) like ?)");
+  // the share of names the search matches, from a sample (it sizes `take` only; the page never depends on it)
+  const sample = Number(db.prepare("select coalesce(sum(lower(name) like ? or lower(symbol) like ?), 0) as m, count(*) as n from (select name, symbol from fi_names limit 20000)").get(s, s).m) / 20_000;
+  const share = Math.max(sample, PAGE_TUNING.searchCandidatesMax / Math.max(1, Number(pools)));
+  for (let take = Math.ceil((keep * 2) / share) + 1_000, tries = 0; tries < 2; take *= 4, tries++) {
+    const ranked: { pool: string; mint: string }[] = rank.all(nowMs, take).map((r: any) => ({ pool: String(r.pool), mint: String(r.mint) }));
+    const page: string[] = [];
+    for (let i = 0; i < ranked.length && page.length < keep; i += 2_000) {
+      const batch = ranked.slice(i, i + 2_000);
+      const hit = new Set(named.all(JSON.stringify(batch.map((r) => r.mint)), s, s).map((r: any) => String(r.mint)));
+      for (const r of batch) if ((hit.has(r.mint) || r.mint === search || r.pool === search) && page.length < keep) page.push(r.pool);
+    }
+    if (page.length === keep || ranked.length < take) return page.slice(q.offset);
+  }
+  return null;
+}
+
+export function coins(db: any, ctx: ReadContext, q: CoinQuery, nowMs = Date.now()) {
+  // one read snapshot for both steps (a savepoint opens a read transaction, or nests inside the caller's)
+  db.exec("savepoint fi_page");
+  try {
+    const pools = pagePools(db, q, nowMs);
+    if (!pools.length) return [];
+    const rows = db.prepare(`select p.*, n.name, n.symbol, n.image, ${CONFIG_COLS} from fi_pools p join fi_configs c on c.config = p.config left join fi_names n on n.mint = p.mint where p.pool in (select value from json_each(?))`).all(JSON.stringify(pools));
+    const byPool = new Map(rows.map((r: any) => [String(r.pool), r]));
+    return pools.map((pool) => coinView(byPool.get(pool), ctx, nowMs));
+  } finally { db.exec("release fi_page"); }
+}
+
+/** The names and logos of these mints as stored now (a page refreshes them after reading the missing ones). */
+export function identities(db: any, _ctx: ReadContext, mints: string[]): { mint: string; name: string | null; symbol: string | null; imageUrl: string | null }[] {
+  if (!mints.length) return [];
+  return db.prepare("select mint, name, symbol, image from fi_names where mint in (select value from json_each(?))").all(JSON.stringify(mints)).map((r: any) => ({ mint: String(r.mint), name: r.name ?? null, symbol: r.symbol ?? null, imageUrl: r.image ?? null }));
+}
+
+/** Brings the page knowledge up to date ahead of the first page (the reader thread runs it once it starts). */
+export function warmPages(db: any): number { db.exec("savepoint fi_page"); try { return pageKnowledge(db).allowTails.size; } finally { db.exec("release fi_page"); } }
 
 export function coin(db: any, ctx: ReadContext, mint: string, nowMs = Date.now()) {
   const r = db.prepare(`select p.*, n.name, n.symbol, n.image, ${CONFIG_COLS} from fi_pools p left join fi_names n on n.mint = p.mint left join fi_configs c on c.config = p.config where p.mint = ?`).get(mint);
@@ -141,5 +279,5 @@ export function summarize(db: any, ctx: ReadContext, nowMs = Date.now()) {
 export function summary(db: any): unknown | null { const s = meta(db, "summary"); return s ? JSON.parse(s) : null; }
 
 /** Every read the reader thread answers, by name. */
-export const READS = { status, coins, coin, namesDue, imagesDue, summarize, summary } as const;
+export const READS = { status, coins, coin, identities, warmPages, namesDue, imagesDue, summarize, summary } as const;
 export type ReadName = keyof typeof READS;

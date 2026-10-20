@@ -16,6 +16,7 @@
 // client address is taken from X-Forwarded-For only when the connection comes from loopback.
 import type { FeeIndex } from "./feeindex";
 import { ESTIMATE_BASIS } from "./fee-basis";
+import { SEARCH_OFFSET_MAX } from "./feeindex-read";
 import http from "http";
 import net from "net";
 import { Store, TokenRow, TradeRow } from "./store";
@@ -402,12 +403,18 @@ async function feeRoutesRead(fi: FeeIndex, cluster: string, url: URL, limit: num
     if (creator && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(creator)) return send(400, { error: "bad creator" }, any);
     const offset = Math.max(0, Math.min(100_000, Number(url.searchParams.get("offset") ?? 0) || 0));
     const search = (url.searchParams.get("q") ?? "").trim().slice(0, 64) || null;
+    if (search && offset > SEARCH_OFFSET_MAX) return send(400, { error: `a search pages at most ${SEARCH_OFFSET_MAX} results deep; narrow the search` }, any);
     const n = Math.min(200, limit);
     const q = { sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset };
     let coins = await fi.readCoins(q);
     // names and logos the index has not read yet are read now (bounded); the page shows whatever arrived
     const lacking = coins.filter((c: { name: string | null; imageUrl: string | null }) => !c.name || !c.imageUrl).map((c: { mint: string }) => c.mint);
-    if (lacking.length) { await fi.ensureIdentity(lacking, 2_500); coins = await fi.readCoins(q); }
+    // (only the names and logos are read again: the page itself is not chosen twice)
+    if (lacking.length) {
+      await fi.ensureIdentity(lacking, 2_500);
+      const fresh = new Map((await fi.readIdentities(lacking)).map((x) => [x.mint, x]));
+      coins = coins.map((c) => { const x = fresh.get(c.mint); return x ? { ...c, name: x.name, symbol: x.symbol, imageUrl: x.imageUrl } : c; });
+    }
     return send(200, { ...head, basis: ESTIMATE_BASIS, coins, offset, limit: n }, any);
   }
   const m = url.pathname.match(/^\/api\/fees\/coins\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);

@@ -162,6 +162,14 @@ class IndexDb {
       create table if not exists fi_claims (id integer primary key autoincrement, pool text not null, role text not null, from_slot integer not null, to_slot integer, shortfall integer not null, attempts integer not null default 0, status text not null default 'pending', note text);
       create index if not exists fi_claims_status on fi_claims (status);
     `);
+    // the page indexes (feeindex-read.ts), built on the first open after they were added (about 2 s on mainnet)
+    const have = new Set(this.db.prepare("select name from sqlite_master where type = 'index' and tbl_name = 'fi_pools'").all().map((r: any) => String(r.name)));
+    for (const i of Object.values(R.PAGE_INDEXES)) {
+      if (have.has(i.name)) continue;
+      const t = Date.now();
+      this.db.exec(`create index ${i.name} on fi_pools (${i.columns})`);
+      log("fee index page index built", { index: i.name, ms: Date.now() - t });
+    }
     // added after the first release: the metadata uri and its image, filled in the background and on demand
     const cols = new Set(this.db.prepare("pragma table_info(fi_names)").all().map((r: any) => String(r.name)));
     if (!cols.has("uri")) {
@@ -224,7 +232,7 @@ export class FeeIndex {
     for (const r of this.db.db.prepare("select * from fi_configs").all()) this.configs.set(String(r.config), this.configRow(r));
     this.recoverLifetimes();
     if (this.opts.readerThreads) {
-      this.apiReader = new IndexReader(this.file, this.readContext(), "api", { timeoutMs: 15_000 });
+      this.apiReader = new IndexReader(this.file, this.readContext(), "api", { timeoutMs: 15_000, warm: "warmPages" });
       this.passReader = new IndexReader(this.file, this.readContext(), "pass", { timeoutMs: 60_000 });
       try { await Promise.all([this.apiReader.start(), this.passReader.start()]); } catch (e) { await this.closeReaders(); throw e; }
     }
@@ -569,6 +577,7 @@ export class FeeIndex {
   readStatus() { return this.read<ReturnType<typeof R.status>>("api", "status"); }
   readCoins(q: R.CoinQuery, nowMs = Date.now()) { return this.read<ReturnType<typeof R.coins>>("api", "coins", q, nowMs); }
   readCoin(mint: string, nowMs = Date.now()) { return this.read<ReturnType<typeof R.coin>>("api", "coin", mint, nowMs); }
+  readIdentities(mints: string[]) { return this.read<ReturnType<typeof R.identities>>("api", "identities", mints); }
   readSummary() { return this.read<any>("api", "summary"); }
   status() { return R.status(this.db.db, this.readContext()); }
   coins(q: R.CoinQuery, nowMs = Date.now()) { return R.coins(this.db.db, this.readContext(), q, nowMs); }
