@@ -258,15 +258,15 @@ describe("fee index pages through the page indexes (spike 205)", () => {
     expect(browsing.ui.more).eq(true); expect(browsing.ui.searchEnd).eq(false); expect(browsing.asked.length).eq(41); // still paging past it
   });
 
-  it("the API refuses a search page past the search depth, and refreshes only names and logos after reading them", async function () {
+  it("the API refuses a search page past the search depth, and reads names (not logos) again after asking for them", async function () {
     this.timeout(120_000);
     const fi = new FeeIndex({ connection: {} } as any, store, file, opts(true));
     await fi.open();
     // the identity read stands in for the network: it names every mint it is asked for
-    const asked: string[][] = [];
-    (fi as any).ensureIdentity = async (mints: string[]) => {
-      asked.push(mints);
-      const set = fi.db.db.prepare("insert into fi_names (mint, name, symbol, uri, image, checked_at) values (?, ?, ?, null, ?, 1) on conflict (mint) do update set name = excluded.name, symbol = excluded.symbol, image = excluded.image");
+    const asked: string[][] = [], waits: boolean[] = [];
+    (fi as any).ensureIdentity = async (mints: string[], _budgetMs: number, waitImages = true) => {
+      asked.push(mints); waits.push(waitImages);
+      const set = fi.db.db.prepare("insert into fi_names (mint, name, symbol, uri, image, checked_at) values (?, ?, ?, null, ?, 1) on conflict (mint) do update set name = coalesce(fi_names.name, excluded.name), symbol = coalesce(fi_names.symbol, excluded.symbol), image = excluded.image"); // a known name stays
       for (const m of mints) set.run(m, `Named ${m}`, `N${m}`, `https://img.example/${m}.png`);
     };
     const port = 18_000 + Math.floor(Math.random() * 2_000);
@@ -281,17 +281,27 @@ describe("fee index pages through the page indexes (spike 205)", () => {
       expect((await get("/api/fees/coins?q=coin")).body.searchOffsetMax).eq(R.SEARCH_OFFSET_MAX);
       expect(deep.body.searchOffsetMax).eq(R.SEARCH_OFFSET_MAX);
       const nowMs = Date.now();
+      // three coins of the page have a name but no logo yet
+      const unread = (await fi.readCoins(q({ sort: "lifetime", offset: 3 }), nowMs)).filter((c: any) => !c.name).slice(0, 3).map((c: any) => c.mint);
+      expect(unread.length).eq(3);
+      for (const m of unread) fi.db.db.prepare("insert into fi_names (mint, name, symbol, uri, checked_at) values (?, ?, 'L', 'https://meta.example/l.json', 1) on conflict (mint) do update set name = excluded.name, image = null").run(m, `Logoless ${m}`);
       const before = await fi.readCoins(q({ sort: "lifetime", offset: 3 }), nowMs);
       const lacking = before.filter((c: any) => !c.name || !c.imageUrl).map((c: any) => c.mint);
-      expect(lacking.length).gt(0);
+      const logoOnly = new Set(before.filter((c: any) => c.name && !c.imageUrl).map((c: any) => c.mint));
+      expect(lacking.length).gt(logoOnly.size); expect(unread.every((m: string) => logoOnly.has(m))).eq(true);
       const page = await get("/api/fees/coins?sort=lifetime&offset=3&limit=50");
       expect(page.code).eq(200);
       expect(asked.at(-1)).deep.eq(lacking);
-      // the same coins in the same order with the names just read: what reading the whole page again gives
+      expect(waits.at(-1)).eq(false); // a coins page does not wait for logos
+      // the same coins in the same order with the names just read: what reading the whole page again gives, except
+      // that a coin which only lacked its logo shows it from the next answer on
       const again = await fi.readCoins(q({ sort: "lifetime", offset: 3 }), nowMs);
       const strip = (c: any) => ({ ...c, creatorAvgPerDayEstimateLamports: undefined });
-      expect(page.body.coins.map(strip)).deep.eq(again.map(strip));
-      expect(page.body.coins.filter((c: any) => lacking.includes(c.mint)).every((c: any) => c.name === `Named ${c.mint}`)).eq(true);
+      expect(page.body.coins.map(strip)).deep.eq(again.map((c: any) => strip(logoOnly.has(c.mint) ? { ...c, imageUrl: null } : c)));
+      expect(page.body.coins.filter((c: any) => lacking.includes(c.mint) && !logoOnly.has(c.mint)).every((c: any) => c.name === `Named ${c.mint}` && c.imageUrl === `https://img.example/${c.mint}.png`)).eq(true);
+      const next = await get("/api/fees/coins?sort=lifetime&offset=3&limit=50");
+      expect(next.body.coins.map(strip)).deep.eq(again.map(strip));
+      expect(next.body.coins.filter((c: any) => logoOnly.has(c.mint)).every((c: any) => c.imageUrl === `https://img.example/${c.mint}.png`)).eq(true);
     } finally { api.close(); await fi.close(); }
   });
 });

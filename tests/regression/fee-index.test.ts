@@ -395,6 +395,43 @@ describe("fee index: names and logos for the rows an answer shows", () => {
     await fi.ensureIdentity([mintB], 500);
     expect(calls).eq(before + 1);
   });
+  it("a coins page waits for names but not for logos; the logo lands for the next answer", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const { fi } = await withMetadata(async () => { await gate; return { image: "https://img.example/late.png" }; });
+    const t0 = Date.now();
+    await fi.ensureIdentity([mintA, mintB], 2_000, false);
+    expect(Date.now() - t0).lt(500);
+    expect(fi.coin(mintA)!.name).eq("Text Behind Image"); // names are waited for
+    expect(fi.coin(mintA)!.imageUrl).eq(null);
+    release(); await new Promise((r) => setTimeout(r, 20));
+    expect(fi.coin(mintA)!.imageUrl).eq("https://img.example/late.png");
+  });
+  it("logos an answer asks for take the next fetch slots ahead of the background fill, also one the fill had queued", async () => {
+    const { fi } = await index({}, 70);
+    const mints = Array.from({ length: 12 }, () => Keypair.generate().publicKey.toBase58());
+    fi.applyPools(mints.map((mint, i) => ({ ...P(`L${i}`, BigInt(1_000_000 * (20 - i)), BigInt(100_000 * (20 - i)), 0n), mint })), 1, Date.now(), 0);
+    const named = fi.db.db.prepare("insert into fi_names (mint, name, symbol, uri, checked_at) values (?, 'N', 'N', ?, ?)");
+    const uri = (i: number) => `https://meta.example/${i}.json`;
+    const started: string[] = [], gates = new Map<string, () => void>();
+    fi.fetchJson = (u: string) => { started.push(u); return new Promise((r) => gates.set(u, () => r({ image: "https://img.example/x.png" }))); };
+    const fill = mints.slice(0, 10);
+    fill.forEach((m, i) => named.run(m, uri(i), Date.now()));
+    const filling = fi.fillImages(10, 60_000);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started.length).eq(8); // the fetch cap: two of the fill's ten wait
+    const waiting = fill.map((_m, i) => uri(i)).filter((u) => !started.includes(u));
+    expect(waiting.length).eq(2);
+    named.run(mints[11], uri(11), Date.now());
+    const asked = waiting[1], askedMint = fill[Number(asked.match(/(\d+)\.json/)![1])];
+    await fi.ensureIdentity([mints[11], askedMint], 2_000, false); // returns at once: logos are not waited for
+    for (const u of started.slice(0, 2)) gates.get(u)!();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(new Set(started.slice(8, 10))).deep.eq(new Set([uri(11), asked])); // the asked ones, not the fill's other waiter
+    gates.forEach((g) => g()); await new Promise((r) => setTimeout(r, 20)); gates.forEach((g) => g()); await filling;
+    expect(started.length).eq(11);
+    expect(fi.coin(mints[11])!.imageUrl).eq("https://img.example/x.png");
+  });
   it("the background fill reads the most-earning coins first, and a changed uri clears the old logo", async () => {
     const { fi } = await withMetadata(async (uri) => ({ image: `https://img.example/${uri.slice(-6, -5)}.png` }));
     (fi as any).opts.namesPerPass = 10;

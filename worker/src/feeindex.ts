@@ -211,6 +211,9 @@ export class FeeIndex {
   private running = false;
   private imageActive = 0;
   private imageWaiting: (() => void)[] = [];
+  /** logos an answer asked for: they take the next free fetch ahead of the background fill */
+  private imageAsked: (() => void)[] = [];
+  private imageQueued = new Map<string, () => void>(); // mint -> its wake-up while it waits for a fetch slot
   private imageInFlight = new Map<string, Promise<void>>();
   private namesBusy = 0;
   private apiReader: IndexReader | null = null;
@@ -522,13 +525,20 @@ export class FeeIndex {
   /** Mints among these (at most 200, by key: quick on this thread) whose image is not known yet. */
   private imagesDue(mints: string[], limit: number): { mint: string; uri: string }[] { return R.imagesDue(this.db.db, this.readContext(), mints, limit); }
 
-  /** One metadata file read under the process-wide cap; concurrent asks for one mint share the read. */
-  private readImage(mint: string, uri: string): Promise<void> {
+  /** One metadata file read under the process-wide cap; concurrent asks for one mint share the read. Asked
+   *  (an answer is about to show the coin) it waits in its own line, served before the background fill's. */
+  private readImage(mint: string, uri: string, asked = false): Promise<void> {
     const running = this.imageInFlight.get(mint);
-    if (running) return running;
-    if (this.imageWaiting.length >= IMAGE_QUEUE_MAX) return Promise.resolve();
+    if (running) {
+      // a logo the background fill queued moves to the asked line once an answer asks for it
+      const wake = asked ? this.imageQueued.get(mint) : undefined, at = wake ? this.imageWaiting.indexOf(wake) : -1;
+      if (at >= 0 && this.imageAsked.length < IMAGE_QUEUE_MAX) { this.imageWaiting.splice(at, 1); this.imageAsked.push(wake!); }
+      return running;
+    }
+    const line = asked ? this.imageAsked : this.imageWaiting;
+    if (line.length >= IMAGE_QUEUE_MAX) return Promise.resolve();
     const job = (async () => {
-      if (this.imageActive >= IMAGE_FETCHES) await new Promise<void>((r) => this.imageWaiting.push(r));
+      if (this.imageActive >= IMAGE_FETCHES) { await new Promise<void>((r) => { line.push(r); this.imageQueued.set(mint, r); }); this.imageQueued.delete(mint); }
       this.imageActive++;
       let image: string | null = null, status: "ok" | "missing" | "unreachable";
       try {
@@ -541,7 +551,7 @@ export class FeeIndex {
           status = image ? "ok" : named && ipfsPath(named) ? "unreachable" : "missing";
         }
       } catch { status = "unreachable"; }
-      finally { this.imageActive--; this.imageWaiting.shift()?.(); }
+      finally { this.imageActive--; (this.imageAsked.shift() ?? this.imageWaiting.shift())?.(); }
       this.db.db.prepare("update fi_names set image = ?, image_status = ?, image_checked_at = ? where mint = ? and uri = ?").run(image, status, Date.now(), mint, uri);
     })().finally(() => this.imageInFlight.delete(mint));
     this.imageInFlight.set(mint, job);
@@ -557,15 +567,17 @@ export class FeeIndex {
 
   /** Names and images for the coins an answer is about to show: whatever arrives within the budget is in
    *  the answer, the rest keeps loading into the index for the next one. Names come from at most two
-   *  RPC reads in flight process-wide; images go through the shared fetch cap. */
-  async ensureIdentity(mints: string[], budgetMs: number): Promise<void> {
+   *  RPC reads in flight process-wide; images go through the shared fetch cap, ahead of the background fill.
+   *  Without waitImages the answer waits for the names only and its logos load for the next one. */
+  async ensureIdentity(mints: string[], budgetMs: number, waitImages = true): Promise<void> {
     const unique = [...new Set(mints)].slice(0, 200);
     if (!unique.length) return;
     const work = (async () => {
       const known = new Set(this.db.db.prepare(`select mint from fi_names where checked_at <> 0 and mint in (${unique.map(() => "?").join(",")})`).all(...unique).map((r: any) => String(r.mint)));
       const missing = unique.filter((m) => !known.has(m));
       if (missing.length && this.namesBusy < 2) { this.namesBusy++; try { await this.readNames(missing); } finally { this.namesBusy--; } }
-      await Promise.allSettled(this.imagesDue(unique, unique.length).map((d) => this.readImage(d.mint, d.uri)));
+      const images = Promise.allSettled(this.imagesDue(unique, unique.length).map((d) => this.readImage(d.mint, d.uri, true)));
+      if (waitImages) await images;
     })().catch((e) => log("fee index identity read failed", { error: String((e as Error).message ?? e) }));
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([work, new Promise<void>((r) => { timer = setTimeout(r, budgetMs); })]);

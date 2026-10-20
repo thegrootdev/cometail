@@ -407,12 +407,14 @@ async function feeRoutesRead(fi: FeeIndex, cluster: string, url: URL, limit: num
     const n = Math.min(200, limit);
     const q = { sort: sort as any, stage, eligible: url.searchParams.get("eligible") === "1", creator, search, limit: n, offset };
     let coins = await fi.readCoins(q);
-    // names and logos the index has not read yet are read now (bounded); the page shows whatever arrived
+    // names the index has not read yet are read now (bounded) and the page shows whatever arrived; missing logos
+    // are asked for without waiting (most are IPFS files behind slow gateways) and show from the next answer on
     const lacking = coins.filter((c: { name: string | null; imageUrl: string | null }) => !c.name || !c.imageUrl).map((c: { mint: string }) => c.mint);
-    // (only the names and logos are read again: the page itself is not chosen twice)
-    if (lacking.length) {
-      await fi.ensureIdentity(lacking, 2_500);
-      const fresh = new Map((await fi.readIdentities(lacking)).map((x) => [x.mint, x]));
+    const unnamed = coins.filter((c: { name: string | null }) => !c.name).map((c: { mint: string }) => c.mint);
+    if (lacking.length) await fi.ensureIdentity(lacking, 2_500, false);
+    // (only the names are read again: the page itself is not chosen twice)
+    if (unnamed.length) {
+      const fresh = new Map((await fi.readIdentities(unnamed)).map((x) => [x.mint, x]));
       coins = coins.map((c) => { const x = fresh.get(c.mint); return x ? { ...c, name: x.name, symbol: x.symbol, imageUrl: x.imageUrl } : c; });
     }
     // the deepest offset a search page may start at (null without a search): the site stops paging there
