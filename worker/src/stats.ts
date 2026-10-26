@@ -8,9 +8,12 @@ import type { Chain } from "./chain";
 import type { FeeIndex } from "./feeindex";
 import type { Store, TokenRow, TradeRow } from "./store";
 import { readPairedBurns } from "./pairedburns";
+import { staleWhileRefresh } from "./refresh";
+import { log } from "./tx";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 const TTL_MS = 60_000;
+const MAX_STALE_MS = 10 * 60_000;
 const PAGE = 1000;
 
 export interface StatsOptions {
@@ -111,8 +114,6 @@ async function tradesOf(store: Store, t: TokenRow, valuer?: Valuer): Promise<{ t
 }
 
 export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
-  let memo: { at: number; value: unknown } | null = null;
-  let inflight: Promise<unknown> | null = null;
   const team = new Set(opts.team);
   const build = async () => {
     const generatedAtMs = Date.now();
@@ -299,10 +300,8 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
       feeIndex: fi ? { readAtMs: fi.deltaAtMs ?? null, mode: fi.mode ?? null, pools: fi.pools ?? null, configs: fi.configs ?? null, claimsConfirmed: fi.claims?.confirmed ?? null, historySinceMs: fi.historySinceMs ?? null, refreshMinutes: fi.deltaEveryMinutes ?? null } : null,
     };
   };
-  return async (): Promise<unknown> => {
-    if (memo && Date.now() - memo.at < TTL_MS) return memo.value;
-    // one build at a time: concurrent callers share it
-    inflight ??= build().then((value) => { memo = { at: Date.now(), value }; return value; }).finally(() => { inflight = null; });
-    return inflight;
-  };
+  // one build at a time, shared by concurrent callers; past 60 s the last document is served while it rebuilds (its
+  // figures carry their own read times), and only one older than 10 min, or none, is waited for
+  const c = staleWhileRefresh(build, { ttlMs: TTL_MS, maxStaleMs: MAX_STALE_MS, onError: (e) => log("stats rebuild failed", { error: String((e as Error)?.message ?? e) }) });
+  return (): Promise<unknown> => c.get();
 }

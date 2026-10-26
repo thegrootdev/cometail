@@ -12,9 +12,12 @@ import { nextBuyback } from "./burn";
 import { BURN_EVENT_NAMES, burnCoverage } from "./burnindex";
 import type { FeeIndex } from "./feeindex";
 import type { EventRow, Store } from "./store";
+import { staleWhileRefresh } from "./refresh";
+import { log } from "./tx";
 
 const SOURCES = ["curve fee", "creation fee", "surplus", "graduated position fee", "inbox"];
 const TTL_MS = 15_000;
+const MAX_STALE_MS = 5 * 60_000;
 const DEFAULT_KEY = PublicKey.default.toBase58();
 export const BURN_PAGE = 50;
 
@@ -39,9 +42,7 @@ export async function burnHistory(store: Store, kind: "burns" | "splits", before
 }
 
 export function burnViewer(chain: Chain, store: Store, opts: { cluster: string; burnConfigs: string[]; legacyConfigs: string[]; feeIndex: FeeIndex | null }) {
-  let memo: { at: number; value: unknown } | null = null;
-  return async (): Promise<unknown> => {
-    if (memo && Date.now() - memo.at < TTL_MS) return memo.value;
+  const build = async (): Promise<any> => {
     const client = new BurnClient(chain.connection);
     const head = { schemaVersion: 1, cluster: opts.cluster, generatedAtMs: Date.now(), program: BURN_PROGRAM_ID.toBase58(), claimer: client.a.claimer.toBase58(), sharePct: 50 };
     const coverage = await burnCoverage(store);
@@ -111,7 +112,10 @@ export function burnViewer(chain: Chain, store: Store, opts: { cluster: string; 
       burns: burns.map(burnRow), burnsTotal: await store.countBurnEvents(BURN_EVENT_NAMES.BuybackBurned), burnsNextCursor: burns.length === BURN_PAGE ? cursorOf(burns[burns.length - 1]) : null,
       splits: splits.map(splitRow), splitsTotal: splitsAll.length, splitsNextCursor: splits.length === BURN_PAGE ? cursorOf(splits[splits.length - 1]) : null,
     };
-    memo = { at: Date.now(), value };
     return value;
   };
+  // only a live read is kept; past 15 s the last one is served while one read refreshes it (observedSlot and
+  // generatedAtMs date it), and only one older than 5 min, or none, is waited for
+  const c = staleWhileRefresh(build, { ttlMs: TTL_MS, maxStaleMs: MAX_STALE_MS, keep: (v) => v?.status === "live", onError: (e) => log("burn view refresh failed", { error: String((e as Error)?.message ?? e) }) });
+  return (): Promise<unknown> => c.get();
 }

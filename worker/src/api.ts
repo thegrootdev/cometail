@@ -23,6 +23,7 @@ import { Store, TokenRow, TradeRow } from "./store";
 import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed";
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
+import { staleWhileRefresh } from "./refresh";
 
 export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null; tailView?: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null; stats?: (() => Promise<unknown>) | null;
   /** The $COMETAIL mint when a config paired with it is among ours (the paired coins' quote), else null. */
@@ -159,27 +160,33 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
 }
 
 let metricsMemo: { at: number; value: unknown } | null = null;
-let priceMemo: { at: number; value: { solUsd: number; source: string; at: number } } | null = null;
+type SolUsd = { solUsd: number; source: string; at: number };
 
-/** SOL/USD for display only (market cap and USD columns): Jupiter's public price API first,
- *  CoinGecko as the fallback, cached for 60 s, never a transaction input. */
-export async function solUsd(): Promise<{ solUsd: number; source: string; at: number } | null> {
-  if (priceMemo && Date.now() - priceMemo.at < 60_000) return priceMemo.value;
+/** SOL/USD for display only (market cap and USD columns): Jupiter's public price API first, CoinGecko as the
+ *  fallback, never a transaction input. One read of the sources; null when neither answers. */
+export async function readSolUsd(fetchImpl: typeof fetch = fetch): Promise<SolUsd | null> {
   const tries: [string, string, (j: any) => number][] = [
     ["jupiter", "https://lite-api.jup.ag/price/v3?ids=So11111111111111111111111111111111111111112", (j) => Number(j?.So11111111111111111111111111111111111111112?.usdPrice)],
     ["coingecko", "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd", (j) => Number(j?.solana?.usd)],
   ];
   for (const [source, url, pick] of tries) {
     try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(6_000), headers: { accept: "application/json" } });
+      const r = await fetchImpl(url, { signal: AbortSignal.timeout(6_000), headers: { accept: "application/json" } });
       if (!r.ok) continue;
       const v = pick(await r.json());
-      if (Number.isFinite(v) && v > 0) { priceMemo = { at: Date.now(), value: { solUsd: v, source, at: Date.now() } }; return priceMemo.value; }
+      if (Number.isFinite(v) && v > 0) return { solUsd: v, source, at: Date.now() };
     } catch (e) { log("price source failed", { source, error: String((e as Error).message ?? e) }); }
   }
-  return priceMemo?.value ?? null;
+  return null;
 }
 
+/** The price behind every answer: kept for 60 s, then served at once while one read refreshes it, so a price source
+ *  that stalls (up to 12 s with both timing out) never holds an answer once a price exists. Its age is `at`. */
+export function priceCache(fetchImpl: typeof fetch = fetch, now?: () => number) {
+  const c = staleWhileRefresh(() => readSolUsd(fetchImpl), { ttlMs: 60_000, maxStaleMs: Infinity, keep: (v) => v !== null, now });
+  return async (): Promise<SolUsd | null> => (await c.get()) ?? c.peek()?.value ?? null;
+}
+export const solUsd = priceCache();
 
 /** The small identity of every token in the index, by mint and by either of its pools, for the Sky and vault answers. */
 async function tokenIdentities(store: Store) {
