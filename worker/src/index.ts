@@ -22,6 +22,7 @@ import { log } from "./tx";
 import { chainWalkDeps, refreshSources, reserveAddress, tailIndexPass, tailView } from "./tails";
 import { statsViewer } from "./stats";
 import { monitorEventLoopDelay } from "perf_hooks";
+import { holdWatch, stage } from "./holds";
 
 export const WORKER_VERSION = "0.1.0";
 
@@ -44,6 +45,8 @@ async function main() {
     const loop = monitorEventLoopDelay({ resolution: 20 });
     loop.enable();
     setInterval(() => { const maxMs = loop.max / 1e6; if (maxMs > 1_000) log("event loop held", { maxMs: Math.round(maxMs), p99Ms: Math.round(loop.percentile(99) / 1e6) }); loop.reset(); }, 60_000).unref();
+    // and each hold as it ends, with the main thread's CPU, the GC and the step each lane had begun (holds.ts)
+    holdWatch({ log });
     const indexer = new Indexer(chain, store);
     // the Fee Index runs on its own clock beside the indexer: a full walk can take minutes and must never hold up the trade index
     let feeIndex: FeeIndex | null = null;
@@ -69,11 +72,14 @@ async function main() {
     let passes = 0;
     while (!stopping) {
       let added = 0;
+      stage("loop", "indexer pass");
       try { added = await indexer.pass(); } catch (e) { log("indexer pass failed", { error: String((e as Error).message ?? e) }); }
       // the burn program's events: their own cursor, never fatal to the pass
+      stage("loop", "burn index");
       if (cfg.burnConfigs?.length) { try { await burnIndexPass(chainDeps(chain.connection), store); } catch (e) { log("burn index pass failed", { error: String((e as Error).message ?? e) }); } }
       // $COMETAIL burned with the paired configs' protocol claims: the burn program's $COMETAIL mint names the paired
       // configs among ours (their quote); the first one's fee claimer is the account walked; never fatal to the pass
+      stage("loop", "paired burns");
       if (cfg.burnConfigs?.length) {
         try {
           // configs and the burn state's mint never change: looked up once, and again every 30 passes while none is found
@@ -93,24 +99,29 @@ async function main() {
         } catch (e) { log("paired burn pass failed", { error: String((e as Error).message ?? e) }); }
       }
       // tail claims and the reserve ledger they are traced through: their own cursors, never fatal to the pass
+      stage("loop", "tails");
       if (cfg.tails.length) { try { { const deps = chainWalkDeps(chain.connection); await tailIndexPass(deps, store, cfg.tails, reserveAddress(), (t) => refreshSources(chain, deps, store, t)); } } catch (e) { log("tail index pass failed", { error: String((e as Error).message ?? e) }); } }
       // the Sky refreshes on its schedule, and right away when new events change what it shows
       if (added > 0 || passes % cfg.skyEveryPasses === 0) {
         try {
+          stage("loop", "sky scan");
           const rows = await scanSky(chain, cfg.skyConfigs, store); await store.upsertSky(rows); await store.pruneSky(rows.map((r) => r.pool));
           // the token rows behind /api/tokens follow the Sky's curve rows
+          stage("loop", "token scan");
           const tokens = await scanTokens(chain, rows, store, new Set(cfg.migrateConfigs.map((k) => k.toBase58())));
           const previous = new Map((await store.listTokens()).map((t) => [t.mint, t]));
           // the first scan of a fresh store announces nothing: every token would read as a launch.
           // The snapshot and the launch/graduation rows it implies commit together; the live push
           // follows the commit, so a crash in between leaves the rows in replay, never lost.
           const announced = previous.size > 0 || (await store.getMeta("tokens_scanned_at")) !== null ? feedFromTokens(previous, tokens, await chain.connection.getSlot("confirmed")) : [];
+          stage("loop", "token rows");
           for (const r of await store.upsertTokensAndFeed(tokens, tokens.map((t) => t.mint), announced)) feedBus.emit("event", r);
           log("token scan", { tokens: tokens.length, graduated: tokens.filter((t) => t.stage === "graduated").length });
         } catch (e) { log("sky scan failed", { error: String((e as Error).message ?? e) }); }
       }
       passes++;
       if (process.env.COMETAIL_ONCE === "1") break;
+      stage("loop", "idle");
       await sleep(cfg.pollMs);
     }
     api?.close();

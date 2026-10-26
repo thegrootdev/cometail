@@ -53,6 +53,7 @@ import { log } from "./tx";
 import * as R from "./feeindex-read";
 import { HOUR, creatorShare } from "./feeindex-read";
 import { IndexReader } from "./feeindex-reader";
+import { stage } from "./holds";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 const METADATA_PROGRAM = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
@@ -398,13 +399,15 @@ export class FeeIndex {
       this.db.db.exec("commit");
     } catch (e) { this.db.db.exec("rollback"); throw e; }
     const fromSlot = Math.max(0, Number(this.db.meta("delta_slot") ?? slot) - 150);
-    let pools = 0, kept = 0;
+    let pools = 0, kept = 0, pages = 0;
     for await (const page of this.walk([{ memcmp: { offset: 0, bytes: POOL_DISC } }], POOL_SLICE)) {
+      stage("fee index", `full page ${++pages}`);
       const decoded = page.map((a) => decodePoolSlice(a.pubkey, a.data));
       await this.loadConfigs(decoded.map((p) => p.config));
       kept += this.applyPools(decoded, slot, Date.now(), fromSlot).kept; pools += decoded.length;
     }
     this.closeClaimWindows(await this.slotNow());
+    stage("fee index", "day income");
     this.db.setMeta("full_slot", String(slot)); this.db.setMeta("delta_slot", String(slot)); this.db.setMeta("full_at", String(Date.now()));
     if (!this.db.meta("first_full_at")) this.db.setMeta("first_full_at", String(t0));
     this.refreshDayIncome(Date.now());
@@ -416,14 +419,16 @@ export class FeeIndex {
     const t0 = Date.now();
     const since = Number(this.db.meta("delta_slot") ?? "0");
     const slot = await this.slotNow();
-    let changed = 0, kept = 0, claims = 0;
+    let changed = 0, kept = 0, claims = 0, pages = 0;
     for await (const page of this.walk([{ memcmp: { offset: 0, bytes: POOL_DISC } }], POOL_SLICE, Math.max(0, since - 150))) {
       if (!page.length) continue;
+      stage("fee index", `delta page ${++pages}`);
       const decoded = page.map((a) => decodePoolSlice(a.pubkey, a.data));
       await this.loadConfigs(decoded.map((p) => p.config));
       const r = this.applyPools(decoded, slot, Date.now(), Math.max(0, since - 150)); changed += decoded.length; kept += r.kept; claims += r.claims.length;
     }
     this.closeClaimWindows(await this.slotNow());
+    stage("fee index", "day income");
     this.db.setMeta("delta_slot", String(slot)); this.db.setMeta("delta_at", String(Date.now()));
     this.refreshDayIncome(Date.now());
     log("fee index delta", { changed, kept, claims, seconds: Math.round((Date.now() - t0) / 1000) });
@@ -436,11 +441,11 @@ export class FeeIndex {
     try {
       const fullAt = Number(this.db.meta("full_at") ?? "0");
       if (Date.now() - fullAt > this.opts.fullEveryHours * HOUR) await this.full(); else await this.delta();
-      await this.resolveClaims();
-      await this.fillNames();
-      await this.fillImages(this.opts.imagesPerPass ?? 0, this.opts.imagePassMs ?? 60_000);
-      this.db.setMeta("summary", JSON.stringify(await this.read("pass", "summarize")));
-    } finally { this.running = false; }
+      stage("fee index", "claims"); await this.resolveClaims();
+      stage("fee index", "names"); await this.fillNames();
+      stage("fee index", "images"); await this.fillImages(this.opts.imagesPerPass ?? 0, this.opts.imagePassMs ?? 60_000);
+      stage("fee index", "summary"); this.db.setMeta("summary", JSON.stringify(await this.read("pass", "summarize")));
+    } finally { this.running = false; stage("fee index", "idle"); }
   }
 
   /** Signatures of a pool inside [fromSlot, toSlot], newest first, up to the cap; `complete` says whether the window was reached. */

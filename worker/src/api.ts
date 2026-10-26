@@ -24,6 +24,7 @@ import { attachFeed, parseCursor, replay, parseTypes, FEED_TYPES } from "./feed"
 import { executionPrice } from "./tokens";
 import { log } from "./tx";
 import { staleWhileRefresh } from "./refresh";
+import { stage } from "./holds";
 
 export interface ApiOptions { host: string; port: number; origins: string[]; ratePerMinute: number; demoActors?: string[]; plainConfigs?: string[]; cluster?: string; feeIndex?: FeeIndex | null; burnView?: (() => Promise<unknown>) | null; burnHistory?: ((kind: "burns" | "splits", before: string | null, limit: number) => Promise<unknown | "invalid">) | null; tailView?: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null; stats?: (() => Promise<unknown>) | null;
   /** The $COMETAIL mint when a config paired with it is among ours (the paired coins' quote), else null. */
@@ -450,9 +451,11 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
     try { url = new URL(req.url ?? "/", "http://localhost"); } catch {
       res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "bad URL" })); return;
     }
+    stage("api", `${req.method} ${url.pathname}`);
     const origin = allowOrigin(req);
     const cors: Record<string, string> = origin ? { "access-control-allow-origin": origin, "vary": "Origin", "access-control-allow-methods": "GET", "access-control-max-age": "600" } : {};
     const send = (code: number, body: unknown, extra: Record<string, string> = {}) => {
+      stage("api", `send ${url.pathname}`);
       res.writeHead(code, { "content-type": "application/json", "cache-control": "public, max-age=10", "x-content-type-options": "nosniff", ...cors, ...extra });
       res.end(JSON.stringify(body));
     };
