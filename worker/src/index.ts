@@ -2,6 +2,8 @@
 //   keeper   loop: migrate, register, cash out, harvest, settle, route for every vault
 //   indexer  loop: follow program events into the store, snapshot vault state, scan the Sky, serve the API
 //   once     a single keeper pass (for scripts and the devnet end-to-end)
+// outbound lookups ask for IPv4 only (the box has no IPv6 route); first, before anything connects (ipv4.ts)
+import "./ipv4";
 import { burnViewer, burnHistory, parseBurnCursor } from "./burnview";
 import { burnIndexPass, chainDeps } from "./burnindex";
 import { pairedBurnDeps, pairedBurnPass } from "./pairedburns";
