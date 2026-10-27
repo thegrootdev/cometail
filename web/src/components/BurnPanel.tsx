@@ -10,6 +10,7 @@ import { api, type BurnRow, type BurnView } from "@/lib/api";
 import { EXPLORER } from "@/lib/addresses";
 import { short, units } from "@/lib/format";
 import { burnPanel as copy, home as homeCopy } from "@/content/cometail";
+import { burnPanelRead, burnStatState, isLive, LIVE_FOR_MS, pollFigures } from "@/lib/freshness";
 
 const when = (sec: number | null) => (sec ? new Date(sec * 1000).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC" : "—");
 
@@ -26,14 +27,20 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
   };
   useEffect(() => {
     let live = true;
-    const load = () => void api.burn().then((r) => { if (live) setData(r); });
-    load();
-    const t = setInterval(load, 30_000);
-    return () => { live = false; clearInterval(t); };
+    // a kept live view is asked again soon: the read it started is usually done by then
+    const stop = pollFigures(async () => {
+      const r = await api.burn();
+      if (!live) return false;
+      setData(r);
+      return !!r && r.status === "live" && !isLive(r.generatedAtMs, r.servedAtMs, LIVE_FOR_MS.burn);
+    }, 30_000);
+    return () => { live = false; stop(); };
   }, []);
   // the home page shows the panel once the program is live; the token page always says where it stands
   if (compact && data && data.status === "not-set-up") return null;
   const d = data?.cometail?.decimals ?? 6;
+  // when these figures were read, and whether that is recent (a kept view is not a new read)
+  const read = data && data.status === "live" ? burnPanelRead(data) : null;
   const coin = (raw: string | null | undefined) => (raw === null || raw === undefined ? copy.unknown : `${units(raw, d)} $COMETAIL`);
   // the token page shows the numbers; every burn, the accounting and the program link sit in one fold
   const body = data && data.status === "live" ? <>
@@ -79,6 +86,7 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
             <div><span className="micro">{copy.buybacks}</span><strong>{data.totals?.buybacks ?? copy.unknown}</strong></div>
             <div><span className="micro">{copy.reserve}</span><strong>{data.reserve ? <Money lamports={data.reserve.lamports} /> : copy.unknown}</strong></div>
           </div>
+          {read?.line && <p className="micro mt-3">{read.line}</p>}
           <p className="micro mt-3">{data.nextBuyback ? (data.nextBuyback.due ? copy.dueNow(units(data.nextBuyback.amountLamports, 9)) : BigInt(data.nextBuyback.amountLamports) < 1_000_000n ? copy.waitingForFunds : copy.dueAt(when(data.nextBuyback.dueAtSec))) : copy.nextUnknown}</p>
           {compact ? body : <details className="burn-more mt-3">
             <summary>{copy.everyBurn(data.burnsTotal ?? 0)}</summary>
@@ -92,25 +100,29 @@ export function BurnPanel({ compact = false }: { compact?: boolean }) {
 /** The home page's live line: how much $COMETAIL the burn program has burned, linking to its page. Hidden until the program reports. */
 export function BurnStat() {
   const [data, setData] = useState<BurnView | null>(null);
-  // false once a read fails or the program reports a non-live status: the last figure stays, marked last known
-  const [fresh, setFresh] = useState(false);
+  // true once a read fails or the program reports a non-live status: the last figure stays, marked last known, as it
+  // does while the view that arrives is a kept one whose read is not recent (lib/freshness.ts)
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    const load = () => void api.burn().then((r) => {
-      if (!live) return;
-      if (r && r.status === "live" && r.totals?.burnedRaw && r.cometail) { setData(r); setFresh(true); } else setFresh(false);
-    });
-    load();
-    const t = setInterval(load, 30_000);
-    return () => { live = false; clearInterval(t); };
+    const stop = pollFigures(async () => {
+      const r = await api.burn();
+      if (!live) return false;
+      const ok = !!r && r.status === "live" && !!r.totals?.burnedRaw && !!r.cometail;
+      if (ok) setData(r);
+      setFailed(!ok);
+      return ok && !isLive(r!.generatedAtMs, r!.servedAtMs, LIVE_FOR_MS.burn);
+    }, 30_000);
+    return () => { live = false; stop(); };
   }, []);
   if (!data?.totals?.burnedRaw || !data.cometail) return null;
+  const f = burnStatState(data, failed);
   return (
-    <Link className={`burn-stat ${fresh ? "" : "is-last-known"}`} href={`/token/${data.cometail.mint}`} title={fresh ? undefined : homeCopy.burnedLastKnown}>
+    <Link className={`burn-stat ${f.live ? "" : "is-last-known"}`} href={`/token/${data.cometail.mint}`} title={f.title}>
       <span className="burn-flame" aria-hidden="true" />
       <strong>{units(data.totals.burnedRaw, data.cometail.decimals ?? 6, 0)}</strong>
       <span>{homeCopy.burned}</span>
-      {fresh ? <span className="burn-live" aria-hidden="true" /> : <span className="burn-stale">{homeCopy.lastKnown}</span>}
+      {f.live ? <span className="burn-live" aria-hidden="true" /> : <span className="burn-stale">{f.stale}</span>}
     </Link>
   );
 }

@@ -114,6 +114,8 @@ export interface TailInfo {
   coverage: { claims: { status: string; atMs: number | null }; reserve: { status: string; atMs: number | null }; reserveVerified: boolean };
 }
 export interface BurnView {
+  /** the read's time, and when the answer left the worker (absent from a worker older than its cache): lib/freshness.ts */
+  generatedAtMs: number; servedAtMs?: number;
   program: string; claimer: string; sharePct: number; status: "live" | "not-set-up" | "unavailable"; observedSlot?: number;
   history?: { reconciled: boolean; indexedSplitLamports: string; indexedBurnedRaw: string; indexedBuybacks: number };
   coverage: { status: "complete" | "partial" | "unavailable"; atMs: number | null };
@@ -141,6 +143,8 @@ export interface StatsLaunch {
 }
 export interface Stats {
   schemaVersion: number; cluster: string; generatedAtMs: number; team: string[];
+  /** when the answer left the worker (absent from a worker older than its cache): lib/freshness.ts */
+  servedAtMs?: number;
   launches: { readAtMs: number | null; total: number; team: number; outside: number; unattributed: number; graduated: { total: number; team: number; outside: number }; list: StatsLaunch[] };
   trading: { readAtMs: number | null; complete: boolean; pendingPools: number; trades: number; traders: number | null; volumeLamports: string | null; outsideVolumeLamports: string | null; pairedVolumeLamports?: string | null; pairedRoutedLamports?: string | null };
   fees: { readAtMs: number | null; slot: number | null; curveTradingLamports: string | null; curveProtocolLamports: string | null; poolLpLamports: string | null; poolProtocolLamports: string | null; totalLamports: string | null; meteoraProtocolLamports: string | null;

@@ -18,6 +18,13 @@ export function staleWhileRefresh<T>(read: () => Promise<T>, o: { ttlMs: number;
       if (memo && age < o.maxStaleMs) { refresh().catch((e) => o.onError?.(e)); return memo.value; }
       return refresh();
     },
+    /** For a builder that embeds this value (stats embeds the burn view): one younger than ttlMs as it is, else a read
+     *  waited for. A failed or refused read gives the last value, which its own read time dates, or with none, what the
+     *  read gave. */
+    fresh: async (): Promise<T> => {
+      if (memo && now() - memo.at < o.ttlMs) return memo.value;
+      try { const v = await refresh(); return keep(v) ? v : memo?.value ?? v; } catch (e) { if (memo) return memo.value; throw e; }
+    },
     /** the last value kept and when it was read, without reading */
     peek: () => memo,
   };

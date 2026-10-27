@@ -161,6 +161,9 @@ export async function metrics(store: Store, demo: Set<string>, plainConfigs: Set
 }
 
 let metricsMemo: { at: number; value: unknown } | null = null;
+// /api/stats and /api/burn can be a kept document (refresh.ts) with its own read times; servedAtMs is when this answer
+// left, on the same clock, so a page tells how old its figures are without the visitor's clock (web lib/freshness.ts)
+const served = (v: unknown) => ({ ...(v as object), servedAtMs: Date.now() });
 type SolUsd = { solUsd: number; source: string; at: number };
 
 /** SOL/USD for display only (market cap and USD columns): Jupiter's public price API first, CoinGecko as the
@@ -521,7 +524,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
       }
       if (url.pathname === "/api/burn") {
         if (!opts.burnView) return send(503, { error: "burn view not enabled on this server" }, { "access-control-allow-origin": "*" });
-        try { return send(200, await opts.burnView(), { "access-control-allow-origin": "*", "cache-control": "public, max-age=15" }); }
+        try { return send(200, served(await opts.burnView()), { "access-control-allow-origin": "*", "cache-control": "public, max-age=15" }); }
         catch (e) { log("burn view failed", { error: String((e as Error).message ?? e) }); return send(503, { error: "burn view unavailable" }, { "access-control-allow-origin": "*" }); }
       }
       if (url.pathname === "/api/burn/burns" || url.pathname === "/api/burn/splits") {
@@ -534,7 +537,7 @@ export async function startApi(store: Store, opts: ApiOptions): Promise<http.Ser
         // the public proof page's figures (stats.ts): any origin may read them
         const any = { "access-control-allow-origin": "*", "cache-control": "public, max-age=30" };
         if (!opts.stats) return send(503, { error: "stats not enabled on this server" }, any);
-        try { return send(200, await opts.stats(), any); }
+        try { return send(200, served(await opts.stats()), any); }
         catch (e) { log("stats failed", { error: String((e as Error).message ?? e) }); return send(503, { error: "stats unavailable" }, any); }
       }
       if (url.pathname === "/api/prices") { const p = await solUsd(); return p ? send(200, p, { "cache-control": "public, max-age=30" }) : send(503, { error: "price unavailable" }); }

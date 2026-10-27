@@ -151,6 +151,7 @@ export const burnPanel = {
   claimableNow: "Waiting to be claimed (new configs)", supply: "$COMETAIL supply now",
   accountingNote: "Exact: the program's own counters, the reserve and the supply, read together. What each claim paid is measured by the program; those sums need the whole history read, and show unknown until it is. The program splits the new launch configs' fees 50/50; owners claiming older configs through it get exactly half back. Older claims made elsewhere, and the tails' share, reach the reserve as direct transfers.",
   listTitle: (shown: number, total: number) => (total > shown ? `Burns (newest ${shown} of ${total})` : `Every burn (${total})`), showMore: "Show older burns", historyPartial: "History is still loading; some burns may be missing below.", historyUnavailable: "Burn history is not available right now.",
+  readAt: (t: string) => `Read at ${t}.`, lastKnownAt: (t: string) => `Last known figures, read at ${t}: no newer read yet.`,
   noBurns: "No burns yet.", program: "Burn program", verified: "verified build", more: "All burns",
 } as const;
 
@@ -767,9 +768,9 @@ export const home = {
   launch: "Launch a coin",
   sell: "Sell your coin's fees",
   feeIndex: "Fee Index: what every Meteora coin pays its creator",
-  numbers: { label: "Live, from chain", lastKnown: "Last known figures: the latest read failed", traded: "traded", fees: "in trading fees (excl. referrals)", burned: "$COMETAIL burned", stale: "last known", proof: "How we count" },
+  numbers: { label: "Live, from chain", lastKnown: "Last known figures: no newer read yet", traded: "traded", fees: "in trading fees (excl. referrals)", burned: "$COMETAIL burned", stale: "last known", proof: "How we count" },
   burned: "$COMETAIL burned",
-  burnedLastKnown: "last known: the burn figures are not answering",
+  burnedLastKnown: "last known: no newer burn figures yet",
   feedTitle: "Coins",
   tabs: { new: "New", trending: "Trending", soon: "About to graduate", graduated: "Graduated" },
   trendingNote: "Most traded in the last 24 hours.",

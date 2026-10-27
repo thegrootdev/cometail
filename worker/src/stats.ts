@@ -21,7 +21,8 @@ export interface StatsOptions {
   /** The team's own wallets (COMETAIL_DEMO_ACTORS): launches and vaults they own are ours, everything else is outside. */
   team: string[];
   feeIndex: FeeIndex | null;
-  burnView: (() => Promise<unknown>) | null;
+  /** The burn view; with `fresh`, the build waits for a read newer than its 15 s (burnview.ts). */
+  burnView: ((() => Promise<unknown>) & { fresh?: () => Promise<unknown> }) | null;
   tailView: ((mint: string | null) => Promise<{ tails: unknown[] }>) | null;
   /** $COMETAIL's mint and pinned pool from the burn program's state, read once and kept: null when the program is not
    *  set up, undefined while it has not been read. Without it the burn view's copy is used. */
@@ -158,7 +159,7 @@ export function statsViewer(chain: Chain, store: Store, opts: StatsOptions) {
     } catch { chainRead = null; }
 
     let burn: any = null;
-    try { burn = opts.burnView ? await opts.burnView() : null; } catch { burn = null; }
+    try { burn = opts.burnView ? await (opts.burnView.fresh ?? opts.burnView)() : null; } catch { burn = null; }
     const burnLive = burn && burn.status === "live";
     // coins paired with $COMETAIL: the quote is the burn program's $COMETAIL mint, priced by its pinned pool. The identity
     // comes from the program's state as the worker read it (kept), else from the burn view; while neither is known, a

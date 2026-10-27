@@ -117,5 +117,6 @@ export function burnViewer(chain: Chain, store: Store, opts: { cluster: string; 
   // only a live read is kept; past 15 s the last one is served while one read refreshes it (observedSlot and
   // generatedAtMs date it), and only one older than 5 min, or none, is waited for
   const c = staleWhileRefresh(build, { ttlMs: TTL_MS, maxStaleMs: MAX_STALE_MS, keep: (v) => v?.status === "live", onError: (e) => log("burn view refresh failed", { error: String((e as Error)?.message ?? e) }) });
-  return (): Promise<unknown> => c.get();
+  // fresh: the stats build waits for a new read past 15 s, so a stats document does not carry an older burn
+  return Object.assign((): Promise<unknown> => c.get(), { fresh: (): Promise<unknown> => c.fresh() });
 }
